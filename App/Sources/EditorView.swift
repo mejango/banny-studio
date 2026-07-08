@@ -52,25 +52,28 @@ struct WideEditor: View {
             let requestedTL = min(max(120, timelineHeight), availH - 140)
             let stageH = min(stageWidth * 9.0 / 16.0, availH - 6 - requestedTL)
             let tlH = max(120, availH - 6 - stageH)
-            VStack(spacing: 0) {
-                header
-                HStack(spacing: 0) {
-                    VStack(spacing: 0) {
-                        StageView(model: model, file: file)
-                            .frame(width: CGFloat(stageWidth), height: CGFloat(stageH))
-                            .overlay(alignment: .bottom) {
-                                if showDeck {
-                                    PerformanceDeck(model: model)
-                                }
+            HStack(spacing: 0) {
+                VStack(spacing: 0) {
+                    header
+                    StageView(model: model, file: file)
+                        .frame(width: CGFloat(stageWidth), height: CGFloat(stageH))
+                        .overlay(alignment: .bottom) {
+                            if showDeck {
+                                PerformanceDeck(model: model)
                             }
-                        divider(maxHeight: availH - 140)
-                        StudioTimelineView(model: model, file: file, showShip: false)
-                            .frame(height: CGFloat(tlH))
-                    }
-                    Divider()
-                    SidePanel(model: model, file: file)
-                        .frame(width: 300)
+                        }
+                        .overlay(alignment: .topTrailing) {
+                            ShipButton(model: model, file: file)
+                                .padding(10)
+                        }
+                    divider(maxHeight: availH - 140)
+                    StudioTimelineView(model: model, file: file, showShip: false)
+                        .frame(height: CGFloat(tlH))
                 }
+                Divider()
+                SidePanel(model: model, file: file)
+                    .frame(width: 300)
+                    .frame(maxHeight: .infinity)
             }
             .background(theme.surface)
             // Drive SwiftUI's semantic colors (.primary on buttons/menus) from the
@@ -94,7 +97,6 @@ struct WideEditor: View {
                                            : Color(red: 0.92, green: 0.92, blue: 0.92))
             ThemeToggle()
             Spacer()
-            ShipButton(model: model, file: file)
         }
         .padding(.horizontal, 14)
         .frame(height: CGFloat(headerH))
