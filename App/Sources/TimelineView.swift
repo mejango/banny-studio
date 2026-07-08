@@ -278,14 +278,6 @@ struct StudioTimelineView: View {
                         Button(asset.name) { model.addImageTrack(assetID: asset.id, assetName: asset.name) }
                     }
                 }
-                Menu("Background") {
-                    if model.document.assets.isEmpty {
-                        Text("add an asset to the Asset Bank first")
-                    }
-                    ForEach(model.document.assets) { asset in
-                        Button(asset.name) { model.addBackgroundCue(assetID: asset.id, assetName: asset.name) }
-                    }
-                }
             } label: {
                 Label("New track", systemImage: "plus")
                     .font(.system(size: 11, weight: .semibold))
@@ -306,7 +298,7 @@ struct StudioTimelineView: View {
                      with: .color(Color(red: 0.1, green: 0.1, blue: 0.135)))
             ctx.draw(Text("CC").font(.system(size: 9, weight: .bold))
                         .foregroundStyle(Color(red: 0.85, green: 0.8, blue: 0.6)),
-                     at: CGPoint(x: 8, y: headerHeight + 6), anchor: .topLeading)
+                     at: CGPoint(x: 12, y: headerHeight + captionsRowH / 2), anchor: .leading)
             ctx.stroke(Path { p in
                 p.move(to: CGPoint(x: 0, y: lanesTop))
                 p.addLine(to: CGPoint(x: size.width, y: lanesTop))
@@ -340,11 +332,11 @@ struct StudioTimelineView: View {
                 if hidden { labelCtx.opacity = 0.35 }
                 labelCtx.draw(Text(label(for: row)).font(.system(size: 10, weight: .semibold))
                                 .foregroundStyle(labelColor(for: row)),
-                              at: CGPoint(x: 8, y: y + presenceStripH / 2), anchor: .leading)
+                              at: CGPoint(x: 12, y: y + presenceStripH / 2), anchor: .leading)
                 ctx.draw(Text(Image(systemName: hidden ? "eye.slash" : "eye"))
-                            .font(.system(size: 9))
+                            .font(.system(size: 10))
                             .foregroundStyle(hidden ? Color.gray : Color(white: 0.55)),
-                         at: CGPoint(x: size.width - 14, y: y + presenceStripH / 2))
+                         at: CGPoint(x: size.width - 18, y: y + presenceStripH / 2))
             }
             if let dragging = draggingRow,
                let targetY = insertionLineY(for: dragging) {
@@ -412,7 +404,7 @@ struct StudioTimelineView: View {
                 }
                 if let tr = resizingTrack {
                     let delta = value.location.y - value.startLocation.y
-                    trackHeights[tr.key] = min(220, max(tr.minHeight, tr.baseHeight + delta))
+                    trackHeights[tr.key] = min(320, max(tr.minHeight, tr.baseHeight + delta))
                     return
                 }
                 if let dragging = draggingRow {
@@ -589,13 +581,13 @@ struct StudioTimelineView: View {
 
     private let captionStripH: CGFloat = 13
     /// Per-lane presence strip (eye markers) at the top of every row.
-    private let presenceStripH: CGFloat = 12
+    private let presenceStripH: CGFloat = 18
 
     /// Character lane vertical layout: captions strip, then audio clips, then
     /// the seven event sub-lanes. Everything gets its own band — no overlap.
     private func characterLaneZones(h: CGFloat) -> (clipTop: CGFloat, clipH: CGFloat,
                                                     eventTop: CGFloat, subH: CGFloat) {
-        let clipH: CGFloat = min(26, max(14, (h - presenceStripH - 8) * 0.4))
+        let clipH: CGFloat = max(14, (h - presenceStripH - 8) * 0.45)
         let clipTop = presenceStripH + 2
         let eventTop = clipTop + clipH + 2
         let subH = max(2, (h - eventTop - 4) / 7)

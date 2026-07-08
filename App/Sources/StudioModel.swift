@@ -108,7 +108,21 @@ final class StudioModel {
     }
 
     init(document: ShowDocument) {
-        self.document = document
+        var doc = document
+        // Exactly one Background track, always present: create it if missing,
+        // fold any extras' cues into the first.
+        if doc.stage.backgroundTracks.isEmpty {
+            doc.stage.backgroundTracks = [BackgroundTrack(id: ShowDocumentFile.newID(),
+                                                          name: "Background")]
+        } else if doc.stage.backgroundTracks.count > 1 {
+            var first = doc.stage.backgroundTracks[0]
+            for extra in doc.stage.backgroundTracks.dropFirst() {
+                first.cues.append(contentsOf: extra.cues)
+            }
+            first.cues.sort { $0.start < $1.start }
+            doc.stage.backgroundTracks = [first]
+        }
+        self.document = doc
         self.activeSceneIndex = 0
     }
 
