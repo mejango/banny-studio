@@ -2466,6 +2466,7 @@ struct TransportBar: View {
                    model.scene.lightTracks.contains(where: { $0.id == key }) {
                     lightChip(title: "Move", keys: ["←", "→", "↑", "↓"])
                     lightChip(title: "Intensity", keys: ["−", "+"])
+                    lightChip(title: "Size", keys: ["1", "2"])
                 } else {
                     let pose = livePose
                     ForEach(EventGroup.allCases, id: \.self) { group in

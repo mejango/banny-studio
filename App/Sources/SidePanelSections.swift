@@ -180,6 +180,17 @@ struct LightCueInspector: View {
                 Text("drag the yellow point on the stage to aim the shadows; hit REC on the track to draw its motion")
                     .font(.caption2).foregroundStyle(.secondary)
                 HStack {
+                    Text("size").font(.caption2).frame(width: 60, alignment: .leading)
+                    Slider(value: Binding(
+                        get: { binding.wrappedValue.from.size },
+                        set: { v in
+                            var cue = binding.wrappedValue
+                            cue.from.size = v
+                            if cue.to != nil { cue.to?.size = v }
+                            binding.wrappedValue = cue
+                        }), in: 40...300)
+                }
+                HStack {
                     Text("intensity").font(.caption2).frame(width: 60, alignment: .leading)
                     Slider(value: Binding(
                         get: { binding.wrappedValue.from.intensity },

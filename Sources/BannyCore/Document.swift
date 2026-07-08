@@ -395,7 +395,8 @@ public struct SceneState: Equatable, Sendable {
         for track in lightTracks where !track.hidden && track.presence.isPresent(at: t) {
             for cue in track.cues where t >= cue.start && t < cue.start + cue.dur {
                 let state = cue.state(at: t)
-                out.append(ResolvedLight(x: state.x, y: state.y, intensity: state.intensity))
+                out.append(ResolvedLight(x: state.x, y: state.y,
+                                         intensity: state.intensity, size: state.size))
             }
         }
         if out.isEmpty {
@@ -723,16 +724,29 @@ extension Pan: Codable {
     }
 }
 
-/// A light on stage at a moment: position (normalized) + intensity 0..1.
+/// A light on stage at a moment: position (normalized), intensity 0..1, and
+/// size (physical breadth; 120 = web default — bigger softens/widens shadows).
 public struct LightState: Codable, Equatable, Sendable {
     public var x: Double
     public var y: Double
     public var intensity: Double
+    public var size: Double
 
-    public init(x: Double = 0.8, y: Double = 0.18, intensity: Double = 1) {
+    public init(x: Double = 0.8, y: Double = 0.18, intensity: Double = 1, size: Double = 120) {
         self.x = x
         self.y = y
         self.intensity = intensity
+        self.size = size
+    }
+
+    private enum CodingKeys: String, CodingKey { case x, y, intensity, size }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        x = try c.decode(Double.self, forKey: .x)
+        y = try c.decode(Double.self, forKey: .y)
+        intensity = try c.decodeIfPresent(Double.self, forKey: .intensity) ?? 1
+        size = try c.decodeIfPresent(Double.self, forKey: .size) ?? 120
     }
 }
 
@@ -741,11 +755,13 @@ public struct ResolvedLight: Equatable, Sendable {
     public var x: Double
     public var y: Double
     public var intensity: Double
+    public var size: Double
 
-    public init(x: Double, y: Double, intensity: Double) {
+    public init(x: Double, y: Double, intensity: Double, size: Double = 120) {
         self.x = x
         self.y = y
         self.intensity = intensity
+        self.size = size
     }
 }
 
@@ -800,7 +816,8 @@ public struct LightCue: Codable, Equatable, Identifiable, Sendable {
         let k = min(1, max(0, (t - start) / dur))
         return LightState(x: from.x + (to.x - from.x) * k,
                           y: from.y + (to.y - from.y) * k,
-                          intensity: from.intensity + (to.intensity - from.intensity) * k)
+                          intensity: from.intensity + (to.intensity - from.intensity) * k,
+                          size: from.size + (to.size - from.size) * k)
     }
 }
 

@@ -91,10 +91,14 @@ public struct FrameRenderer: Sendable {
                                                light: Light(x: light.x, y: light.y),
                                                stageWidth: W, virtualHeight: H)
                     guard s.opacity > 0 else { continue }
+                    // Bigger lights cast wider, softer shadows (120 = neutral).
+                    let f = light.size / 120
+                    let widen = 0.85 + 0.15 * f
+                    let soften = min(1.2, max(0.3, 1.3 - 0.3 * f))
                     ctx.saveGState()
-                    ctx.setAlpha(CGFloat(s.opacity * light.intensity))
+                    ctx.setAlpha(CGFloat(s.opacity * light.intensity * soften))
                     ctx.translateBy(x: CGFloat(s.x + 75), y: CGFloat(s.y + StageLayout.shadowSize.height / 2))
-                    ctx.scaleBy(x: CGFloat(s.scaleX), y: CGFloat(s.scaleY))
+                    ctx.scaleBy(x: CGFloat(s.scaleX * widen), y: CGFloat(s.scaleY))
                     drawImage(shadow, in: CGRect(x: -75, y: -StageLayout.shadowSize.height / 2,
                                                  width: StageLayout.shadowSize.width,
                                                  height: StageLayout.shadowSize.height), ctx: ctx)

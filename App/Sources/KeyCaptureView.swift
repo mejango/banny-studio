@@ -110,6 +110,7 @@ struct KeyCaptureView: NSViewRepresentable {
                 let lightMap: [UInt16: StudioModel.LightKey] = [
                     123: .left, 124: .right, 126: .up, 125: .down,
                     24: .plus, 69: .plus, 27: .minus, 78: .minus,
+                    18: .sizeDown, 19: .sizeUp,
                 ]
                 if let lk = lightMap[event.keyCode] {
                     if !event.isARepeat { model.lightKey(lk, down: down) }

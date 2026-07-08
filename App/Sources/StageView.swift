@@ -81,14 +81,15 @@ struct StageView: View {
         if model.isLightRecording {
             if let pen = model.lightPenNow {
                 let p = CGPoint(x: pen.x * size.width, y: pen.y * size.height)
+                let r = max(6, min(24, 10 * pen.size / 120))
                 context.fill(Path(ellipseIn: CGRect(x: p.x - 4, y: p.y - 4, width: 8, height: 8)),
-                             with: .color(.yellow))
-                context.stroke(Path(ellipseIn: CGRect(x: p.x - 8, y: p.y - 8, width: 16, height: 16)),
+                             with: .color(.black))
+                context.stroke(Path(ellipseIn: CGRect(x: p.x - r, y: p.y - r, width: r * 2, height: r * 2)),
                                with: .color(.red), lineWidth: 1.5)
                 context.draw(Text(String(format: "☀ %.0f%%", pen.intensity * 100))
                                 .font(.system(size: 9, weight: .bold))
-                                .foregroundStyle(.yellow),
-                             at: CGPoint(x: p.x, y: p.y - 18))
+                                .foregroundStyle(.black),
+                             at: CGPoint(x: p.x, y: p.y - r - 8))
             }
             return
         }
@@ -104,14 +105,14 @@ struct StageView: View {
                 ?? track.cues.first?.from
             if let state {
                 let p = CGPoint(x: state.x * size.width, y: state.y * size.height)
-                let r: CGFloat = 10
+                let r = max(6, min(24, 10 * state.size / 120))
                 context.stroke(Path(ellipseIn: CGRect(x: p.x - r, y: p.y - r, width: r * 2, height: r * 2)),
-                               with: .color(.yellow), style: StrokeStyle(lineWidth: 1.5, dash: [4, 3]))
+                               with: .color(.black), style: StrokeStyle(lineWidth: 1.5, dash: [4, 3]))
                 context.fill(Path(ellipseIn: CGRect(x: p.x - 2.5, y: p.y - 2.5, width: 5, height: 5)),
-                             with: .color(.yellow))
+                             with: .color(.black))
                 context.draw(Text(String(format: "☀ %.0f%%", state.intensity * 100))
                                 .font(.system(size: 9, weight: .bold))
-                                .foregroundStyle(.yellow),
+                                .foregroundStyle(.black),
                              at: CGPoint(x: p.x, y: p.y - r - 8))
             }
             return
@@ -122,15 +123,15 @@ struct StageView: View {
         guard model.time >= cue.start, model.time < cue.start + cue.dur else { return }
         let state = cue.state(at: model.time)
         let p = CGPoint(x: state.x * size.width, y: state.y * size.height)
-        let r: CGFloat = 10
+        let r = max(6, min(24, 10 * state.size / 120))
         context.stroke(Path(ellipseIn: CGRect(x: p.x - r, y: p.y - r, width: r * 2, height: r * 2)),
-                       with: .color(.yellow), style: StrokeStyle(lineWidth: 1.5, dash: [4, 3]))
+                       with: .color(.black), style: StrokeStyle(lineWidth: 1.5, dash: [4, 3]))
         context.fill(Path(ellipseIn: CGRect(x: p.x - 2.5, y: p.y - 2.5, width: 5, height: 5)),
-                     with: .color(.yellow))
+                     with: .color(.black))
         // Rays hint + intensity readout.
         context.draw(Text(String(format: "☀ %.0f%%", state.intensity * 100))
                         .font(.system(size: 9, weight: .bold))
-                        .foregroundStyle(.yellow),
+                        .foregroundStyle(.black),
                      at: CGPoint(x: p.x, y: p.y - r - 8))
     }
 
