@@ -60,6 +60,7 @@ struct WideEditor: View {
                 header
                 StageView(model: model, file: file)
                     .frame(width: CGFloat(stageWidth), height: CGFloat(stageBoxH))
+                    .background(Color.black)
                     .overlay(alignment: .bottom) {
                         if showDeck {
                             PerformanceDeck(model: model)

@@ -53,7 +53,7 @@ struct StageView: View {
             }
         }
         .aspectRatio(16 / 9, contentMode: .fit)
-        .background(lightMode ? Color(red: 0.82, green: 0.81, blue: 0.78) : Color.black)
+        .background(Color.black)
         .gesture(stageDrag)
     }
 
