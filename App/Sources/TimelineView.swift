@@ -728,6 +728,29 @@ struct StudioTimelineView: View {
                             .font(.system(size: 10))
                             .foregroundStyle(hidden ? Color.gray : theme.mutedText),
                          at: CGPoint(x: size.width - 18, y: y + presenceStripH / 2))
+                // Motion readouts beside the outfit card.
+                if case .character(let ci) = row, let c = model.scene.characters[safe: ci] {
+                    let available = h - presenceStripH - 16
+                    if available >= 26, size.width >= 120 {
+                        let cardH = min(available, (size.width - 56) * 54 / 30)
+                        let tx = 12 + (cardH * 30 / 54).rounded() + 10
+                        let sizeName = abs(c.size - 1) < 0.01 ? "Normal"
+                            : abs(c.size - 0.62) < 0.01 ? "Small"
+                            : abs(c.size - 0.38) < 0.01 ? "Baby"
+                            : String(format: "%.2f", c.size)
+                        let lines = ["speed \(Int(c.speed))",
+                                     "wobble \(String(format: "%.1f", c.wobble))",
+                                     "size \(sizeName)"]
+                        for (li, line) in lines.enumerated() {
+                            let ly = y + presenceStripH + 13 + CGFloat(li) * 13
+                            if ly < y + h - 10 {
+                                ctx.draw(Text(line).font(.system(size: 8.5, weight: .medium))
+                                            .foregroundStyle(theme.mutedText),
+                                         at: CGPoint(x: tx, y: ly), anchor: .leading)
+                            }
+                        }
+                    }
+                }
             }
         }
         .gesture(gutterInteraction)
