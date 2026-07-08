@@ -170,8 +170,8 @@ struct StudioTimelineView: View {
                 headerBand
             }
             .frame(height: lanesTop)
-            ZStack(alignment: .topLeading) {
-                ScrollView([.horizontal, .vertical]) {
+            ScrollView([.horizontal, .vertical]) {
+                ZStack(alignment: .topLeading) {
                     ZStack(alignment: .topLeading) {
                         GeometryReader { geo in
                             Color.clear.preference(key: TLOffsetKey.self,
@@ -199,17 +199,17 @@ struct StudioTimelineView: View {
                         }
                     }
                     .padding(.leading, laneLabelWidth)
-                    .frame(width: laneLabelWidth + max(600, contentWidth + 40),
-                           height: totalLaneHeight + 20, alignment: .topLeading)
+                    gutterCanvas
+                        .frame(width: laneLabelWidth, height: totalLaneHeight + 20)
+                        .offset(x: scrollOffset.x)
                 }
-                .coordinateSpace(name: "tlScroll")
-                .onPreferenceChange(TLOffsetKey.self) { origin in
-                    // origin.x includes the leading gutter padding at rest.
-                    scrollOffset = CGPoint(x: laneLabelWidth - origin.x, y: -origin.y)
-                }
-                gutterCanvas
-                    .frame(width: laneLabelWidth)
-                    .clipped()
+                .frame(width: laneLabelWidth + max(600, contentWidth + 40),
+                       height: totalLaneHeight + 20, alignment: .topLeading)
+            }
+            .coordinateSpace(name: "tlScroll")
+            .onPreferenceChange(TLOffsetKey.self) { origin in
+                // origin.x includes the leading gutter padding at rest.
+                scrollOffset = CGPoint(x: laneLabelWidth - origin.x, y: -origin.y)
             }
             newTrackRow
         }
@@ -427,11 +427,9 @@ struct StudioTimelineView: View {
 
     /// Pinned label gutter: names, eye toggles, track-height pills, width handle.
     private var gutterCanvas: some View {
-        Canvas { ctx0, size in
-            ctx0.fill(Path(CGRect(origin: .zero, size: size)),
-                      with: .color(theme.gutterBase))
-            var ctx = ctx0
-            ctx.translateBy(x: 0, y: -scrollOffset.y)
+        Canvas { ctx, size in
+            ctx.fill(Path(CGRect(origin: .zero, size: size)),
+                     with: .color(theme.gutterBase))
             ctx.stroke(Path { p in
                 p.move(to: CGPoint(x: size.width - 0.5, y: 0))
                 p.addLine(to: CGPoint(x: size.width - 0.5, y: size.height))
@@ -537,21 +535,21 @@ struct StudioTimelineView: View {
                     return
                 }
                 if let dragging = draggingRow {
-                    draggingRow = (dragging.row, value.location.y + scrollOffset.y)
+                    draggingRow = (dragging.row, value.location.y)
                     return
                 }
                 if abs(value.startLocation.x - laneLabelWidth) < 6 {
                     resizingGutter = true
                     return
                 }
-                if let row = rowNearBottomEdge(of: value.startLocation.y + scrollOffset.y) {
+                if let row = rowNearBottomEdge(of: value.startLocation.y) {
                     resizingTrack = (row.key(in: model.scene), height(of: row), minHeight(of: row))
                     return
                 }
                 // Vertical pull on a row label lifts the row for reordering.
                 if abs(value.translation.height) > 8,
-                   let row = row(at: value.startLocation.y + scrollOffset.y) {
-                    draggingRow = (row, value.location.y + scrollOffset.y)
+                   let row = row(at: value.startLocation.y) {
+                    draggingRow = (row, value.location.y)
                 }
             }
             .onEnded { value in
@@ -563,7 +561,7 @@ struct StudioTimelineView: View {
                     return
                 }
                 if value.translation.width.magnitude < 3, value.translation.height.magnitude < 3,
-                   let row = row(at: value.location.y + scrollOffset.y) {
+                   let row = row(at: value.location.y) {
                     if value.location.x > laneLabelWidth - 24 {
                         toggleHidden(row)
                     } else if case .character(let i) = row {
