@@ -107,9 +107,17 @@ public struct FrameRenderer: Sendable {
             drawCharacter(scene.characters[e.index], pose: e.pose, placement: e.placement, in: ctx)
         }
 
-        drawCaptions(entries.compactMap { entry in
-            entry.pose.activeSubtitle.map { (speaker: scene.characters[entry.index], text: $0) }
-        }, W: W, outH: outH, H: H, in: ctx)
+        // Captions gate on track visibility only — a presence-hidden character
+        // still speaks (its audio plays), so its line still shows.
+        var captionLines: [(speaker: Character, text: String)] = []
+        for i in scene.characters.indices where !scene.characters[i].hidden {
+            let pose = entries.first(where: { $0.index == i })?.pose
+                ?? sim.pose(characterIndex: i, at: t)
+            if let text = pose.activeSubtitle {
+                captionLines.append((scene.characters[i], text))
+            }
+        }
+        drawCaptions(captionLines, W: W, outH: outH, H: H, in: ctx)
 
         ctx.restoreGState()
     }

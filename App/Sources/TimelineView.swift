@@ -1703,6 +1703,19 @@ struct StudioTimelineView: View {
         return nil
     }
 
+    private func dlog(_ msg: String) {
+        guard UserDefaults.standard.bool(forKey: "debugDrag") else { return }
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("dragtest.log")
+        let line = msg + "\n"
+        if let h = try? FileHandle(forWritingTo: url) {
+            h.seekToEndOfFile()
+            h.write(line.data(using: .utf8)!)
+            try? h.close()
+        } else {
+            try? line.write(to: url, atomically: true, encoding: .utf8)
+        }
+    }
+
     private func handleLaneDrag(_ value: DragGesture.Value) {
 
         if let d = draggingClip {
@@ -1825,6 +1838,7 @@ struct StudioTimelineView: View {
                 let endX = x(forTime: cue.start + cue.dur)
                 let e = abs(value.startLocation.x - startX) < edge ? -1
                     : abs(value.startLocation.x - endX) < edge ? 1 : 0
+                dlog("grab cue row=\(row) id=\(cue.id.prefix(5)) e=\(abs(value.startLocation.x - startX) < edge ? -1 : abs(value.startLocation.x - endX) < edge ? 1 : 0) sx=\(Int(value.startLocation.x)) startX=\(Int(startX)) endX=\(Int(endX))")
                 var cueID = cue.id
                 #if os(macOS)
                 // ⌘-drag duplicates the cue and drags the copy.
@@ -1838,6 +1852,7 @@ struct StudioTimelineView: View {
                 return
             } else {
                 // Empty space: rubber-band select a region.
+                dlog("grab marquee sx=\(Int(value.startLocation.x)) sy=\(Int(value.startLocation.y))")
                 marquee = (value.startLocation, value.location)
                 return
             }
@@ -2037,9 +2052,13 @@ struct StudioTimelineView: View {
             update(start: &model.scene.imageTracks[i].cues[ci].start,
                    dur: &model.scene.imageTracks[i].cues[ci].dur)
         case .light(let i):
-            guard let ci = model.scene.lightTracks[i].cues.firstIndex(where: { $0.id == dc.cueID }) else { return }
+            guard let ci = model.scene.lightTracks[i].cues.firstIndex(where: { $0.id == dc.cueID }) else {
+                dlog("applyCueDrag LIGHT: cue \(dc.cueID.prefix(5)) NOT FOUND in track \(i)")
+                return
+            }
             update(start: &model.scene.lightTracks[i].cues[ci].start,
                    dur: &model.scene.lightTracks[i].cues[ci].dur)
+            dlog("applyCueDrag LIGHT dt=\(String(format: "%.2f", dt)) edge=\(dc.edge) dur=\(String(format: "%.2f", model.scene.lightTracks[i].cues[ci].dur))")
         case .background(let i):
             guard let ci = model.scene.backgroundTracks[i].cues.firstIndex(where: { $0.id == dc.cueID }) else { return }
             update(start: &model.scene.backgroundTracks[i].cues[ci].start,
