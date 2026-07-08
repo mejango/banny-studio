@@ -1342,35 +1342,58 @@ struct StudioTimelineView: View {
                            animated: cue.to != nil, ctx: content)
             }
         case .light(let i):
-            for cue in model.scene.lightTracks[i].cues {
-                drawCueBar(start: cue.start, dur: cue.dur, y: y, h: h,
-                           color: Color(red: 0.95, green: 0.78, blue: 0.25),
-                           label: cue.label ?? "light",
-                           assetID: "",
-                           selected: model.selectedLightCue == cue.id,
-                           animated: cue.to != nil, ctx: content)
-                // Change lanes under the bar, colored like the pen chips:
-                // move (blue), intensity (yellow), size (purple).
-                guard let to = cue.to else { continue }
-                let x0 = x(forTime: cue.start)
-                let w = max(2, CGFloat(cue.dur) * pxPerSecond)
-                let laneY = y + h - 14
-                var lane = 0
-                func changeBar(_ changed: Bool, _ color: Color) {
-                    if changed {
-                        content.fill(Path(roundedRect: CGRect(x: x0, y: laneY + CGFloat(lane) * 4,
-                                                              width: w, height: 3),
-                                          cornerRadius: 1.5),
-                                     with: .color(color))
-                    }
-                    lane += 1
+            // Contiguous cue chains (recorded takes) render as ONE bar with
+            // per-segment change lanes beneath, like character event lanes.
+            let sorted = model.scene.lightTracks[i].cues.sorted { $0.start < $1.start }
+            var runs: [[LightCue]] = []
+            for cue in sorted {
+                if let prev = runs.last?.last, abs(prev.start + prev.dur - cue.start) < 0.02 {
+                    runs[runs.count - 1].append(cue)
+                } else {
+                    runs.append([cue])
                 }
-                changeBar(abs(to.x - cue.from.x) > 0.002 || abs(to.y - cue.from.y) > 0.002,
-                          Color(red: 0.45, green: 0.62, blue: 0.95))
-                changeBar(abs(to.intensity - cue.from.intensity) > 0.005,
-                          Color(red: 0.95, green: 0.78, blue: 0.25))
-                changeBar(abs(to.size - cue.from.size) > 1,
-                          Color(red: 0.75, green: 0.55, blue: 0.95))
+            }
+            for run in runs {
+                guard let first = run.first, let last = run.last else { continue }
+                let runStart = first.start
+                let runEnd = last.start + last.dur
+                let anySelected = run.contains { model.selectedLightCue == $0.id }
+                drawCueBar(start: runStart, dur: runEnd - runStart, y: y, h: h,
+                           color: Color(red: 0.95, green: 0.78, blue: 0.25),
+                           label: first.label ?? "light",
+                           assetID: "",
+                           selected: anySelected,
+                           animated: run.contains { $0.to != nil }, ctx: content)
+                // Selected segment inside a chain gets its own outline.
+                if run.count > 1, let sel = run.first(where: { model.selectedLightCue == $0.id }) {
+                    let rect = CGRect(x: x(forTime: sel.start), y: y + presenceStripH + 2,
+                                      width: max(4, CGFloat(sel.dur) * pxPerSecond),
+                                      height: h - presenceStripH - 6)
+                    content.stroke(Path(roundedRect: rect, cornerRadius: 2),
+                                   with: .color(.white.opacity(0.9)), lineWidth: 1)
+                }
+                for cue in run {
+                    guard let to = cue.to else { continue }
+                    let x0 = x(forTime: cue.start)
+                    let w = max(2, CGFloat(cue.dur) * pxPerSecond)
+                    let laneY = y + h - 14
+                    var lane = 0
+                    func changeBar(_ changed: Bool, _ color: Color) {
+                        if changed {
+                            content.fill(Path(roundedRect: CGRect(x: x0, y: laneY + CGFloat(lane) * 4,
+                                                                  width: w, height: 3),
+                                              cornerRadius: 1.5),
+                                         with: .color(color))
+                        }
+                        lane += 1
+                    }
+                    changeBar(abs(to.x - cue.from.x) > 0.002 || abs(to.y - cue.from.y) > 0.002,
+                              Color(red: 0.45, green: 0.62, blue: 0.95))
+                    changeBar(abs(to.intensity - cue.from.intensity) > 0.005,
+                              Color(red: 0.95, green: 0.78, blue: 0.25))
+                    changeBar(abs(to.size - cue.from.size) > 1,
+                              Color(red: 0.75, green: 0.55, blue: 0.95))
+                }
             }
         case .background(let i):
             let cues = model.scene.backgroundTracks[i].cues
@@ -2623,11 +2646,11 @@ struct TransportBar: View {
         if model.isImageRecording || (model.selectedImageCue != nil
             && (model.scene.audioTracks.contains { $0.id == model.selectedTrackKey }
                 || model.scene.imageTracks.contains { $0.id == model.selectedTrackKey })) {
-            return "image — drag on stage"
+            return "image"
         }
         if let key = model.selectedTrackKey,
            let t = model.scene.lightTracks.first(where: { $0.id == key }) {
-            return "\(t.name) — draw on stage"
+            return t.name
         }
         let indices = model.recording ? Array(model.recTargets).sorted()
                                       : Array(model.selection).sorted()
