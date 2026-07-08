@@ -248,8 +248,10 @@ struct StudioTimelineView: View {
                 // Starting-outfit cards: click to edit the base wardrobe.
                 ForEach(Array(model.scene.characters.indices), id: \.self) { ci in
                     let row = TrackRow.character(ci)
-                    if height(of: row) - presenceStripH >= 66 {
-                        OutfitCardButton(model: model, characterIndex: ci)
+                    let available = height(of: row) - presenceStripH - 16
+                    if available >= 30 {
+                        OutfitCardButton(model: model, characterIndex: ci,
+                                         cardHeight: min(54, available))
                             .offset(x: 10, y: laneTop(of: row) + presenceStripH + 4 - scrollOffset.y)
                     }
                 }

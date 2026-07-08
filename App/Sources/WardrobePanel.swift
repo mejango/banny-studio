@@ -217,13 +217,14 @@ struct OutfitCard: View {
 struct OutfitCardButton: View {
     @Bindable var model: StudioModel
     let characterIndex: Int
+    var cardHeight: CGFloat = 54
     @State private var editing = false
 
     var body: some View {
         if let c = model.scene.characters[safe: characterIndex] {
             Button { editing = true } label: {
                 OutfitCard(character: c)
-                    .frame(width: 30, height: 54)
+                    .frame(width: (cardHeight * 30 / 54).rounded(), height: cardHeight)
                     .clipShape(RoundedRectangle(cornerRadius: 4))
                     .overlay(RoundedRectangle(cornerRadius: 4)
                         .stroke(Color.primary.opacity(0.3), lineWidth: 1))
