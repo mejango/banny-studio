@@ -787,7 +787,7 @@ struct StudioTimelineView: View {
                 ctx.stroke(Path { p in
                     p.move(to: CGPoint(x: 0, y: y + h - 1))
                     p.addLine(to: CGPoint(x: size.width, y: y + h - 1))
-                }, with: .color(.black), lineWidth: 2)
+                }, with: .color(lightMode ? Color.black.opacity(0.22) : .black), lineWidth: lightMode ? 1 : 2)
                 let pillActive = resizingTrack?.key == row.key(in: model.scene)
                 ctx.fill(Path(roundedRect: CGRect(x: size.width / 2 - 12, y: y + h - 8,
                                                   width: 24, height: 2), cornerRadius: 1),
@@ -1088,7 +1088,7 @@ struct StudioTimelineView: View {
         ctx.stroke(Path { p in
             p.move(to: CGPoint(x: 0, y: y + h - 1))
             p.addLine(to: CGPoint(x: size.width, y: y + h - 1))
-        }, with: .color(.black), lineWidth: 2)
+        }, with: .color(lightMode ? Color.black.opacity(0.22) : .black), lineWidth: lightMode ? 1 : 2)
 
         drawPresenceStrip(row, y: y, ctx: ctx)
 
@@ -1182,7 +1182,7 @@ struct StudioTimelineView: View {
         ctx.stroke(Path { p in
             p.move(to: CGPoint(x: 0, y: y + captionsRowH))
             p.addLine(to: CGPoint(x: size.width, y: y + captionsRowH))
-        }, with: .color(.black), lineWidth: 1)
+        }, with: .color(lightMode ? Color.black.opacity(0.22) : .black), lineWidth: 1)
         for (ci, character) in model.scene.characters.enumerated() {
             let tint = Color(red: 0.92, green: 0.9, blue: 0.82)
             _ = character
