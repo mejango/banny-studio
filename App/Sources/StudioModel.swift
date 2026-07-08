@@ -459,8 +459,108 @@ final class StudioModel {
 
     // MARK: - Recording (web tlRec / recEvent / punch-in)
 
+    // MARK: - Light path recording ("draw" the light over time)
+
+    private(set) var lightRecordTrack: Int?
+    private var lightSamples: [(t: Double, x: Double, y: Double)] = []
+    var isLightRecording: Bool { lightRecordTrack != nil }
+    var lastLightSample: (t: Double, x: Double, y: Double)? { lightSamples.last }
+
+    /// Stage drags while light-recording feed the path.
+    func lightRecordSample(x: Double, y: Double) {
+        guard isLightRecording else { return }
+        let clampedX = min(1.1, max(-0.1, x))
+        let clampedY = min(1.1, max(-0.1, y))
+        if let last = lightSamples.last, time - last.t < 0.15 { return } // ~7Hz
+        lightSamples.append((time, clampedX, clampedY))
+    }
+
+    /// Turns the drawn samples into a chain of linear cues, punching in over
+    /// whatever the track had in that range.
+    private func commitLightRecording() {
+        defer {
+            lightRecordTrack = nil
+            lightSamples = []
+        }
+        guard let li = lightRecordTrack, scene.lightTracks.indices.contains(li),
+              lightSamples.count >= 2 else { return }
+        registerUndoSnapshot(label: "Record Light Path")
+        let t0 = lightSamples[0].t
+        let tEnd = lightSamples[lightSamples.count - 1].t
+        // Intensity carries over from whatever the light was doing at t0.
+        let intensity = scene.lightTracks[li].cues
+            .first { t0 >= $0.start && t0 < $0.start + $0.dur }?.state(at: t0).intensity ?? 1
+        // Simplify: drop samples that barely deviate from the line between
+        // their neighbours (keeps the cue count sane).
+        var pts = lightSamples
+        var i = 1
+        while i < pts.count - 1 {
+            let a = pts[i - 1], b = pts[i], c = pts[i + 1]
+            let span = max(0.001, c.t - a.t)
+            let f = (b.t - a.t) / span
+            let lx = a.x + (c.x - a.x) * f
+            let ly = a.y + (c.y - a.y) * f
+            if abs(lx - b.x) < 0.008, abs(ly - b.y) < 0.008 {
+                pts.remove(at: i)
+            } else {
+                i += 1
+            }
+        }
+        // Punch in: trim/remove existing cues overlapping the drawn range.
+        var cues = scene.lightTracks[li].cues
+        var repaired: [LightCue] = []
+        for var cue in cues {
+            let end = cue.start + cue.dur
+            if end <= t0 + 0.01 || cue.start >= tEnd - 0.01 {
+                repaired.append(cue)
+            } else if cue.start < t0, end > tEnd {
+                var tail = cue
+                tail.id = ShowDocumentFile.newID()
+                tail.from = cue.state(at: tEnd)
+                tail.start = tEnd
+                tail.dur = end - tEnd
+                if cue.to != nil { cue.to = cue.state(at: t0) }
+                cue.dur = t0 - cue.start
+                repaired.append(cue)
+                repaired.append(tail)
+            } else if cue.start < t0 {
+                if cue.to != nil { cue.to = cue.state(at: t0) }
+                cue.dur = t0 - cue.start
+                repaired.append(cue)
+            } else if end > tEnd {
+                cue.from = cue.state(at: tEnd)
+                cue.dur = end - tEnd
+                cue.start = tEnd
+                repaired.append(cue)
+            } // fully inside the range → dropped
+        }
+        cues = repaired
+        for k in 0..<(pts.count - 1) {
+            let a = pts[k], b = pts[k + 1]
+            guard b.t - a.t > 0.02 else { continue }
+            cues.append(LightCue(id: ShowDocumentFile.newID(),
+                                 start: a.t, dur: b.t - a.t,
+                                 from: LightState(x: a.x, y: a.y, intensity: intensity),
+                                 to: LightState(x: b.x, y: b.y, intensity: intensity)))
+        }
+        cues.sort { $0.start < $1.start }
+        scene.lightTracks[li].cues = cues
+    }
+
     func record() {
         if recording || playing { pause(); return }
+        // A selected light track records by DRAWING on the stage.
+        if let key = selectedTrackKey,
+           let li = scene.lightTracks.firstIndex(where: { $0.id == key }) {
+            clearFreeform()
+            lightRecordTrack = li
+            lightSamples = []
+            recording = true
+            playing = true
+            startWall = Date.timeIntervalSinceReferenceDate - time
+            file?.audioEngine?.syncPlayback(self)
+            return
+        }
         guard !selection.isEmpty else { return }
         // Freeform placement at the start becomes the take's start pose.
         for i in selection where startPoseMismatch(characterIndex: i) {
@@ -491,6 +591,11 @@ final class StudioModel {
     }
 
     private func finishRecording() {
+        if isLightRecording {
+            commitLightRecording()
+            recording = false
+            return
+        }
         // Close any still-held keys so no segment dangles open.
         for code in heldCodes { recordEvent(code: code, down: false) }
         recording = false

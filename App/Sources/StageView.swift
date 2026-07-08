@@ -75,6 +75,17 @@ struct StageView: View {
     /// Temporary editor-only handle for the selected light cue: lights never
     /// render in the scene, but while selected they show a draggable point.
     private func drawLightHandle(context: GraphicsContext, size: CGSize) {
+        // While drawing a light path, show the pen position.
+        if model.isLightRecording {
+            if let s = model.lastLightSample {
+                let p = CGPoint(x: s.x * size.width, y: s.y * size.height)
+                context.fill(Path(ellipseIn: CGRect(x: p.x - 4, y: p.y - 4, width: 8, height: 8)),
+                             with: .color(.yellow))
+                context.stroke(Path(ellipseIn: CGRect(x: p.x - 8, y: p.y - 8, width: 16, height: 16)),
+                               with: .color(.red), lineWidth: 1.5)
+            }
+            return
+        }
         // Editor-only affordance: never during playback.
         guard !model.playing, let path = model.selectedLightCuePath else { return }
         let cue = model.scene.lightTracks[path.track].cues[path.cue]
@@ -99,6 +110,11 @@ struct StageView: View {
     private var stageDrag: some Gesture {
         DragGesture(minimumDistance: 4)
             .onChanged { value in
+                if model.isLightRecording {
+                    model.lightRecordSample(x: value.location.x / stageSize.width,
+                                            y: value.location.y / stageSize.height)
+                    return
+                }
                 guard !model.playing, !model.recording else { return }
                 let prev = dragLast ?? .zero
                 let dx = (value.translation.width - prev.width) / stageSize.width

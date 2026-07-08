@@ -2506,6 +2506,10 @@ struct TransportBar: View {
 
     /// Who REC will capture: the locked targets while recording, else the selection.
     private var recTargetNames: String {
+        if let key = model.selectedTrackKey,
+           let t = model.scene.lightTracks.first(where: { $0.id == key }) {
+            return "\(t.name) — draw on stage"
+        }
         let indices = model.recording ? Array(model.recTargets).sorted()
                                       : Array(model.selection).sorted()
         let names = indices.compactMap { i -> String? in
