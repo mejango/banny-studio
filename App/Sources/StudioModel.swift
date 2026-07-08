@@ -449,12 +449,18 @@ final class StudioModel {
     }
 
     init(document: ShowDocument) {
+        var document = document
+        // Older documents called the scene track "Background".
+        for i in document.stage.backgroundTracks.indices
+        where document.stage.backgroundTracks[i].name == "Background" {
+            document.stage.backgroundTracks[i].name = "Scenes"
+        }
         var doc = document
         // Exactly one Background track, always present: create it if missing,
         // fold any extras' cues into the first.
         if doc.stage.backgroundTracks.isEmpty {
             doc.stage.backgroundTracks = [BackgroundTrack(id: ShowDocumentFile.newID(),
-                                                          name: "Background")]
+                                                          name: "Scenes")]
         } else if doc.stage.backgroundTracks.count > 1 {
             var first = doc.stage.backgroundTracks[0]
             for extra in doc.stage.backgroundTracks.dropFirst() {
@@ -465,7 +471,7 @@ final class StudioModel {
         }
         if doc.stage.backgroundTracks[0].name == "Backgrounds" {
             // Pre-rename documents used the plural.
-            doc.stage.backgroundTracks[0].name = "Background"
+            doc.stage.backgroundTracks[0].name = "Scenes"
         }
         self.document = doc
         self.activeSceneIndex = 0
@@ -1240,7 +1246,7 @@ final class StudioModel {
         let time = startTime ?? self.time
         registerUndoSnapshot(label: "Set Background")
         if scene.backgroundTracks.isEmpty {
-            scene.backgroundTracks = [BackgroundTrack(id: ShowDocumentFile.newID(), name: "Background")]
+            scene.backgroundTracks = [BackgroundTrack(id: ShowDocumentFile.newID(), name: "Scenes")]
         }
         // New cue runs from the playhead to the end of content (or +30s).
         let end = max(scene.contentEnd, time + 30)

@@ -4,6 +4,7 @@ import UniformTypeIdentifiers
 /// Header project dropdown: rename the current project, spin up a new one,
 /// or import a shared .bs archive (zipped .bannyshow package).
 struct ProjectMenu: View {
+    @AppStorage("studioLightMode") private var lightMode = false
     @State private var projectName = ""
     @State private var importing = false
     @State private var importError: String?
@@ -25,7 +26,7 @@ struct ProjectMenu: View {
                 Image(systemName: "chevron.down")
                     .font(.system(size: 8, weight: .bold))
             }
-            .foregroundStyle(Color(white: 0.6))
+            .foregroundStyle(lightMode ? Color.black : Color(red: 0.92, green: 0.92, blue: 0.92))
         }
         .onHover { if $0 { refreshName() } }
         .menuStyle(.button)

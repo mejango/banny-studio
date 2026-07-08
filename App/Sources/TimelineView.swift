@@ -189,6 +189,10 @@ struct StudioTimelineView: View {
     @State private var audioImportAt: (trackIndex: Int, t: Double)?
     /// Empty media-lane click: add-menu popover (import / bank / paste).
     @State private var mediaAddAt: (trackIndex: Int, t: Double, x: CGFloat, y: CGFloat)?
+    /// Collapsed scene sections (background cue ids) — folded to thin strips.
+    @State private var collapsedSections: Set<String> = []
+    /// Left-click options popover for a background (scene) cue.
+    @State private var bgOptions: (cueID: String, x: CGFloat, y: CGFloat)?
     @State private var imageImportAt: (trackIndex: Int, t: Double)?
     /// Wardrobe-strip click: add a timed outfit change here.
     @State private var outfitPopover: (char: Int, t: Double, x: CGFloat, y: CGFloat)?
@@ -370,7 +374,7 @@ struct StudioTimelineView: View {
                         var tr = Transaction()
                         tr.disablesAnimations = true
                         withTransaction(tr) {
-                            zoom = min(16, max(0.25, base * g.magnification))
+                            zoom = min(16, max(minZoomOut, base * g.magnification))
                             if let p = pinchAnchor { keepTime(p.t, atViewX: p.vx, fy: p.fy) }
                         }
                     }
@@ -579,10 +583,62 @@ struct StudioTimelineView: View {
         return nil
     }
 
+    /// Zoom floor: far enough out that the whole show fits the viewport.
+    private var minZoomOut: Double {
+        let fit = Double(max(200, tlViewport.width) - 60) / (max(1, model.duration) * 30)
+        return min(0.25, max(0.02, fit))
+    }
     private var pxPerSecond: CGFloat { 30 * zoom }
-    private var contentWidth: CGFloat { CGFloat(model.duration) * pxPerSecond }
-    private func x(forTime t: Double) -> CGFloat { 1 + CGFloat(t) * pxPerSecond }
-    private func time(forX x: CGFloat) -> Double { max(0, Double((x - 1) / pxPerSecond)) }
+    private var contentWidth: CGFloat { x(forTime: model.duration) - 1 }
+
+    // Collapsed scenes fold their time range down to a thin strip so the
+    // sections you're not working on get out of the way. All time<->x
+    // conversion goes through these two functions.
+    private let foldStripW: CGFloat = 14
+    private var folds: [(from: Double, to: Double)] {
+        guard !collapsedSections.isEmpty else { return [] }
+        var out: [(Double, Double)] = []
+        for tr in model.scene.backgroundTracks {
+            for c in tr.cues where collapsedSections.contains(c.id) {
+                out.append((c.start, c.start + c.dur))
+            }
+        }
+        return out.sorted { $0.0 < $1.0 }
+    }
+    private func folded(_ t: Double) -> Bool {
+        folds.contains { t > $0.from + 1e-9 && t < $0.to - 1e-9 }
+    }
+    private func x(forTime t: Double) -> CGFloat {
+        var x: CGFloat = 1 + CGFloat(t) * pxPerSecond
+        for f in folds {
+            if t >= f.to {
+                x -= CGFloat(f.to - f.from) * pxPerSecond - foldStripW
+            } else if t > f.from {
+                x -= CGFloat(t - f.from) * pxPerSecond
+                    - foldStripW * CGFloat((t - f.from) / max(0.001, f.to - f.from))
+            }
+        }
+        return x
+    }
+    private func time(forX px: CGFloat) -> Double {
+        var remaining = px - 1
+        var cursor = 0.0
+        for f in folds {
+            let openW = CGFloat(f.from - cursor) * pxPerSecond
+            if remaining <= openW { break }
+            remaining -= openW
+            if remaining <= foldStripW {
+                return f.from + (f.to - f.from) * Double(remaining / foldStripW)
+            }
+            remaining -= foldStripW
+            cursor = f.to
+        }
+        return max(0, cursor + Double(remaining / pxPerSecond))
+    }
+    /// Fold-aware width of a [start, start+dur] span.
+    private func xw(_ start: Double, _ dur: Double) -> CGFloat {
+        x(forTime: start + dur) - x(forTime: start)
+    }
 
     /// Programmatic scroll so `t` lands at view-x `vx` (zoom anchoring). Goes
     /// through ScrollViewProxy — writing the NSScrollView's bounds directly
@@ -728,7 +784,7 @@ struct StudioTimelineView: View {
                     var tr = Transaction()
                     tr.disablesAnimations = true
                     withTransaction(tr) {
-                        zoom = min(16, max(0.25, base * pow(2, dy / 90)))
+                        zoom = min(16, max(minZoomOut, base * pow(2, dy / 90)))
                         if let p = pinchAnchor { keepTime(p.t, atViewX: p.vx, fy: p.fy) }
                     }
                 }
@@ -1144,6 +1200,39 @@ struct StudioTimelineView: View {
                                     .frame(width: 240)
                                 }
                         }
+                        if let bo = bgOptions {
+                            let isCollapsed = collapsedSections.contains(bo.cueID)
+                            let allIDs = Set(model.scene.backgroundTracks
+                                .flatMap { $0.cues.map(\.id) })
+                            Color.clear
+                                .frame(width: 1, height: 1)
+                                .offset(x: bo.x, y: bo.y)
+                                .popover(isPresented: Binding(
+                                    get: { bgOptions != nil },
+                                    set: { if !$0 { bgOptions = nil } })) {
+                                    VStack(alignment: .leading, spacing: 8) {
+                                        Button(isCollapsed ? "Expand scene" : "Collapse scene") {
+                                            if isCollapsed { collapsedSections.remove(bo.cueID) }
+                                            else { collapsedSections.insert(bo.cueID) }
+                                            bgOptions = nil
+                                        }
+                                        if allIDs.count > 1 {
+                                            Button("Collapse other scenes") {
+                                                collapsedSections = allIDs.subtracting([bo.cueID])
+                                                bgOptions = nil
+                                            }
+                                        }
+                                        if !collapsedSections.isEmpty {
+                                            Button("Expand all") {
+                                                collapsedSections = []
+                                                bgOptions = nil
+                                            }
+                                        }
+                                    }
+                                    .padding(12)
+                                    .frame(width: 200)
+                                }
+                        }
                         if let cm = clipMix {
                             Color.clear
                                 .frame(width: 1, height: 1)
@@ -1245,6 +1334,7 @@ struct StudioTimelineView: View {
         if CGFloat(minor) * pxPerSecond >= 7 {
             var m: Double = 0
             while m <= model.duration {
+                if folded(m) { m += minor; continue }
                 let px = x(forTime: m)
                 ctx.stroke(Path { $0.move(to: CGPoint(x: px, y: top + rulerHeight - 6))
                                   $0.addLine(to: CGPoint(x: px, y: top + rulerHeight)) },
@@ -1254,6 +1344,7 @@ struct StudioTimelineView: View {
         }
         var t: Double = 0
         while t <= model.duration {
+            if folded(t) { t += step; continue }
             let px = x(forTime: t)
             ctx.stroke(Path { $0.move(to: CGPoint(x: px, y: top + 16))
                               $0.addLine(to: CGPoint(x: px, y: top + rulerHeight)) },
@@ -1377,7 +1468,7 @@ struct StudioTimelineView: View {
                 // Selected segment inside a chain gets its own outline.
                 if run.count > 1, let sel = run.first(where: { model.selectedLightCue == $0.id }) {
                     let rect = CGRect(x: x(forTime: sel.start), y: y + presenceStripH + 2,
-                                      width: max(4, CGFloat(sel.dur) * pxPerSecond),
+                                      width: max(4, xw(sel.start, sel.dur)),
                                       height: barH)
                     content.stroke(Path(roundedRect: rect, cornerRadius: 2),
                                    with: .color(.white.opacity(0.9)), lineWidth: 1)
@@ -1385,7 +1476,7 @@ struct StudioTimelineView: View {
                 for cue in run {
                     guard let to = cue.to else { continue }
                     let x0 = x(forTime: cue.start)
-                    let w = max(2, CGFloat(cue.dur) * pxPerSecond)
+                    let w = max(2, xw(cue.start, cue.dur))
                     let lanesTopY = y + presenceStripH + 2 + barH + 6
                     // Event lanes stretch to fill the row (easier targets).
                     let avail = max(9, y + h - 6 - lanesTopY)
@@ -1419,7 +1510,8 @@ struct StudioTimelineView: View {
                            assetID: cue.assetID,
                            selected: model.selectedBackgroundCue == cue.id,
                            animated: false,
-                           squareLeading: leadButt, squareTrailing: trailButt, ctx: content)
+                           squareLeading: leadButt, squareTrailing: trailButt,
+                           collapsed: collapsedSections.contains(cue.id), ctx: content)
             }
         }
 
@@ -1444,7 +1536,7 @@ struct StudioTimelineView: View {
                              ctx: GraphicsContext) {
         guard to > from else { return }
         let rect = CGRect(x: x(forTime: from), y: y + presenceStripH,
-                          width: CGFloat(to - from) * pxPerSecond, height: h - presenceStripH)
+                          width: xw(from, to - from), height: h - presenceStripH)
         ctx.fill(Path(rect), with: .color(theme.shade))
     }
 
@@ -1481,7 +1573,7 @@ struct StudioTimelineView: View {
             _ = character
             for (si, sub) in character.subs.enumerated() {
                 let rect = CGRect(x: x(forTime: sub.start), y: y + 2,
-                                  width: max(8, CGFloat(sub.dur) * pxPerSecond), height: captionsRowH - 4)
+                                  width: max(8, xw(sub.start, sub.dur)), height: captionsRowH - 4)
                 let selected = draggingSub?.char == ci && draggingSub?.index == si
                 ctx.fill(Path(roundedRect: rect, cornerRadius: 3),
                          with: .color(tint.opacity(selected ? 0.95 : 0.7)))
@@ -1546,7 +1638,7 @@ struct StudioTimelineView: View {
         for mark in TimelineMath.marks(for: character.events, character: i, duration: model.duration) {
             let my = y + zones.eventTop + CGFloat(mark.code.group.laneIndex) * zones.subH + 1
             let rect = CGRect(x: x(forTime: mark.start), y: my,
-                              width: max(2, CGFloat(mark.end - mark.start) * pxPerSecond),
+                              width: max(2, xw(mark.start, mark.end - mark.start)),
                               height: max(2, zones.subH - 1))
             ctx.fill(Path(rect), with: .color(mark.code.group.color(light: lightMode).opacity(
                 model.selectedMarks.contains(mark) ? 1 : 0.85)))
@@ -1594,7 +1686,7 @@ struct StudioTimelineView: View {
 
     private func drawClip(_ clip: AudioClip, top: CGFloat, height clipH: CGFloat, ctx: GraphicsContext) {
         let rect = CGRect(x: x(forTime: clip.start), y: top,
-                          width: max(4, CGFloat(clip.dur) * pxPerSecond), height: clipH)
+                          width: max(4, xw(clip.start, clip.dur)), height: clipH)
         let selected = model.selectedClips.contains(clip.id)
         ctx.fill(Path(roundedRect: rect, cornerRadius: 3),
                  with: .color(Color(red: 0.16, green: 0.38, blue: 0.33)))
@@ -1626,10 +1718,19 @@ struct StudioTimelineView: View {
                             label: String, assetID: String, selected: Bool, animated: Bool,
                             squareLeading: Bool = false, squareTrailing: Bool = false,
                             barHeight: CGFloat? = nil,
+                            collapsed: Bool = false,
                             ctx: GraphicsContext) {
         let rect = CGRect(x: x(forTime: start), y: y + presenceStripH + 2,
-                          width: max(6, CGFloat(dur) * pxPerSecond),
+                          width: max(collapsed ? 2 : 6, xw(start, dur)),
                           height: barHeight ?? (h - presenceStripH - 6))
+        if collapsed {
+            // The whole scene folded to a strip; click it for the Expand option.
+            ctx.fill(Path(roundedRect: rect, cornerRadius: 2),
+                     with: .color(color.opacity(selected ? 0.95 : 0.75)))
+            let dots = Text("⋯").font(.system(size: 10, weight: .bold)).foregroundStyle(.white)
+            ctx.draw(dots, at: CGPoint(x: rect.midX, y: rect.midY))
+            return
+        }
         // Corners square off where the cue butts a neighbor, so adjacent
         // scenes read as one continuous strip.
         let radii = RectangleCornerRadii(topLeading: squareLeading ? 0 : 4,
@@ -2401,6 +2502,9 @@ struct StudioTimelineView: View {
                 }
             } else {
                 selectCue(row: row, id: cue.id)
+                if case .background = row {
+                    bgOptions = (cue.id, point.x, point.y)
+                }
             }
         } else if case .audio(let ai) = row(at: y), !model.hasTimelineSelection {
             // Empty media-lane click: choose what to add right here.
