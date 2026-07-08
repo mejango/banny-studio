@@ -331,7 +331,7 @@ struct StudioTimelineView: View {
                 // Name + whole-track eye sit on the presence-strip line, so the
                 // eye reads as the label of that show/hide row.
                 var labelCtx = ctx
-                if hidden { labelCtx.opacity = 0.35 }
+                if hidden { labelCtx.opacity = 0.65 }
                 labelCtx.draw(Text(label(for: row)).font(.system(size: 10, weight: .semibold))
                                 .foregroundStyle(labelColor(for: row)),
                               at: CGPoint(x: 12, y: y + presenceStripH / 2), anchor: .leading)
