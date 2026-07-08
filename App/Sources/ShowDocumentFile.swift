@@ -4,7 +4,15 @@ import BannyCore
 
 /// The .bannyshow package as a SwiftUI reference document:
 /// show.json + audio/<clipId>.<ext> + bg/<sceneId>.<ext> (+ thumbnail.png).
+/// Pulses every time the document writes to disk (drives the header badge).
+@Observable
+final class SaveIndicator {
+    private(set) var count = 0
+    func pulse() { count += 1 }
+}
+
 final class ShowDocumentFile: ReferenceFileDocument {
+    let saveIndicator = SaveIndicator()
     typealias Snapshot = ShowDocument
 
     static let readableContentTypes: [UTType] = [.bannyShow]
@@ -75,7 +83,9 @@ final class ShowDocumentFile: ReferenceFileDocument {
 
     @MainActor
     func snapshot(contentType: UTType) throws -> ShowDocument {
-        model.document
+        let indicator = saveIndicator
+        DispatchQueue.main.async { indicator.pulse() }
+        return model.document
     }
 
     func fileWrapper(snapshot: ShowDocument, configuration: WriteConfiguration) throws -> FileWrapper {

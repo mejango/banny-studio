@@ -96,6 +96,7 @@ struct WideEditor: View {
                 .foregroundStyle(lightMode ? Color.black
                                            : Color(red: 0.92, green: 0.92, blue: 0.92))
             Spacer()
+            SaveBadge(indicator: file.saveIndicator, lightMode: lightMode)
             ThemeToggle()
         }
         .padding(.horizontal, 14)
@@ -163,6 +164,34 @@ struct CompactEditor: View {
                 StudioTimelineView(model: model, file: file)
             case .wardrobe:
                 SidePanel(model: model, file: file)
+            }
+        }
+    }
+}
+
+/// "Saved" flash in the header whenever the document autosaves to disk.
+struct SaveBadge: View {
+    let indicator: SaveIndicator
+    let lightMode: Bool
+    @State private var visible = false
+    @State private var hideTask: Task<Void, Never>?
+
+    var body: some View {
+        HStack(spacing: 4) {
+            Image(systemName: "checkmark.icloud")
+                .font(.system(size: 11, weight: .semibold))
+            Text("Saved")
+                .font(.system(size: 10, weight: .semibold))
+        }
+        .foregroundStyle(lightMode ? Color(red: 0, green: 0.45, blue: 0.1) : Color.green)
+        .opacity(visible ? 1 : 0)
+        .animation(.easeOut(duration: 0.25), value: visible)
+        .onChange(of: indicator.count) { _, _ in
+            visible = true
+            hideTask?.cancel()
+            hideTask = Task {
+                try? await Task.sleep(for: .seconds(1.4))
+                if !Task.isCancelled { visible = false }
             }
         }
     }
