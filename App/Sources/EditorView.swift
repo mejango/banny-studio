@@ -399,6 +399,8 @@ struct TrackCardButton: View {
 
     @ViewBuilder private var face: some View {
         switch row {
+        case .background(let i):
+            BackgroundFace(model: model, file: file, trackIndex: i)
         case .character(let i):
             if let c = model.scene.characters[safe: i] {
                 OutfitCard(character: c)
@@ -428,6 +430,49 @@ struct TrackCardButton: View {
         case .background: return ("photo.on.rectangle", Color(red: 0.65, green: 0.6, blue: 0.95))
         case .character: return ("person", .orange)
         }
+    }
+}
+
+/// Row-card face for the background track: the backdrops actually in use.
+struct BackgroundFace: View {
+    @Bindable var model: StudioModel
+    var file: ShowDocumentFile?
+    let trackIndex: Int
+    @State private var thumbs = CueThumbCache()
+
+    var body: some View {
+        let ids = usedAssetIDs
+        HStack(spacing: 2) {
+            if ids.isEmpty {
+                Image(systemName: "photo.on.rectangle")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(Color(red: 0.65, green: 0.6, blue: 0.95))
+                    .frame(width: 28, height: 24)
+            }
+            ForEach(ids, id: \.self) { id in
+                Group {
+                    if let file, let img = thumbs.thumb(assetID: id, file: file) {
+                        Image(decorative: img, scale: 1).resizable().scaledToFill()
+                    } else {
+                        Color.primary.opacity(0.15)
+                    }
+                }
+                .frame(width: 26, height: 20)
+                .clipShape(RoundedRectangle(cornerRadius: 3))
+                .overlay(RoundedRectangle(cornerRadius: 3)
+                    .stroke(Color(red: 0.65, green: 0.6, blue: 0.95).opacity(0.5), lineWidth: 1))
+            }
+        }
+    }
+
+    private var usedAssetIDs: [String] {
+        guard let track = model.scene.backgroundTracks[safe: trackIndex] else { return [] }
+        var seen: [String] = []
+        for cue in track.cues where !seen.contains(cue.assetID) {
+            seen.append(cue.assetID)
+            if seen.count == 4 { break }
+        }
+        return seen
     }
 }
 

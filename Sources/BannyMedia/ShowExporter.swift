@@ -1,5 +1,6 @@
 import Foundation
 import AVFoundation
+import VideoToolbox
 import CoreGraphics
 import ImageIO
 import BannyCore
@@ -277,13 +278,15 @@ public enum ShowExporter {
         return sample
     }
 
-    /// Bank-asset background source: still images cached; videos sampled
-    /// deterministically at (t - cue.start) mod duration (the web bg <video> loops).
+    /// Bank-asset background source: still images cached; videos decoded
+    /// SEQUENTIALLY (export time is monotone) at (t - cue.start) mod duration.
+    /// Per-frame AVAssetImageGenerator seeks rebuilt a decoder every frame and
+    /// made exports run at ~hours per show.
     final class BackgroundSampler {
         private let byID: [String: Asset]
         private let assetURL: (String) -> URL?
         private var stills: [String: CGImage] = [:]
-        private var videos: [String: (gen: AVAssetImageGenerator, duration: Double)] = [:]
+        private var videos: [String: SequentialVideoReader] = [:]
 
         init(assets: [Asset], assetURL: @escaping (String) -> URL?) {
             self.byID = Dictionary(uniqueKeysWithValues: assets.map { ($0.id, $0) })
@@ -301,19 +304,78 @@ public enum ShowExporter {
                 return stills[asset.id].map { ($0, cue.crop) }
             case .video:
                 if videos[asset.id] == nil {
-                    let av = AVURLAsset(url: url)
-                    let gen = AVAssetImageGenerator(asset: av)
-                    gen.requestedTimeToleranceBefore = CMTime(value: 1, timescale: 30)
-                    gen.requestedTimeToleranceAfter = CMTime(value: 1, timescale: 30)
-                    gen.appliesPreferredTrackTransform = true
-                    videos[asset.id] = (gen, CMTimeGetSeconds(av.duration))
+                    videos[asset.id] = SequentialVideoReader(url: url)
                 }
-                guard let v = videos[asset.id], v.duration > 0 else { return nil }
-                let vt = (t - cue.start).truncatingRemainder(dividingBy: v.duration)
-                guard let img = try? v.gen.copyCGImage(at: CMTime(seconds: max(0, vt), preferredTimescale: 600),
-                                                       actualTime: nil) else { return nil }
-                return (img, cue.crop)
+                guard let reader = videos[asset.id], reader.duration > 0 else { return nil }
+                let vt = max(0, (t - cue.start).truncatingRemainder(dividingBy: reader.duration))
+                return reader.frame(at: vt).map { ($0, cue.crop) }
             }
+        }
+    }
+
+    /// Forward-only H.264/HEVC frame source: reads samples in order, restarts
+    /// on loop wrap. Deterministic (frame chosen = last with pts <= t).
+    final class SequentialVideoReader {
+        let duration: Double
+        private let url: URL
+        private let track: AVAssetTrack?
+        private var reader: AVAssetReader?
+        private var output: AVAssetReaderTrackOutput?
+        private var current: (pts: Double, image: CGImage)?
+        private var pending: (pts: Double, buffer: CMSampleBuffer)?
+        private var lastT = -Double.greatestFiniteMagnitude
+
+        init(url: URL) {
+            self.url = url
+            let asset = AVURLAsset(url: url)
+            self.duration = CMTimeGetSeconds(asset.duration)
+            self.track = asset.tracks(withMediaType: .video).first
+        }
+
+        func frame(at t: Double) -> CGImage? {
+            if t < lastT { restart() } // looped past the end
+            lastT = t
+            if reader == nil { restart() }
+            while true {
+                if let p = pending {
+                    guard p.pts <= t else { break }
+                    if let img = decode(p.buffer) { current = (p.pts, img) }
+                    pending = nil
+                }
+                guard let out = output, reader?.status == .reading,
+                      let buf = out.copyNextSampleBuffer() else { break }
+                let pts = CMTimeGetSeconds(CMSampleBufferGetPresentationTimeStamp(buf))
+                if pts <= t {
+                    if let img = decode(buf) { current = (pts, img) }
+                } else {
+                    pending = (pts, buf)
+                    break
+                }
+            }
+            return current?.image
+        }
+
+        private func restart() {
+            let asset = AVURLAsset(url: url)
+            guard let track = asset.tracks(withMediaType: .video).first,
+                  let r = try? AVAssetReader(asset: asset) else { return }
+            let out = AVAssetReaderTrackOutput(track: track, outputSettings: [
+                kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
+            ])
+            out.alwaysCopiesSampleData = false
+            r.add(out)
+            r.startReading()
+            reader = r
+            output = out
+            pending = nil
+            current = nil
+        }
+
+        private func decode(_ buffer: CMSampleBuffer) -> CGImage? {
+            guard let pix = CMSampleBufferGetImageBuffer(buffer) else { return nil }
+            var img: CGImage?
+            VTCreateCGImageFromCVPixelBuffer(pix, options: nil, imageOut: &img)
+            return img
         }
     }
 

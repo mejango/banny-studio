@@ -913,6 +913,13 @@ struct StudioTimelineView: View {
                           size.width >= 120 {
                     readoutX = 12 + 28 + 10
                     readouts = mixReadout(track.fx)
+                } else if case .light(let li) = row, let track = model.scene.lightTracks[safe: li],
+                          size.width >= 120, !track.cues.isEmpty {
+                    readoutX = 12 + 28 + 10
+                    let cue = track.cues.first { model.time >= $0.start && model.time < $0.start + $0.dur }
+                        ?? track.cues[0]
+                    let state = cue.state(at: model.time)
+                    readouts = ["Intensity: \(Int((state.intensity * 100).rounded()))%"]
                 }
                 for (li, line) in readouts.enumerated() {
                     let ly = y + presenceStripH + 13 + CGFloat(li) * 13
@@ -1272,7 +1279,7 @@ struct StudioTimelineView: View {
             for cue in model.scene.lightTracks[i].cues {
                 drawCueBar(start: cue.start, dur: cue.dur, y: y, h: h,
                            color: Color(red: 0.95, green: 0.78, blue: 0.25),
-                           label: (cue.label ?? "light") + String(format: " %.0f%%", cue.from.intensity * 100),
+                           label: cue.label ?? "light",
                            assetID: "",
                            selected: model.selectedLightCue == cue.id,
                            animated: cue.to != nil, ctx: content)
