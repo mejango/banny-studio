@@ -369,9 +369,21 @@ struct StudioTimelineView: View {
     }
 
     private func height(of row: TrackRow) -> CGFloat {
+        baseHeight(of: row) + rowStretch
+    }
+
+    private func baseHeight(of row: TrackRow) -> CGFloat {
         let base: CGFloat
         if case .character = row { base = 72 } else { base = defaultLaneHeight }
         return max(minHeight(of: row), trackHeights[row.key(in: model.scene)] ?? base)
+    }
+
+    /// Extra per-row height when the lanes viewport is taller than the tracks:
+    /// rows stretch to fill instead of leaving dead space below New track.
+    private var rowStretch: CGFloat {
+        guard tlViewport.height > 0, !rows.isEmpty else { return 0 }
+        let base = rows.reduce(0) { $0 + baseHeight(of: $1) }
+        return max(0, (tlViewport.height - 34 - base) / CGFloat(rows.count))
     }
 
     private var totalLaneHeight: CGFloat {

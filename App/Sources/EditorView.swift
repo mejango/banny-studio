@@ -183,7 +183,9 @@ struct TrackInspector: View {
             switch kind {
             case .character(let i):
                 MotionSection(model: model, characterIndex: i)
-                WardrobePanel(model: model, characterIndex: i)
+                // The card's wardrobe edits the character's START state; timed
+                // mid-show changes remain as recorded outfit events (white dots).
+                WardrobePanel(model: model, characterIndex: i, baseOnly: true)
             case .audio(let i):
                 if let file {
                     AudioSection(model: model, file: file, audioTrackIndex: i)
