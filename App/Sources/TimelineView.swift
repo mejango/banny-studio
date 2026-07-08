@@ -1432,7 +1432,7 @@ struct StudioTimelineView: View {
     private func labelColor(for row: TrackRow) -> Color {
         switch row {
         case .character(let i):
-            return model.selection.contains(i) ? .orange : theme.labelText
+            return model.selection.contains(i) ? (lightMode ? .black : .orange) : theme.labelText
         case .audio: return lightMode ? Color(red: 0, green: 0.48, blue: 0.34)
                                       : Color(red: 0.45, green: 0.9, blue: 0.75)
         case .image: return lightMode ? Color(red: 0.62, green: 0.4, blue: 0.05)
@@ -2012,7 +2012,7 @@ struct TransportBar: View {
                 Text(recTargetNames)
                     .font(.system(size: 10, weight: .bold))
                     .foregroundStyle(model.recording ? Color.red
-                                     : lightMode ? Color(red: 0.68, green: 0.42, blue: 0)
+                                     : lightMode ? Color.black
                                      : Color.orange)
                     .lineLimit(1)
                 let pose = livePose
