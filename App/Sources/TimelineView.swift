@@ -1791,8 +1791,10 @@ struct StudioTimelineView: View {
                     dragStartClips = Dictionary(uniqueKeysWithValues:
                         model.selectedClips.compactMap { id in clipStart(id: id).map { (id, $0) } })
                 }
-            } else if let c = clip(at: value.startLocation) {
-                let edge = 5.0
+            } else if let c = clip(at: value.startLocation)
+                        ?? clip(at: CGPoint(x: value.startLocation.x - 6, y: value.startLocation.y))
+                        ?? clip(at: CGPoint(x: value.startLocation.x + 6, y: value.startLocation.y)) {
+                let edge = 7.0
                 let e = abs(value.startLocation.x - x(forTime: c.start)) < edge ? -1
                     : abs(value.startLocation.x - x(forTime: c.start + c.dur)) < edge ? 1 : 0
                 if e == 0, model.selectedClips.contains(c.id),
@@ -1815,8 +1817,10 @@ struct StudioTimelineView: View {
                     model.selectedClips = [clipID]
                 }
                 return
-            } else if let (row, cue) = cue(at: value.startLocation) {
-                let edge = 5.0
+            } else if let (row, cue) = cue(at: value.startLocation)
+                        ?? cue(at: CGPoint(x: value.startLocation.x - 6, y: value.startLocation.y))
+                        ?? cue(at: CGPoint(x: value.startLocation.x + 6, y: value.startLocation.y)) {
+                let edge = 7.0
                 let startX = x(forTime: cue.start)
                 let endX = x(forTime: cue.start + cue.dur)
                 let e = abs(value.startLocation.x - startX) < edge ? -1
@@ -1897,12 +1901,16 @@ struct StudioTimelineView: View {
 
     /// Pointer within grabbing distance of a clip/cue/mark edge?
     private func resizeEdgeHit(at p: CGPoint) -> Bool {
-        let edge: CGFloat = 5
-        if let c = clip(at: p),
+        let edge: CGFloat = 7
+        if let c = clip(at: p)
+            ?? clip(at: CGPoint(x: p.x - 6, y: p.y))
+            ?? clip(at: CGPoint(x: p.x + 6, y: p.y)),
            abs(p.x - x(forTime: c.start)) < edge || abs(p.x - x(forTime: c.start + c.dur)) < edge {
             return true
         }
-        if let (_, cue) = cue(at: p),
+        if let (_, cue) = cue(at: p)
+            ?? cue(at: CGPoint(x: p.x - 6, y: p.y))
+            ?? cue(at: CGPoint(x: p.x + 6, y: p.y)),
            abs(p.x - x(forTime: cue.start)) < edge || abs(p.x - x(forTime: cue.start + cue.dur)) < edge {
             return true
         }
