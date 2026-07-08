@@ -45,6 +45,8 @@ targets:
         LSMinimumSystemVersion: $(MACOSX_DEPLOYMENT_TARGET)
         NSHumanReadableCopyright: ""
         UILaunchScreen: {}
+        UISupportsDocumentBrowser: true
+        LSSupportsOpeningDocumentsInPlace: true
         UISupportedInterfaceOrientations:
           - UIInterfaceOrientationLandscapeLeft
           - UIInterfaceOrientationLandscapeRight
@@ -72,7 +74,7 @@ targets:
 
   BannyStudioUITests:
     type: bundle.ui-testing
-    platform: macOS
+    supportedDestinations: [macOS, iOS]
     settings:
       base:
         GENERATE_INFOPLIST_FILE: YES

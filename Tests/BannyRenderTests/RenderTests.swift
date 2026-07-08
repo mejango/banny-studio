@@ -112,7 +112,7 @@ private func writePNG(_ image: CGImage, to url: URL) throws {
     let size = CGSize(width: 1280, height: 720)
     func render() throws -> CGImage {
         let ctx = makeContext(size)
-        FrameRenderer(assets: catalog).draw(scene: scene, at: 2.25, size: size, in: ctx)
+        FrameRenderer(assets: catalog).draw(scene: scene, at: 2.25, size: size, flipped: true, in: ctx)
         return try #require(ctx.makeImage())
     }
     let a = try render()

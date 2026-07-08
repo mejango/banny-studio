@@ -170,7 +170,8 @@ public enum ShowExporter {
                                         bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue
                                             | CGBitmapInfo.byteOrder32Little.rawValue)!
                     renderer.draw(scene: segment.scene.state, at: t, size: options.size,
-                                  background: bg.map { (image: $0.0, crop: $0.1) }, in: ctx)
+                                  background: bg.map { (image: $0.0, crop: $0.1) },
+                                  flipped: true, in: ctx)
                     CVPixelBufferUnlockBaseAddress(pb, [])
                     pumpAudio(upTo: Double(frameIndex) / Double(fps))
                     while !videoInput.isReadyForMoreMediaData { Thread.sleep(forTimeInterval: 0.005) }

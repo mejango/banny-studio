@@ -98,9 +98,17 @@ struct StudioTimelineView: View {
             }
             .background(Color(red: 0.078, green: 0.078, blue: 0.11))
         }
+        #if os(macOS)
         .onDeleteCommand {
             deleteSelection()
         }
+        #else
+        .toolbar {
+            if !selectedMarks.isEmpty || selectedAnchor != nil {
+                Button("Delete", role: .destructive) { deleteSelection() }
+            }
+        }
+        #endif
     }
 
     private var pxPerSecond: CGFloat {

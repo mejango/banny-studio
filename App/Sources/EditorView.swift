@@ -1,18 +1,54 @@
 import SwiftUI
 import BannyCore
 
-/// Main editor layout: scene tabs / stage / timeline, wardrobe panel at right.
+/// Main editor layout, adaptive per platform:
+/// - macOS / iPad (regular width): scene tabs / stage / timeline + side panel,
+///   with a touch performance deck overlay on iPad.
+/// - iPhone (compact width): one region at a time behind a mode switcher.
 struct EditorView: View {
     let file: ShowDocumentFile
     @Environment(\.undoManager) private var undoManager
+    #if !os(macOS)
+    @Environment(\.horizontalSizeClass) private var sizeClass
+    #endif
 
     var body: some View {
         let model = file.model
+        Group {
+            #if os(macOS)
+            WideEditor(model: model, file: file, showDeck: false)
+                .frame(minWidth: 1000, minHeight: 700)
+            #else
+            if sizeClass == .regular {
+                WideEditor(model: model, file: file, showDeck: true)
+            } else {
+                CompactEditor(model: model, file: file)
+            }
+            #endif
+        }
+        .onAppear { model.undoManager = undoManager }
+        .onChange(of: undoManager) { model.undoManager = $1 }
+        .background(KeyCaptureView(model: model))
+    }
+}
+
+/// Mac + iPad layout.
+struct WideEditor: View {
+    @Bindable var model: StudioModel
+    let file: ShowDocumentFile
+    let showDeck: Bool
+
+    var body: some View {
         HStack(spacing: 0) {
             VStack(spacing: 0) {
                 SceneTabsView(model: model)
                 StageView(model: model, file: file)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .overlay(alignment: .bottom) {
+                        if showDeck {
+                            PerformanceDeck(model: model)
+                        }
+                    }
                 StudioTimelineView(model: model, file: file)
                     .frame(height: 230)
             }
@@ -20,12 +56,46 @@ struct EditorView: View {
             SidePanel(model: model)
                 .frame(width: 300)
         }
-        .onAppear { model.undoManager = undoManager }
-        .onChange(of: undoManager) { model.undoManager = $1 }
-        .background(KeyCaptureView(model: model))
-        #if os(macOS)
-        .frame(minWidth: 1000, minHeight: 700)
-        #endif
+    }
+}
+
+/// iPhone layout: Stage / Timeline / Wardrobe / Watch, one at a time.
+struct CompactEditor: View {
+    @Bindable var model: StudioModel
+    let file: ShowDocumentFile
+
+    enum Mode: String, CaseIterable {
+        case stage = "Stage"
+        case timeline = "Timeline"
+        case wardrobe = "Wardrobe"
+    }
+
+    @State private var mode: Mode = .stage
+
+    var body: some View {
+        VStack(spacing: 0) {
+            Picker("", selection: $mode) {
+                ForEach(Mode.allCases, id: \.self) { Text($0.rawValue) }
+            }
+            .pickerStyle(.segmented)
+            .padding(8)
+            switch mode {
+            case .stage:
+                StageView(model: model, file: file)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .overlay(alignment: .bottom) {
+                        PerformanceDeck(model: model)
+                    }
+                TransportBar(model: model, file: file)
+            case .timeline:
+                SceneTabsView(model: model)
+                StageView(model: model, file: file)
+                    .frame(height: 180)
+                StudioTimelineView(model: model, file: file)
+            case .wardrobe:
+                SidePanel(model: model)
+            }
+        }
     }
 }
 

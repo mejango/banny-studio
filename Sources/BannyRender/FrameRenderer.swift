@@ -29,9 +29,14 @@ public struct FrameRenderer: Sendable {
 
     /// Renders scene state at time t into `ctx`. `size` is the output frame (16:9).
     /// `background`: pre-decoded background image, drawn per its crop mode.
+    ///
+    /// Coordinate contract: `ctx` must have a TOP-LEFT origin (SwiftUI's
+    /// GraphicsContext already does). For a raw bottom-left CGBitmapContext
+    /// (export, tests), pass `flipped: true`.
     public func draw(scene: SceneState, at t: Double, size: CGSize,
                      background: (image: CGImage, crop: Crop)? = nil,
                      showSuns: Bool = false,
+                     flipped: Bool = false,
                      in ctx: CGContext) {
         let W = Double(size.width)
         let outH = Double(size.height)
@@ -39,9 +44,10 @@ public struct FrameRenderer: Sendable {
         let sim = SceneSimulator(state: scene)
 
         ctx.saveGState()
-        // CG origin is bottom-left; flip to web's top-left coordinates.
-        ctx.translateBy(x: 0, y: CGFloat(outH))
-        ctx.scaleBy(x: 1, y: -1)
+        if flipped {
+            ctx.translateBy(x: 0, y: CGFloat(outH))
+            ctx.scaleBy(x: 1, y: -1)
+        }
         ctx.interpolationQuality = .none // pixel art stays crisp
 
         ctx.setFillColor(Self.stageFill)

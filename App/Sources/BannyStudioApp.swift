@@ -16,11 +16,13 @@ struct BannyStudioApp: App {
         #if os(macOS)
         .defaultSize(width: 1280, height: 860)
         #endif
+        #if os(macOS)
         .commands {
             CommandGroup(after: .newItem) {
                 ImportLegacyCommand()
             }
         }
+        #endif
     }
 }
 
@@ -34,7 +36,9 @@ enum SharedAssets {
     }()
 }
 
+#if os(macOS)
 /// File > Import Web Studio JSON… converts a v1 export into a new document.
+/// (iOS gets legacy import by opening the JSON via the Files app in a later pass.)
 struct ImportLegacyCommand: View {
     @State private var importing = false
     @Environment(\.newDocument) private var newDocument
@@ -51,3 +55,4 @@ struct ImportLegacyCommand: View {
             }
     }
 }
+#endif
