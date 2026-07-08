@@ -1654,7 +1654,7 @@ struct TransportBar: View {
                         .stroke(model.recording ? Color.clear : Color.primary.opacity(0.22), lineWidth: 1))
                 }
                 .help("Record the selected characters (⇧Space)")
-                .padding(.trailing, 6)
+                .padding(.trailing, 12)
                 Text(recTargetNames)
                     .font(.system(size: 10, weight: .bold))
                     .foregroundStyle(model.recording ? .red : .orange)
