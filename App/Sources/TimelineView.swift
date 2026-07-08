@@ -1358,17 +1358,20 @@ struct StudioTimelineView: View {
                 let runStart = first.start
                 let runEnd = last.start + last.dur
                 let anySelected = run.contains { model.selectedLightCue == $0.id }
+                // Skinny source bar at the top; the event lanes live below.
+                let barH: CGFloat = 20
                 drawCueBar(start: runStart, dur: runEnd - runStart, y: y, h: h,
                            color: Color(red: 0.95, green: 0.78, blue: 0.25),
                            label: first.label ?? "light",
                            assetID: "",
                            selected: anySelected,
-                           animated: run.contains { $0.to != nil }, ctx: content)
+                           animated: run.contains { $0.to != nil },
+                           barHeight: barH, ctx: content)
                 // Selected segment inside a chain gets its own outline.
                 if run.count > 1, let sel = run.first(where: { model.selectedLightCue == $0.id }) {
                     let rect = CGRect(x: x(forTime: sel.start), y: y + presenceStripH + 2,
                                       width: max(4, CGFloat(sel.dur) * pxPerSecond),
-                                      height: h - presenceStripH - 6)
+                                      height: barH)
                     content.stroke(Path(roundedRect: rect, cornerRadius: 2),
                                    with: .color(.white.opacity(0.9)), lineWidth: 1)
                 }
@@ -1376,7 +1379,7 @@ struct StudioTimelineView: View {
                     guard let to = cue.to else { continue }
                     let x0 = x(forTime: cue.start)
                     let w = max(2, CGFloat(cue.dur) * pxPerSecond)
-                    let laneY = y + h - 14
+                    let laneY = y + presenceStripH + 2 + barH + 6
                     var lane = 0
                     func changeBar(_ changed: Bool, _ color: Color) {
                         if changed {
@@ -1612,9 +1615,11 @@ struct StudioTimelineView: View {
     private func drawCueBar(start: Double, dur: Double, y: CGFloat, h: CGFloat, color: Color,
                             label: String, assetID: String, selected: Bool, animated: Bool,
                             squareLeading: Bool = false, squareTrailing: Bool = false,
+                            barHeight: CGFloat? = nil,
                             ctx: GraphicsContext) {
         let rect = CGRect(x: x(forTime: start), y: y + presenceStripH + 2,
-                          width: max(6, CGFloat(dur) * pxPerSecond), height: h - presenceStripH - 6)
+                          width: max(6, CGFloat(dur) * pxPerSecond),
+                          height: barHeight ?? (h - presenceStripH - 6))
         // Corners square off where the cue butts a neighbor, so adjacent
         // scenes read as one continuous strip.
         let radii = RectangleCornerRadii(topLeading: squareLeading ? 0 : 4,
