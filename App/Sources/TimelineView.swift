@@ -1290,9 +1290,28 @@ struct StudioTimelineView: View {
         }
         #endif
         .contextMenu {
-            if let p = hoverLanePoint, case .background = row(at: p.y) {
+            if let p = hoverLanePoint, case .background(let bi) = row(at: p.y) {
                 let t = (time(forX: p.x) * 10).rounded() / 10
-                if model.document.assets.isEmpty {
+                let hitCue = model.scene.backgroundTracks[safe: bi]?.cues
+                    .first { t >= $0.start && t <= $0.start + $0.dur }
+                if let cue = hitCue {
+                    // On an established scene: fold controls, not replacement.
+                    let isCollapsed = collapsedSections.contains(cue.id)
+                    Button(isCollapsed ? "Expand scene" : "Collapse scene") {
+                        if isCollapsed { collapsedSections.remove(cue.id) }
+                        else { collapsedSections.insert(cue.id) }
+                    }
+                    let allIDs = Set(model.scene.backgroundTracks
+                        .flatMap { $0.cues.map(\.id) })
+                    if allIDs.count > 1 {
+                        Button("Collapse other scenes") {
+                            collapsedSections = allIDs.subtracting([cue.id])
+                        }
+                    }
+                    if !collapsedSections.isEmpty {
+                        Button("Expand all") { collapsedSections = [] }
+                    }
+                } else if model.document.assets.isEmpty {
                     Text("Add images/videos to the Asset Bank first")
                 } else {
                     Text(String(format: "Background from %.1fs:", t))
