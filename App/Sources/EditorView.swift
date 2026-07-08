@@ -62,10 +62,6 @@ struct WideEditor: View {
                                 PerformanceDeck(model: model)
                             }
                         }
-                        .overlay(alignment: .topTrailing) {
-                            ShipButton(model: model, file: file)
-                                .padding(10)
-                        }
                     divider(maxHeight: availH - 140)
                     StudioTimelineView(model: model, file: file, showShip: false)
                         .frame(height: CGFloat(tlH))
@@ -97,6 +93,7 @@ struct WideEditor: View {
                                            : Color(red: 0.92, green: 0.92, blue: 0.92))
             ThemeToggle()
             Spacer()
+            ShipButton(model: model, file: file)
         }
         .padding(.horizontal, 14)
         .frame(height: CGFloat(headerH))

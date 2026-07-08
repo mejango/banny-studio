@@ -139,6 +139,8 @@ struct StudioTimelineView: View {
     @State private var lastTap: (location: CGPoint, at: Date)?
     @State private var resizingTrack: (key: String, baseHeight: CGFloat, minHeight: CGFloat)?
     @State private var draggingRow: (row: TrackRow, currentY: CGFloat)?
+    /// Preview slot (within the dragged row's group) while a row drag is live.
+    @State private var dragPreviewIndex: Int?
     @State private var peakCache = PeakCache()
     /// Per-track lane heights (session-scoped), keyed by TrackRow.key.
     @State private var trackHeights: [String: CGFloat] = [:]
@@ -202,16 +204,17 @@ struct StudioTimelineView: View {
                     gutterCanvas
                         .frame(width: laneLabelWidth, height: totalLaneHeight + 20)
                         .offset(x: scrollOffset.x)
+                    newTrackRow
+                        .offset(x: scrollOffset.x, y: totalLaneHeight + 20)
                 }
                 .frame(width: laneLabelWidth + max(600, contentWidth + 40),
-                       height: totalLaneHeight + 20, alignment: .topLeading)
+                       height: totalLaneHeight + 50, alignment: .topLeading)
             }
             .coordinateSpace(name: "tlScroll")
             .onPreferenceChange(TLOffsetKey.self) { origin in
                 // origin.x includes the leading gutter padding at rest.
                 scrollOffset = CGPoint(x: laneLabelWidth - origin.x, y: -origin.y)
             }
-            newTrackRow
         }
         .background(theme.surface)
         .simultaneousGesture(
@@ -235,12 +238,39 @@ struct StudioTimelineView: View {
 
     // MARK: - Layout
 
-    private var rows: [TrackRow] {
+    private var baseRows: [TrackRow] {
         model.scene.characters.indices.map(TrackRow.character)
             + model.scene.imageTracks.indices.map(TrackRow.image)
             + model.scene.audioTracks.indices.map(TrackRow.audio)
             + model.scene.lightTracks.indices.map(TrackRow.light)
             + model.scene.backgroundTracks.indices.map(TrackRow.background)
+    }
+
+    /// Rows in display order; while dragging, the dragged row previews at its slot.
+    private var rows: [TrackRow] {
+        guard let dragging = draggingRow, let preview = dragPreviewIndex else { return baseRows }
+        var out = baseRows
+        guard let from = out.firstIndex(of: dragging.row) else { return out }
+        let group = groupRows(of: dragging.row)
+        guard let groupStart = out.firstIndex(of: group[0]) else { return out }
+        out.remove(at: from)
+        out.insert(dragging.row, at: min(max(groupStart + preview, 0), out.count))
+        return out
+    }
+
+    /// The preview slot (within the group) under the cursor's content y.
+    private func previewSlot(for dragging: (row: TrackRow, currentY: CGFloat)) -> Int {
+        let group = groupRows(of: dragging.row)
+        guard group.count > 1, let first = group.first else { return 0 }
+        // Group span in the current preview layout.
+        let orderedGroup = rows.filter { groupRows(of: dragging.row).contains($0) }
+        var yCursor = laneTop(of: orderedGroup.first ?? first)
+        for (slot, r) in orderedGroup.enumerated() {
+            let h = height(of: r)
+            if dragging.currentY < yCursor + h { return slot }
+            yCursor += h
+        }
+        return group.count - 1
     }
 
     private var headerHeight: CGFloat { rulerHeight + scrubHeight }
@@ -465,13 +495,6 @@ struct StudioTimelineView: View {
                             .foregroundStyle(hidden ? Color.gray : theme.mutedText),
                          at: CGPoint(x: size.width - 18, y: y + presenceStripH / 2))
             }
-            if let dragging = draggingRow,
-               let targetY = insertionLineY(for: dragging) {
-                ctx.stroke(Path { p in
-                    p.move(to: CGPoint(x: 0, y: targetY))
-                    p.addLine(to: CGPoint(x: size.width, y: targetY))
-                }, with: .color(.orange), lineWidth: 2)
-            }
         }
         .gesture(gutterInteraction)
         #if os(macOS)
@@ -503,23 +526,6 @@ struct StudioTimelineView: View {
         }
     }
 
-    private func dropIndex(for dragging: (row: TrackRow, currentY: CGFloat)) -> Int? {
-        let group = groupRows(of: dragging.row)
-        guard group.count > 1 else { return nil }
-        var best = 0
-        for (i, r) in group.enumerated() {
-            if dragging.currentY > laneTop(of: r) + height(of: r) / 2 { best = i + 1 }
-        }
-        return min(best, group.count)
-    }
-
-    private func insertionLineY(for dragging: (row: TrackRow, currentY: CGFloat)) -> CGFloat? {
-        guard let idx = dropIndex(for: dragging) else { return nil }
-        let group = groupRows(of: dragging.row)
-        if idx < group.count { return laneTop(of: group[idx]) }
-        let last = group[group.count - 1]
-        return laneTop(of: last) + height(of: last)
-    }
 
     private var gutterInteraction: some Gesture {
         DragGesture(minimumDistance: 0)
@@ -535,7 +541,9 @@ struct StudioTimelineView: View {
                     return
                 }
                 if let dragging = draggingRow {
-                    draggingRow = (dragging.row, value.location.y)
+                    let updated = (dragging.row, value.location.y)
+                    draggingRow = updated
+                    dragPreviewIndex = previewSlot(for: updated)
                     return
                 }
                 if abs(value.startLocation.x - laneLabelWidth) < 6 {
@@ -550,12 +558,14 @@ struct StudioTimelineView: View {
                 if abs(value.translation.height) > 8,
                    let row = row(at: value.startLocation.y) {
                     draggingRow = (row, value.location.y)
+                    dragPreviewIndex = groupRows(of: row).firstIndex(of: row)
                 }
             }
             .onEnded { value in
                 if let dragging = draggingRow {
                     commitRowMove(dragging)
                     draggingRow = nil
+                    dragPreviewIndex = nil
                     resizingTrack = nil
                     resizingGutter = false
                     return
@@ -574,28 +584,25 @@ struct StudioTimelineView: View {
     }
 
     private func commitRowMove(_ dragging: (row: TrackRow, currentY: CGFloat)) {
-        guard let target = dropIndex(for: dragging) else { return }
+        guard let slot = dragPreviewIndex else { return }
         model.registerUndoSnapshot(label: "Reorder Tracks")
-        func move<T>(_ items: inout [T], from: Int, to rawTo: Int) {
+        func move<T>(_ items: inout [T], from: Int, to: Int) {
             let item = items.remove(at: from)
-            let to = rawTo > from ? rawTo - 1 : rawTo
             items.insert(item, at: min(max(0, to), items.count))
         }
         switch dragging.row {
         case .character(let i):
-            move(&model.scene.characters, from: i, to: target)
-            // Indices shifted: selection follows the moved row; marks reset.
-            let newIndex = target > i ? target - 1 : target
-            model.selection = [newIndex]
+            move(&model.scene.characters, from: i, to: slot)
+            model.selection = [min(slot, model.scene.characters.count - 1)]
             model.selectedMarks = []
         case .image(let i):
-            move(&model.scene.imageTracks, from: i, to: target)
+            move(&model.scene.imageTracks, from: i, to: slot)
         case .audio(let i):
-            move(&model.scene.audioTracks, from: i, to: target)
+            move(&model.scene.audioTracks, from: i, to: slot)
         case .light(let i):
-            move(&model.scene.lightTracks, from: i, to: target)
+            move(&model.scene.lightTracks, from: i, to: slot)
         case .background(let i):
-            move(&model.scene.backgroundTracks, from: i, to: target)
+            move(&model.scene.backgroundTracks, from: i, to: slot)
         }
     }
 
