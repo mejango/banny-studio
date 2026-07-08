@@ -296,7 +296,7 @@ struct StudioTimelineView: View {
             drawCharacterLane(i, y: y, h: h, ctx: content)
         case .audio(let i):
             for clip in model.scene.audioTracks[i].clips {
-                drawClip(clip, laneY: y, laneH: h, ctx: content)
+                drawClip(clip, top: y + 4, height: h - 8, ctx: content)
             }
         case .image(let i):
             for cue in model.scene.imageTracks[i].cues {
@@ -321,15 +321,25 @@ struct StudioTimelineView: View {
 
     private let captionStripH: CGFloat = 13
 
+    /// Character lane vertical layout: captions strip, then audio clips, then
+    /// the seven event sub-lanes. Everything gets its own band — no overlap.
+    private func characterLaneZones(h: CGFloat) -> (clipTop: CGFloat, clipH: CGFloat,
+                                                    eventTop: CGFloat, subH: CGFloat) {
+        let clipH: CGFloat = h >= 56 ? min(26, (h - captionStripH - 20) * 0.4) : 0
+        let clipTop = captionStripH + 2
+        let eventTop = clipTop + clipH + 2
+        let subH = max(2, (h - eventTop - 4) / 7)
+        return (clipTop, clipH, eventTop, subH)
+    }
+
     private func drawCharacterLane(_ i: Int, y: CGFloat, h: CGFloat, ctx: GraphicsContext) {
         let character = model.scene.characters[i]
-        let clipZone: CGFloat = h >= 48 ? 18 : 0
-        let subH = (h - captionStripH - 6 - clipZone) / 7
+        let zones = characterLaneZones(h: h)
         for mark in TimelineMath.marks(for: character.events, character: i, duration: model.duration) {
-            let my = y + captionStripH + 3 + CGFloat(mark.code.group.laneIndex) * subH + 2
+            let my = y + zones.eventTop + CGFloat(mark.code.group.laneIndex) * zones.subH + 1
             let rect = CGRect(x: x(forTime: mark.start), y: my,
                               width: max(2, CGFloat(mark.end - mark.start) * pxPerSecond),
-                              height: max(2, subH - 1))
+                              height: max(2, zones.subH - 1))
             ctx.fill(Path(rect), with: .color(mark.code.group.color.opacity(
                 model.selectedMarks.contains(mark) ? 1 : 0.75)))
             if model.selectedMarks.contains(mark) {
@@ -339,13 +349,13 @@ struct StudioTimelineView: View {
         for ev in character.events {
             guard case .outfit(let t, _, _) = ev else { continue }
             let cx = x(forTime: t)
-            let cy = y + captionStripH + 3 + 6 * subH + subH / 2
+            let cy = y + zones.eventTop + 6 * zones.subH + zones.subH / 2
             ctx.fill(Path(ellipseIn: CGRect(x: cx - 3, y: cy - 3, width: 6, height: 6)),
                      with: .color(.white))
         }
-        if clipZone > 0 {
+        if zones.clipH > 0 {
             for clip in character.clips {
-                drawClip(clip, laneY: y, laneH: h, ctx: ctx)
+                drawClip(clip, top: y + zones.clipTop, height: zones.clipH, ctx: ctx)
             }
         }
         for (si, sub) in character.subs.enumerated() {
@@ -364,9 +374,8 @@ struct StudioTimelineView: View {
         }
     }
 
-    private func drawClip(_ clip: AudioClip, laneY y: CGFloat, laneH h: CGFloat, ctx: GraphicsContext) {
-        let clipH = min(max(10, h - 36), h - 6)
-        let rect = CGRect(x: x(forTime: clip.start), y: y + h - clipH - 2,
+    private func drawClip(_ clip: AudioClip, top: CGFloat, height clipH: CGFloat, ctx: GraphicsContext) {
+        let rect = CGRect(x: x(forTime: clip.start), y: top,
                           width: max(4, CGFloat(clip.dur) * pxPerSecond), height: clipH)
         let selected = model.selectedClips.contains(clip.id)
         ctx.fill(Path(roundedRect: rect, cornerRadius: 3),
@@ -736,12 +745,13 @@ struct StudioTimelineView: View {
         switch row {
         case .image, .background:
             return point.y <= rowY + 22
-        default:
-            // Clips sit at the lane bottom; their label is the top strip of the clip.
-            let h = height(of: row)
-            let clipH = min(max(10, h - 36), h - 6)
-            let clipTop = rowY + h - clipH - 2
+        case .character:
+            let zones = characterLaneZones(h: height(of: row))
+            guard zones.clipH > 0 else { return false }
+            let clipTop = rowY + zones.clipTop
             return point.y >= clipTop && point.y <= clipTop + 14
+        default:
+            return point.y >= rowY + 4 && point.y <= rowY + 18
         }
     }
 
@@ -751,10 +761,11 @@ struct StudioTimelineView: View {
         switch row {
         case .image, .background:
             return CGPoint(x: x(forTime: start) + 3, y: rowY + 7)
+        case .character:
+            let zones = characterLaneZones(h: height(of: row))
+            return CGPoint(x: x(forTime: start) + 3, y: rowY + zones.clipTop + 1)
         default:
-            let h = height(of: row)
-            let clipH = min(max(10, h - 36), h - 6)
-            return CGPoint(x: x(forTime: start) + 3, y: rowY + h - clipH - 1)
+            return CGPoint(x: x(forTime: start) + 3, y: rowY + 5)
         }
     }
 
@@ -787,13 +798,13 @@ struct StudioTimelineView: View {
         guard case .character(let i) = row(at: point.y) else { return nil }
         let rowY = laneTop(of: .character(i))
         let h = height(of: .character(i))
-        let clipZone: CGFloat = h >= 48 ? 18 : 0
-        let subH = (h - captionStripH - 6 - clipZone) / 7
+        let zones = characterLaneZones(h: h)
         for m in TimelineMath.marks(for: model.scene.characters[i].events, character: i,
                                     duration: model.duration) {
-            let my = rowY + captionStripH + 3 + CGFloat(m.code.group.laneIndex) * subH + 2
+            let my = rowY + zones.eventTop + CGFloat(m.code.group.laneIndex) * zones.subH + 1
             let rect = CGRect(x: x(forTime: m.start), y: my,
-                              width: max(6, CGFloat(m.end - m.start) * pxPerSecond), height: max(4, subH - 1))
+                              width: max(6, CGFloat(m.end - m.start) * pxPerSecond),
+                              height: max(4, zones.subH - 1))
             if rect.insetBy(dx: -2, dy: -2).contains(point) { return m }
         }
         return nil
@@ -814,17 +825,26 @@ struct StudioTimelineView: View {
 
     private func clip(at point: CGPoint) -> AudioClip? {
         guard let row = row(at: point.y) else { return nil }
-        let clips: [AudioClip]
-        switch row {
-        case .character(let i): clips = model.scene.characters[i].clips
-        case .audio(let i): clips = model.scene.audioTracks[i].clips
-        default: return nil
-        }
         let rowY = laneTop(of: row)
         let h = height(of: row)
-        let clipH = min(max(10, h - 36), h - 6)
+        let clips: [AudioClip]
+        let top: CGFloat
+        let clipH: CGFloat
+        switch row {
+        case .character(let i):
+            clips = model.scene.characters[i].clips
+            let zones = characterLaneZones(h: h)
+            guard zones.clipH > 0 else { return nil }
+            top = rowY + zones.clipTop
+            clipH = zones.clipH
+        case .audio(let i):
+            clips = model.scene.audioTracks[i].clips
+            top = rowY + 4
+            clipH = h - 8
+        default: return nil
+        }
         for clip in clips {
-            let rect = CGRect(x: x(forTime: clip.start), y: rowY + h - clipH - 2,
+            let rect = CGRect(x: x(forTime: clip.start), y: top,
                               width: max(4, CGFloat(clip.dur) * pxPerSecond), height: clipH)
             if rect.contains(point) { return clip }
         }
