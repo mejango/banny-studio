@@ -592,7 +592,7 @@ struct StudioTimelineView: View {
     // Collapsed scenes fold their time range down to a thin strip so the
     // sections you're not working on get out of the way. All time<->x
     // conversion goes through these two functions.
-    private let foldStripW: CGFloat = 14
+    private let foldStripW: CGFloat = 40
     private var folds: [(from: Double, to: Double)] {
         guard !collapsedSections.isEmpty else { return [] }
         var out: [(Double, Double)] = []
@@ -1701,11 +1701,26 @@ struct StudioTimelineView: View {
                           width: max(collapsed ? 2 : 6, xw(start, dur)),
                           height: barHeight ?? (h - presenceStripH - 6))
         if collapsed {
-            // The whole scene folded to a strip; click it for the Expand option.
-            ctx.fill(Path(roundedRect: rect, cornerRadius: 2),
-                     with: .color(color.opacity(selected ? 0.95 : 0.75)))
-            let dots = Text("⋯").font(.system(size: 10, weight: .bold)).foregroundStyle(.white)
-            ctx.draw(dots, at: CGPoint(x: rect.midX, y: rect.midY))
+            // Shrunken-scene chip: inset slot with accordion pleats and
+            // outward chevrons — reads as "squeezed, click to expand".
+            let slot = rect.insetBy(dx: 5, dy: 0)
+            ctx.fill(Path(roundedRect: slot, cornerRadius: 4),
+                     with: .color(color.opacity(selected ? 0.95 : 0.6)))
+            ctx.stroke(Path(roundedRect: slot, cornerRadius: 4),
+                       with: .color(selected ? .white : color), lineWidth: selected ? 1.5 : 1)
+            var pleats = Path()
+            for f in [0.33, 0.5, 0.67] {
+                let px = slot.minX + slot.width * CGFloat(f)
+                pleats.move(to: CGPoint(x: px, y: slot.minY + 6))
+                pleats.addLine(to: CGPoint(x: px, y: slot.maxY - 6))
+            }
+            ctx.stroke(pleats, with: .color(.white.opacity(0.5)), lineWidth: 1)
+            ctx.draw(Text("«").font(.system(size: 11, weight: .bold))
+                        .foregroundStyle(.white.opacity(0.9)),
+                     at: CGPoint(x: slot.minX + 7, y: slot.midY))
+            ctx.draw(Text("»").font(.system(size: 11, weight: .bold))
+                        .foregroundStyle(.white.opacity(0.9)),
+                     at: CGPoint(x: slot.maxX - 7, y: slot.midY))
             return
         }
         // Corners square off where the cue butts a neighbor, so adjacent
