@@ -516,7 +516,19 @@ struct StudioTimelineView: View {
                 scrubZoomBase = base
                 let dy = Double(value.translation.height)
                 if abs(dy) > 8 {
-                    zoom = min(16, max(1, base * pow(2, dy / 90)))
+                    // Anchored like pinch: the time under the pointer stays put.
+                    if pinchAnchor == nil {
+                        let contentH = totalLaneHeight + 34
+                        let fy = min(1, max(0, offsets.y / max(1, contentH - tlViewport.height)))
+                        pinchAnchor = (time(forX: value.startLocation.x + scrollOffset.x),
+                                       value.startLocation.x + laneLabelWidth, fy)
+                    }
+                    var tr = Transaction()
+                    tr.disablesAnimations = true
+                    withTransaction(tr) {
+                        zoom = min(16, max(1, base * pow(2, dy / 90)))
+                        if let p = pinchAnchor { keepTime(p.t, atViewX: p.vx, fy: p.fy) }
+                    }
                 }
             }
             .onEnded { value in
@@ -556,6 +568,7 @@ struct StudioTimelineView: View {
                 }
                 draggingSub = nil
                 scrubZoomBase = nil
+                pinchAnchor = nil
             }
     }
 
