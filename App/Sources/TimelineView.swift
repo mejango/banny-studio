@@ -167,6 +167,9 @@ struct StudioTimelineView: View {
     /// values fed an oscillation (the "shake" while zooming).
     @State private var pinchAnchor: (t: Double, vx: CGFloat, fy: CGFloat)?
     @State private var lastGutterTap: (key: String, at: Date)?
+    @State private var renamingRow: TrackRow?
+    @State private var renamingText = ""
+    @FocusState private var renameFocused: Bool
     @State private var editorOpenedAt = Date.distantPast
     /// Lanes viewport scroll offset. An observable holder (not view @State) so
     /// scrolling re-renders ONLY the pinned overlays that read it — the heavy
@@ -255,6 +258,21 @@ struct StudioTimelineView: View {
                                         cardHeight: min(available, (laneLabelWidth - 56) * 54 / 30))
                             .offset(x: 10, y: laneTop(of: row) + presenceStripH + 4 - scrollOffset.y)
                     }
+                }
+                if let row = renamingRow {
+                    TextField("name", text: $renamingText)
+                        .textFieldStyle(.plain)
+                        .font(.system(size: 10, weight: .semibold))
+                        .padding(.horizontal, 4).padding(.vertical, 2)
+                        .frame(width: laneLabelWidth - 44)
+                        .background(theme.gutterBase, in: RoundedRectangle(cornerRadius: 3))
+                        .overlay(RoundedRectangle(cornerRadius: 3)
+                            .stroke(Color.orange.opacity(0.7), lineWidth: 1))
+                        .focused($renameFocused)
+                        .onSubmit { commitRename() }
+                        .onAppear { renameFocused = true }
+                        .onChange(of: renameFocused) { _, f in if !f { commitRename() } }
+                        .offset(x: 8, y: laneTop(of: row) + 1 - scrollOffset.y)
                 }
                 newTrackRow
                     .offset(y: totalLaneHeight - scrollOffset.y)
@@ -836,6 +854,13 @@ struct StudioTimelineView: View {
                    let row = row(at: value.location.y + scrollOffset.y) {
                     if value.location.x > laneLabelWidth - 24 {
                         toggleHidden(row)
+                    } else if value.location.y + scrollOffset.y - laneTop(of: row) < presenceStripH,
+                              value.location.x < min(110, CGFloat(label(for: row).count) * 6.5 + 16) {
+                        // Click on the name itself → rename in place.
+                        renamingText = label(for: row)
+                        renamingRow = row
+                        model.selectedTrackKey = row.key(in: model.scene)
+                        if case .character(let i) = row { model.selection = [i] }
                     } else {
                         let key = row.key(in: model.scene)
                         if let last = lastGutterTap, Date().timeIntervalSince(last.at) < 0.45,
@@ -1229,6 +1254,27 @@ struct StudioTimelineView: View {
     }
 
     // MARK: - Row helpers
+
+    private func commitRename() {
+        guard let row = renamingRow else { return }
+        let name = renamingText.trimmingCharacters(in: .whitespaces)
+        if !name.isEmpty, name != label(for: row) {
+            model.registerUndoSnapshot(label: "Rename Track")
+            switch row {
+            case .character(let i):
+                if model.scene.characters.indices.contains(i) { model.scene.characters[i].name = name }
+            case .audio(let i):
+                if model.scene.audioTracks.indices.contains(i) { model.scene.audioTracks[i].name = name }
+            case .image(let i):
+                if model.scene.imageTracks.indices.contains(i) { model.scene.imageTracks[i].name = name }
+            case .light(let i):
+                if model.scene.lightTracks.indices.contains(i) { model.scene.lightTracks[i].name = name }
+            case .background(let i):
+                if model.scene.backgroundTracks.indices.contains(i) { model.scene.backgroundTracks[i].name = name }
+            }
+        }
+        renamingRow = nil
+    }
 
     private func label(for row: TrackRow) -> String {
         switch row {
