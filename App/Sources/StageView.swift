@@ -124,13 +124,12 @@ struct StageView: View {
         // A selected light TRACK always shows where its light is right now.
         if model.selectedLightCuePath == nil,
            let key = model.selectedTrackKey,
-           let track = model.scene.lightTracks.first(where: { $0.id == key }) {
+           let track = model.scene.lightTracks.first(where: { $0.id == key }),
+           !track.hidden, track.presence.isPresent(at: model.time) {
+            // Only while a cue is actually shining — no ghost ring after the
+            // light's stream ends.
             let state = track.cues.first { model.time >= $0.start && model.time < $0.start + $0.dur }?
                 .state(at: model.time)
-                ?? track.cues.filter { $0.start + $0.dur <= model.time }
-                    .max { ($0.start + $0.dur) < ($1.start + $1.dur) }
-                    .map { $0.state(at: $0.start + $0.dur) }
-                ?? track.cues.first?.from
             if let state {
                 let p = CGPoint(x: state.x * size.width, y: state.y * size.height)
                 let r = max(6, min(24, 10 * state.size / 120))
