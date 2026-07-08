@@ -1,0 +1,510 @@
+{
+ "source": "/Users/jango/Documents/banny/show/ep1/beat1/staging/1.json",
+ "sampleTimes": [
+  0,
+  0.5,
+  1,
+  2,
+  3,
+  5,
+  8,
+  13,
+  20,
+  30
+ ],
+ "scenes": [
+  {
+   "id": "amr9gjqgfmg448",
+   "name": "Scene 2",
+   "gScale": 0.92,
+   "characters": [
+    {
+     "index": 0,
+     "name": "DARL",
+     "eventCount": 923,
+     "samples": [
+      {
+       "t": 0,
+       "x": 0.2351,
+       "depth": 0.021884025815204707,
+       "face": 1,
+       "phase": 0,
+       "eye": "open",
+       "tilt": 0,
+       "talking": false,
+       "held": []
+      },
+      {
+       "t": 0.5,
+       "x": 0.2351,
+       "depth": 0.021884025815204707,
+       "face": 1,
+       "phase": 0,
+       "eye": "open",
+       "tilt": 0,
+       "talking": true,
+       "held": []
+      },
+      {
+       "t": 1,
+       "x": 0.2351,
+       "depth": 0.021884025815204707,
+       "face": 1,
+       "phase": 0,
+       "eye": "open",
+       "tilt": 0,
+       "talking": true,
+       "held": []
+      },
+      {
+       "t": 2,
+       "x": 0.2351,
+       "depth": 0.021884025815204707,
+       "face": 1,
+       "phase": 0,
+       "eye": "open",
+       "tilt": 0,
+       "talking": false,
+       "held": []
+      },
+      {
+       "t": 3,
+       "x": 0.2943592592592593,
+       "depth": 0.021884025815204707,
+       "face": 1,
+       "phase": 2.424242424242424,
+       "eye": "open",
+       "tilt": 0,
+       "talking": true,
+       "held": [
+        "ArrowRight"
+       ]
+      },
+      {
+       "t": 5,
+       "x": 0.7210259259259262,
+       "depth": 0.021884025815204707,
+       "face": -1,
+       "phase": 20.848484848484834,
+       "eye": "open",
+       "tilt": 0,
+       "talking": false,
+       "held": []
+      },
+      {
+       "t": 8,
+       "x": 0.3299148148148148,
+       "depth": 0.021884025815204707,
+       "face": -1,
+       "phase": 36.84848484848482,
+       "eye": "open",
+       "tilt": 0,
+       "talking": false,
+       "held": [
+        "ArrowLeft"
+       ]
+      },
+      {
+       "t": 13,
+       "x": 0.5788037037037029,
+       "depth": 0.13927533016303079,
+       "face": -1,
+       "phase": 70.78787878787892,
+       "eye": "open",
+       "tilt": 0,
+       "talking": false,
+       "held": []
+      },
+      {
+       "t": 20,
+       "x": 0.2706555555555557,
+       "depth": 0.16536228668476988,
+       "face": 1,
+       "phase": 84.36363636363689,
+       "eye": "open",
+       "tilt": 9,
+       "talking": true,
+       "held": []
+      },
+      {
+       "t": 30,
+       "x": 0.6380629629629626,
+       "depth": -0.12159423505436055,
+       "face": -1,
+       "phase": 115.8787878787893,
+       "eye": "open",
+       "tilt": 0,
+       "talking": false,
+       "held": []
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "amr9ggs3xizgw8",
+   "name": "Scene 1",
+   "gScale": 0.88,
+   "characters": [
+    {
+     "index": 0,
+     "name": "SAGE",
+     "eventCount": 290,
+     "samples": [
+      {
+       "t": 0,
+       "x": 0.2636,
+       "depth": 0.06596363636363808,
+       "face": -1,
+       "phase": 0,
+       "eye": "open",
+       "tilt": 0,
+       "talking": false,
+       "held": []
+      },
+      {
+       "t": 0.5,
+       "x": 0.2636,
+       "depth": 0.06596363636363808,
+       "face": -1,
+       "phase": 0,
+       "eye": "open",
+       "tilt": 0,
+       "talking": false,
+       "held": []
+      },
+      {
+       "t": 1,
+       "x": 0.2636,
+       "depth": 0.06596363636363808,
+       "face": -1,
+       "phase": 0,
+       "eye": "open",
+       "tilt": 0,
+       "talking": false,
+       "held": []
+      },
+      {
+       "t": 2,
+       "x": 0.2636,
+       "depth": 0.06596363636363808,
+       "face": -1,
+       "phase": 0,
+       "eye": "open",
+       "tilt": 0,
+       "talking": false,
+       "held": []
+      },
+      {
+       "t": 3,
+       "x": 0.2636,
+       "depth": 0.06596363636363808,
+       "face": -1,
+       "phase": 0,
+       "eye": "open",
+       "tilt": 0,
+       "talking": false,
+       "held": []
+      },
+      {
+       "t": 5,
+       "x": 0.2636,
+       "depth": 0.06596363636363808,
+       "face": -1,
+       "phase": 0,
+       "eye": "open",
+       "tilt": 0,
+       "talking": false,
+       "held": []
+      },
+      {
+       "t": 8,
+       "x": 0.2636,
+       "depth": 0.06596363636363808,
+       "face": -1,
+       "phase": 0,
+       "eye": "open",
+       "tilt": 0,
+       "talking": false,
+       "held": []
+      },
+      {
+       "t": 13,
+       "x": 0.2636,
+       "depth": 0.06596363636363808,
+       "face": -1,
+       "phase": 0,
+       "eye": "open",
+       "tilt": 0,
+       "talking": false,
+       "held": []
+      },
+      {
+       "t": 20,
+       "x": 0.2636,
+       "depth": 0.06596363636363808,
+       "face": -1,
+       "phase": 0,
+       "eye": "open",
+       "tilt": 0,
+       "talking": false,
+       "held": []
+      },
+      {
+       "t": 30,
+       "x": 0.2636,
+       "depth": 0.06596363636363808,
+       "face": -1,
+       "phase": 0,
+       "eye": "open",
+       "tilt": 0,
+       "talking": false,
+       "held": []
+      }
+     ]
+    },
+    {
+     "index": 1,
+     "name": "HELIUS",
+     "eventCount": 928,
+     "samples": [
+      {
+       "t": 0,
+       "x": 0.6928,
+       "depth": 0.33191417519854116,
+       "face": -1,
+       "phase": 0,
+       "eye": "open",
+       "tilt": 0,
+       "talking": false,
+       "held": []
+      },
+      {
+       "t": 0.5,
+       "x": 0.6928,
+       "depth": 0.33191417519854116,
+       "face": -1,
+       "phase": 0,
+       "eye": "open",
+       "tilt": 0,
+       "talking": false,
+       "held": []
+      },
+      {
+       "t": 1,
+       "x": 0.6157629629629628,
+       "depth": 0.1410050842894508,
+       "face": -1,
+       "phase": 6.787878787878763,
+       "eye": "open",
+       "tilt": 0,
+       "talking": false,
+       "held": [
+        "ArrowDown",
+        "ArrowLeft"
+       ]
+      },
+      {
+       "t": 2,
+       "x": 0.544651851851851,
+       "depth": 0.06600508428945025,
+       "face": -1,
+       "phase": 9.69696969696969,
+       "eye": "open",
+       "tilt": 0,
+       "talking": false,
+       "held": []
+      },
+      {
+       "t": 3,
+       "x": 0.5031703703703697,
+       "depth": 0.15464144792581386,
+       "face": -1,
+       "phase": 14.545454545454534,
+       "eye": "open",
+       "tilt": 0,
+       "talking": true,
+       "held": [
+        "ArrowLeft"
+       ]
+      },
+      {
+       "t": 5,
+       "x": 0.45576296296296254,
+       "depth": 0.1887323570167229,
+       "face": -1,
+       "phase": 17.696969696969685,
+       "eye": "open",
+       "tilt": 0,
+       "talking": false,
+       "held": []
+      },
+      {
+       "t": 8,
+       "x": 0.45576296296296254,
+       "depth": 0.1887323570167229,
+       "face": -1,
+       "phase": 17.696969696969685,
+       "eye": "open",
+       "tilt": 0,
+       "talking": true,
+       "held": []
+      },
+      {
+       "t": 13,
+       "x": 0.45576296296296254,
+       "depth": 0.1887323570167229,
+       "face": -1,
+       "phase": 17.696969696969685,
+       "eye": "open",
+       "tilt": 0,
+       "talking": false,
+       "held": []
+      },
+      {
+       "t": 20,
+       "x": 0.45576296296296254,
+       "depth": 0.1887323570167229,
+       "face": -1,
+       "phase": 17.696969696969685,
+       "eye": "closed",
+       "tilt": 0,
+       "talking": false,
+       "held": []
+      },
+      {
+       "t": 30,
+       "x": 0.7935407407407414,
+       "depth": 0.379641447925814,
+       "face": 1,
+       "phase": 38.303030303030276,
+       "eye": "open",
+       "tilt": 0,
+       "talking": false,
+       "held": []
+      }
+     ]
+    },
+    {
+     "index": 2,
+     "name": "TED",
+     "eventCount": 156,
+     "samples": [
+      {
+       "t": 0,
+       "x": 0.8723,
+       "depth": 0.44989433208606655,
+       "face": 1,
+       "phase": 0,
+       "eye": "open",
+       "tilt": 0,
+       "talking": false,
+       "held": []
+      },
+      {
+       "t": 0.5,
+       "x": 0.8723,
+       "depth": 0.44989433208606655,
+       "face": 1,
+       "phase": 0,
+       "eye": "open",
+       "tilt": 0,
+       "talking": false,
+       "held": []
+      },
+      {
+       "t": 1,
+       "x": 0.8723,
+       "depth": 0.44989433208606655,
+       "face": 1,
+       "phase": 0,
+       "eye": "open",
+       "tilt": 0,
+       "talking": false,
+       "held": []
+      },
+      {
+       "t": 2,
+       "x": 0.8723,
+       "depth": 0.44989433208606655,
+       "face": 1,
+       "phase": 0,
+       "eye": "open",
+       "tilt": 0,
+       "talking": false,
+       "held": []
+      },
+      {
+       "t": 3,
+       "x": 0.8723,
+       "depth": 0.44989433208606655,
+       "face": 1,
+       "phase": 0,
+       "eye": "closed",
+       "tilt": 0,
+       "talking": false,
+       "held": []
+      },
+      {
+       "t": 5,
+       "x": 0.8723,
+       "depth": 0.44989433208606655,
+       "face": 1,
+       "phase": 0,
+       "eye": "open",
+       "tilt": 0,
+       "talking": false,
+       "held": []
+      },
+      {
+       "t": 8,
+       "x": 0.8723,
+       "depth": 0.44989433208606655,
+       "face": 1,
+       "phase": 0,
+       "eye": "open",
+       "tilt": 0,
+       "talking": false,
+       "held": []
+      },
+      {
+       "t": 13,
+       "x": 0.8485962962962961,
+       "depth": 0.34762160481333904,
+       "face": -1,
+       "phase": 4.121212121212119,
+       "eye": "open",
+       "tilt": 0,
+       "talking": false,
+       "held": []
+      },
+      {
+       "t": 20,
+       "x": 0.8130407407407403,
+       "depth": 0.38853069572237003,
+       "face": 1,
+       "phase": 10.90909090908877,
+       "eye": "open",
+       "tilt": 0,
+       "talking": false,
+       "held": [
+        "ArrowUp"
+       ]
+      },
+      {
+       "t": 30,
+       "x": 0.9078555555555557,
+       "depth": 0.4226216048133392,
+       "face": 1,
+       "phase": 15.999999999999988,
+       "eye": "open",
+       "tilt": 0,
+       "talking": false,
+       "held": []
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}
