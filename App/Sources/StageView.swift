@@ -33,7 +33,6 @@ struct StageView: View {
                         imageAsset: { media.still(assetID: $0, file: file) },
                         in: cg)
                 }
-                drawSelectionTags(context: context, size: size, scene: scene)
                 drawImageCueHighlight(context: context, size: size)
                 drawLightHandle(context: context, size: size)
                 DispatchQueue.main.async { stageSize = size }
@@ -43,20 +42,6 @@ struct StageView: View {
         .aspectRatio(16 / 9, contentMode: .fit)
         .background(Color.black)
         .gesture(stageDrag)
-    }
-
-    /// Number badges under each character (editor-only, like the web's tag row).
-    private func drawSelectionTags(context: GraphicsContext, size: CGSize, scene: SceneState) {
-        let W = Double(size.width)
-        let sim = model.simulator
-        for i in scene.characters.indices
-            where !scene.characters[i].hidden && scene.characters[i].presence.isPresent(at: model.time) {
-            let pose = sim.pose(characterIndex: i, at: model.time)
-            let label = Text("\((i + 1) % 10)")
-                .font(.system(size: 11, weight: .bold, design: .monospaced))
-                .foregroundStyle(model.selection.contains(i) ? Color.orange : Color.gray)
-            context.draw(label, at: CGPoint(x: pose.x * W, y: Double(size.height) - 12))
-        }
     }
 
     /// Dashed outline around the selected image cue while it's on stage.

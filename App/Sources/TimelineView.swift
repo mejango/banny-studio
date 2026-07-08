@@ -608,7 +608,8 @@ struct StudioTimelineView: View {
             p.addLine(to: CGPoint(x: size.width, y: y + captionsRowH))
         }, with: .color(.black), lineWidth: 1)
         for (ci, character) in model.scene.characters.enumerated() {
-            let tint = bodyTint(character.body)
+            let tint = Color(red: 0.92, green: 0.9, blue: 0.82)
+            _ = character
             for (si, sub) in character.subs.enumerated() {
                 let rect = CGRect(x: x(forTime: sub.start), y: y + 2,
                                   width: max(8, CGFloat(sub.dur) * pxPerSecond), height: captionsRowH - 4)
@@ -623,15 +624,6 @@ struct StudioTimelineView: View {
                                  at: CGPoint(x: rect.minX + 4, y: rect.minY + 3.5), anchor: .topLeading)
                 }
             }
-        }
-    }
-
-    private func bodyTint(_ body: BannyCore.Body) -> Color {
-        switch body {
-        case .orange: return Color(red: 1, green: 0.72, blue: 0.45)
-        case .original: return Color(red: 1, green: 0.88, blue: 0.5)
-        case .pink: return Color(red: 1, green: 0.72, blue: 0.78)
-        case .alien: return Color(red: 0.62, green: 0.9, blue: 0.55)
         }
     }
 
