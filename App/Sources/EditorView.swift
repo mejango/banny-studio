@@ -49,11 +49,13 @@ struct WideEditor: View {
             // for the available width, and the timeline absorbs all remaining space.
             let availH = Double(geo.size.height) - headerH
             let stageWidth = Double(max(200, geo.size.width))
-            let requestedTL = min(max(0, timelineHeight), availH - 140)
+            let requestedTL = min(max(0, timelineHeight), availH - 9)
             // Below ~24pt the timeline snaps away entirely and the stage keeps
             // the whole area (letterboxed once it hits its 16:9 width limit).
             let wantTL = requestedTL < 24 ? 0.0 : requestedTL
-            let stageH = min(stageWidth * 9.0 / 16.0, availH - 9 - wantTL)
+            let rawStage = min(stageWidth * 9.0 / 16.0, availH - 9 - wantTL)
+            // Below ~44pt the stage snaps away too — timeline-only editing.
+            let stageH = rawStage < 44 ? 0.0 : rawStage
             let tlH = wantTL == 0 ? 0.0 : max(0, availH - 9 - stageH)
             let stageBoxH = availH - 9 - tlH
             VStack(spacing: 0) {
@@ -66,7 +68,7 @@ struct WideEditor: View {
                             PerformanceDeck(model: model)
                         }
                     }
-                divider(maxHeight: availH - 140)
+                divider(maxHeight: availH - 9)
                 StudioTimelineView(model: model, file: file, showShip: false)
                     .frame(height: CGFloat(tlH), alignment: .top)
                     .clipped()
@@ -119,7 +121,7 @@ struct WideEditor: View {
                 .onChanged { value in
                     let base = dividerDragBase ?? timelineHeight
                     dividerDragBase = base
-                    timelineHeight = min(max(200, maxHeight), max(0, base - Double(value.translation.height)))
+                    timelineHeight = min(maxHeight, max(0, base - Double(value.translation.height)))
                 }
                 .onEnded { _ in dividerDragBase = nil })
     }

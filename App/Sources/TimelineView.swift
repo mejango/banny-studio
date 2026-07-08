@@ -443,24 +443,22 @@ struct StudioTimelineView: View {
         return true
     }
 
-    /// An empty spot on a character lane's wardrobe strip (the dots row).
+    /// An empty spot on a character lane's wardrobe strip (bottom band).
     private func wardrobeSlot(at point: CGPoint) -> (char: Int, t: Double, x: CGFloat, y: CGFloat)? {
         guard let row = row(at: point.y), case .character(let ci) = row,
               model.scene.characters.indices.contains(ci) else { return nil }
-        let zones = characterLaneZones(h: height(of: row))
-        let bandTop = laneTop(of: row) + zones.eventTop + 6 * zones.subH
-        guard point.y >= bandTop - 2, point.y <= bandTop + zones.subH + 4 else { return nil }
+        let bandTop = laneTop(of: row) + height(of: row) - wardrobeStripH
+        guard point.y >= bandTop - 2 else { return nil }
         let t = (time(forX: point.x) * 10).rounded() / 10
-        return (ci, t, point.x, bandTop + zones.subH / 2)
+        return (ci, t, point.x, bandTop + wardrobeStripH / 2)
     }
 
     /// The outfit-change dot near a click, if any.
     private func outfitEvent(at point: CGPoint) -> (char: Int, index: Int)? {
         guard let row = row(at: point.y), case .character(let ci) = row,
               model.scene.characters.indices.contains(ci) else { return nil }
-        let zones = characterLaneZones(h: height(of: row))
-        let cy = laneTop(of: row) + zones.eventTop + 6 * zones.subH + zones.subH / 2
-        guard abs(point.y - cy) < 8 else { return nil }
+        let cy = laneTop(of: row) + height(of: row) - wardrobeStripH / 2
+        guard abs(point.y - cy) < 9 else { return nil }
         for (i, ev) in model.scene.characters[ci].events.enumerated() {
             guard case .outfit(let t, _, _) = ev else { continue }
             if abs(x(forTime: t) - point.x) < 7 { return (ci, i) }
@@ -795,6 +793,12 @@ struct StudioTimelineView: View {
                             .font(.system(size: 10))
                             .foregroundStyle(hidden ? Color.gray : theme.mutedText),
                          at: CGPoint(x: size.width - 18, y: y + presenceStripH / 2))
+                if case .character = row {
+                    ctx.draw(Text(Image(systemName: "tshirt"))
+                                .font(.system(size: 9))
+                                .foregroundStyle(theme.mutedText),
+                             at: CGPoint(x: size.width - 18, y: y + h - wardrobeStripH / 2 - 1))
+                }
                 // Motion readouts beside the outfit card.
                 if case .character(let ci) = row, let c = model.scene.characters[safe: ci] {
                     let available = h - presenceStripH - 16
@@ -1105,12 +1109,16 @@ struct StudioTimelineView: View {
 
     /// Character lane vertical layout: captions strip, then audio clips, then
     /// the seven event sub-lanes. Everything gets its own band — no overlap.
-    private func characterLaneZones(h: CGFloat) -> (clipTop: CGFloat, clipH: CGFloat,
-                                                    eventTop: CGFloat, subH: CGFloat) {
+    /// Bottom band of every character lane: the wardrobe (outfit change) strip.
+    private var wardrobeStripH: CGFloat { 16 }
+
+    private func characterLaneZones(h fullH: CGFloat) -> (clipTop: CGFloat, clipH: CGFloat,
+                                                          eventTop: CGFloat, subH: CGFloat) {
+        let h = fullH - wardrobeStripH
         let clipH: CGFloat = max(14, (h - presenceStripH - 8) * 0.45)
         let clipTop = presenceStripH + 2
         let eventTop = clipTop + clipH + 2
-        let subH = max(2, (h - eventTop - 4) / 7)
+        let subH = max(2, (h - eventTop - 4) / 6)
         return (clipTop, clipH, eventTop, subH)
     }
 
@@ -1202,14 +1210,13 @@ struct StudioTimelineView: View {
                            with: .color(lightMode ? .black : .white), lineWidth: 1)
             }
         }
-        let stripY = y + zones.eventTop + 6 * zones.subH
-        ctx.fill(Path(CGRect(x: 0, y: stripY - 1, width: contentWidth + 40,
-                             height: zones.subH + 2)),
-                 with: .color(theme.stripTint.opacity(0.7)))
+        let stripY = y + h - wardrobeStripH
+        ctx.fill(Path(CGRect(x: 0, y: stripY, width: contentWidth + 40, height: wardrobeStripH)),
+                 with: .color(theme.stripTint))
         for ev in character.events {
             guard case .outfit(let t, _, _) = ev else { continue }
             let cx = x(forTime: t)
-            let cy = y + zones.eventTop + 6 * zones.subH + zones.subH / 2
+            let cy = stripY + wardrobeStripH / 2
             ctx.fill(Path(ellipseIn: CGRect(x: cx - 3, y: cy - 3, width: 6, height: 6)),
                      with: .color(lightMode ? .black : .white))
             if let sel = model.selectedOutfitEvent, sel.char == i,
