@@ -330,3 +330,111 @@ struct MotionSection: View {
         }
     }
 }
+
+/// Audio mix for a character's voice or an audio track: gain, 3-band EQ,
+/// pan mode, reverb. Gain drives the track bus; EQ/pan/reverb write through
+/// to every clip on the track (the audio graph reads them per clip).
+struct MixSection: View {
+    @Bindable var model: StudioModel
+    let kind: TrackRowKind
+
+    private enum PanChoice: String, CaseIterable {
+        case centered = "Centered"
+        case follow = "Follow"
+        case wide = "Wide"
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("MIX").font(.caption.bold()).foregroundStyle(.secondary)
+            slider("gain", get: { $0.gain }, set: { $0.gain = $1 }, in: 0...2, fmt: "%.2f",
+                   trackOnly: true)
+            slider("EQ low", get: { $0.low }, set: { $0.low = $1 }, in: -12...12, fmt: "%+.0fdB")
+            slider("EQ mid", get: { $0.mid }, set: { $0.mid = $1 }, in: -12...12, fmt: "%+.0fdB")
+            slider("EQ high", get: { $0.high }, set: { $0.high = $1 }, in: -12...12, fmt: "%+.0fdB")
+            HStack {
+                Text("pan").font(.caption2).frame(width: 60, alignment: .leading)
+                Picker("", selection: panBinding) {
+                    ForEach(panChoices, id: \.self) { Text($0.rawValue).tag($0) }
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+            }
+            if panBinding.wrappedValue == .follow {
+                Text("Sound leans left/right as the character moves, staying near center.")
+                    .font(.caption2).foregroundStyle(.secondary)
+            }
+            slider("reverb", get: { $0.reverb }, set: { $0.reverb = $1 }, in: 0...1, fmt: "%.0f%%",
+                   display: { $0 * 100 })
+            Text("Changes apply from the next play.")
+                .font(.caption2).foregroundStyle(.secondary)
+        }
+    }
+
+    private var panChoices: [PanChoice] {
+        if case .character = kind { return PanChoice.allCases }
+        return [.centered, .wide]
+    }
+
+    private var fx: Fx {
+        switch kind {
+        case .character(let i): return model.scene.characters[safe: i]?.trackFx ?? .defaultTrack
+        case .audio(let i): return model.scene.audioTracks[safe: i]?.fx ?? .defaultTrack
+        default: return .defaultTrack
+        }
+    }
+
+    /// Writes the track fx; unless `trackOnly`, mirrors the change onto every clip.
+    private func update(trackOnly: Bool = false, _ transform: @escaping (inout Fx) -> Void) {
+        switch kind {
+        case .character(let i):
+            guard model.scene.characters.indices.contains(i) else { return }
+            transform(&model.scene.characters[i].trackFx)
+            if !trackOnly {
+                for ci in model.scene.characters[i].clips.indices {
+                    transform(&model.scene.characters[i].clips[ci].fx)
+                }
+            }
+        case .audio(let i):
+            guard model.scene.audioTracks.indices.contains(i) else { return }
+            transform(&model.scene.audioTracks[i].fx)
+            if !trackOnly {
+                for ci in model.scene.audioTracks[i].clips.indices {
+                    transform(&model.scene.audioTracks[i].clips[ci].fx)
+                }
+            }
+        default: break
+        }
+    }
+
+    private func slider(_ label: String, get: @escaping (Fx) -> Double,
+                        set: @escaping (inout Fx, Double) -> Void,
+                        in range: ClosedRange<Double>, fmt: String,
+                        trackOnly: Bool = false,
+                        display: @escaping (Double) -> Double = { $0 }) -> some View {
+        HStack {
+            Text(label).font(.caption2).frame(width: 60, alignment: .leading)
+            Slider(value: Binding(get: { get(fx) },
+                                  set: { v in update(trackOnly: trackOnly) { set(&$0, v) } }),
+                   in: range)
+            Text(String(format: fmt, display(get(fx))))
+                .font(.system(size: 9, design: .monospaced)).foregroundStyle(.secondary)
+                .frame(width: 40, alignment: .trailing)
+        }
+    }
+
+    private var panBinding: Binding<PanChoice> {
+        Binding(
+            get: {
+                switch fx.pan {
+                case .follow: return .follow
+                case .wide: return .wide
+                case .narrow, .value: return .centered
+                }
+            },
+            set: { choice in
+                let pan: Pan = choice == .follow ? .follow : choice == .wide ? .wide : .narrow
+                update { $0.pan = pan }
+            })
+    }
+}

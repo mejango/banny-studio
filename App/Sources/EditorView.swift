@@ -185,6 +185,7 @@ struct TrackInspector: View {
             switch kind {
             case .character(let i):
                 MotionSection(model: model, characterIndex: i)
+                MixSection(model: model, kind: kind)
                 // The card's wardrobe edits the character's START state; timed
                 // mid-show changes remain as recorded outfit events (white dots).
                 WardrobePanel(model: model, characterIndex: i, baseOnly: true)
@@ -192,6 +193,7 @@ struct TrackInspector: View {
                 if let file {
                     AudioSection(model: model, file: file, audioTrackIndex: i)
                 }
+                MixSection(model: model, kind: kind)
             case .image:
                 ImageCueInspector(model: model)
                 if let file {
@@ -348,9 +350,10 @@ struct TrackCardButton: View {
 
     private var popoverHeight: CGFloat {
         switch row {
-        case .character: return 520
+        case .character: return 560
         case .background, .image: return 380
-        case .audio, .light: return 190
+        case .audio: return 420
+        case .light: return 190
         }
     }
 
