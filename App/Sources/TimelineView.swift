@@ -1087,9 +1087,26 @@ struct StudioTimelineView: View {
             ctx.fill(Path(ellipseIn: CGRect(x: cx - 3, y: cy - 3, width: 6, height: 6)),
                      with: .color(lightMode ? .black : .white))
             if let sel = model.selectedOutfitEvent, sel.char == i,
-               character.events.indices.contains(sel.index), character.events[sel.index] == ev {
+               character.events.indices.contains(sel.index), character.events[sel.index] == ev,
+               case .outfit(_, let slot, let name) = ev {
                 ctx.stroke(Path(ellipseIn: CGRect(x: cx - 5.5, y: cy - 5.5, width: 11, height: 11)),
                            with: .color(.orange), lineWidth: 1.5)
+                // What this dot changes, in a bubble above it.
+                let slotTitle = SharedAssets.catalog.slotName(slot) ?? "Slot \(slot)"
+                let itemTitle = name.map { n in
+                    SharedAssets.catalog.outfits(inSlot: slot).first { $0.name == n }?.label ?? n
+                } ?? "off"
+                let resolved = ctx.resolve(Text("\(slotTitle) → \(itemTitle)")
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundStyle(.white))
+                let sz = resolved.measure(in: CGSize(width: 260, height: 20))
+                let bubble = CGRect(x: cx - sz.width / 2 - 6, y: cy - 27,
+                                    width: sz.width + 12, height: 17)
+                ctx.fill(Path(roundedRect: bubble, cornerRadius: 4),
+                         with: .color(Color.black.opacity(0.85)))
+                ctx.stroke(Path(roundedRect: bubble, cornerRadius: 4),
+                           with: .color(.orange), lineWidth: 1)
+                ctx.draw(resolved, at: CGPoint(x: cx, y: bubble.midY), anchor: .center)
             }
         }
         for clip in character.clips {
