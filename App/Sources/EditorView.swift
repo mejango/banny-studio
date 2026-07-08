@@ -157,6 +157,9 @@ struct SidePanel: View {
             .padding(10)
         }
         .background(Color(red: 1, green: 0.99, blue: 0.95))
+        // The panel is a light surface by design (webapp cream); pin it so
+        // system dark mode doesn't render white-on-white chips.
+        .environment(\.colorScheme, .light)
     }
 
     private var castSection: some View {
