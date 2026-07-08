@@ -2023,46 +2023,44 @@ struct StudioTimelineView: View {
 
     private func applyCueDrag(_ dc: (row: TrackRow, cueID: String, baseStart: Double, baseDur: Double, edge: Int),
                               translation dt: Double) {
-        func update(start: inout Double, dur: inout Double) {
-            switch dc.edge {
-            case -1:
-                let snappedStart = snapped(dc.baseStart + dt, excluding: dc.cueID)
-                let newStart = max(0, min(snappedStart, dc.baseStart + dc.baseDur - 0.2))
-                dur = dc.baseDur + (dc.baseStart - newStart)
-                start = newStart
-            case 1:
-                let end = snapped(dc.baseStart + dc.baseDur + dt, excluding: dc.cueID)
-                dur = max(0.2, end - dc.baseStart)
-            default:
-                // Whole-cue move: snap whichever edge actually found an anchor
-                // (zero delta means "no anchor", not "perfect snap").
-                let s = dc.baseStart + dt
-                let dS = snapped(s, excluding: dc.cueID) - s
-                let dE = snapped(s + dc.baseDur, excluding: dc.cueID) - (s + dc.baseDur)
-                let shift: Double
-                if dS != 0, dE != 0 { shift = abs(dS) <= abs(dE) ? dS : dE }
-                else if dS != 0 { shift = dS }
-                else { shift = dE }
-                start = max(0, s + shift)
-            }
+        // ONE value computed, ONE assignment per field. (Passing start+dur as
+        // two inout refs into the computed `scene` clobbered the dur writeback.)
+        let newStart: Double
+        let newDur: Double
+        switch dc.edge {
+        case -1:
+            let snappedStart = snapped(dc.baseStart + dt, excluding: dc.cueID)
+            newStart = max(0, min(snappedStart, dc.baseStart + dc.baseDur - 0.2))
+            newDur = dc.baseDur + (dc.baseStart - newStart)
+        case 1:
+            let end = snapped(dc.baseStart + dc.baseDur + dt, excluding: dc.cueID)
+            newStart = dc.baseStart
+            newDur = max(0.2, end - dc.baseStart)
+        default:
+            // Whole-cue move: snap whichever edge actually found an anchor.
+            let sCand = dc.baseStart + dt
+            let dS = snapped(sCand, excluding: dc.cueID) - sCand
+            let dE = snapped(sCand + dc.baseDur, excluding: dc.cueID) - (sCand + dc.baseDur)
+            let shift: Double
+            if dS != 0, dE != 0 { shift = abs(dS) <= abs(dE) ? dS : dE }
+            else if dS != 0 { shift = dS }
+            else { shift = dE }
+            newStart = max(0, sCand + shift)
+            newDur = dc.baseDur
         }
         switch dc.row {
         case .image(let i):
             guard let ci = model.scene.imageTracks[i].cues.firstIndex(where: { $0.id == dc.cueID }) else { return }
-            update(start: &model.scene.imageTracks[i].cues[ci].start,
-                   dur: &model.scene.imageTracks[i].cues[ci].dur)
+            model.scene.imageTracks[i].cues[ci].start = newStart
+            model.scene.imageTracks[i].cues[ci].dur = newDur
         case .light(let i):
-            guard let ci = model.scene.lightTracks[i].cues.firstIndex(where: { $0.id == dc.cueID }) else {
-                dlog("applyCueDrag LIGHT: cue \(dc.cueID.prefix(5)) NOT FOUND in track \(i)")
-                return
-            }
-            update(start: &model.scene.lightTracks[i].cues[ci].start,
-                   dur: &model.scene.lightTracks[i].cues[ci].dur)
-            dlog("applyCueDrag LIGHT dt=\(String(format: "%.2f", dt)) edge=\(dc.edge) dur=\(String(format: "%.2f", model.scene.lightTracks[i].cues[ci].dur))")
+            guard let ci = model.scene.lightTracks[i].cues.firstIndex(where: { $0.id == dc.cueID }) else { return }
+            model.scene.lightTracks[i].cues[ci].start = newStart
+            model.scene.lightTracks[i].cues[ci].dur = newDur
         case .background(let i):
             guard let ci = model.scene.backgroundTracks[i].cues.firstIndex(where: { $0.id == dc.cueID }) else { return }
-            update(start: &model.scene.backgroundTracks[i].cues[ci].start,
-                   dur: &model.scene.backgroundTracks[i].cues[ci].dur)
+            model.scene.backgroundTracks[i].cues[ci].start = newStart
+            model.scene.backgroundTracks[i].cues[ci].dur = newDur
         default: break
         }
     }
