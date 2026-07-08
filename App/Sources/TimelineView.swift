@@ -1348,10 +1348,14 @@ struct StudioTimelineView: View {
         switch row {
         case .character(let i):
             return model.selection.contains(i) ? .orange : theme.labelText
-        case .audio: return Color(red: 0.45, green: 0.9, blue: 0.75)
-        case .image: return Color(red: 0.9, green: 0.7, blue: 0.4)
-        case .light: return Color(red: 1, green: 0.85, blue: 0.35)
-        case .background: return Color(red: 0.65, green: 0.6, blue: 0.95)
+        case .audio: return lightMode ? Color(red: 0, green: 0.48, blue: 0.34)
+                                      : Color(red: 0.45, green: 0.9, blue: 0.75)
+        case .image: return lightMode ? Color(red: 0.62, green: 0.4, blue: 0.05)
+                                      : Color(red: 0.9, green: 0.7, blue: 0.4)
+        case .light: return lightMode ? Color(red: 0.62, green: 0.47, blue: 0)
+                                      : Color(red: 1, green: 0.85, blue: 0.35)
+        case .background: return lightMode ? Color(red: 0.38, green: 0.32, blue: 0.72)
+                                           : Color(red: 0.65, green: 0.6, blue: 0.95)
         }
     }
 
