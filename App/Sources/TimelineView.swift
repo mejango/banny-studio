@@ -533,8 +533,10 @@ struct StudioTimelineView: View {
             ctx.fill(Path(CGRect(x: 0, y: y, width: size.width, height: h)),
                      with: .color(Color.white.opacity(0.03)))
         }
-        ctx.stroke(Path { $0.move(to: CGPoint(x: 0, y: y + h)); $0.addLine(to: CGPoint(x: size.width, y: y + h)) },
-                   with: .color(.black), lineWidth: 1)
+        ctx.stroke(Path { p in
+            p.move(to: CGPoint(x: 0, y: y + h - 1))
+            p.addLine(to: CGPoint(x: size.width, y: y + h - 1))
+        }, with: .color(.black), lineWidth: 2)
 
         drawPresenceStrip(row, y: y, ctx: ctx)
 
