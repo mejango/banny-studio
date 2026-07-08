@@ -755,9 +755,6 @@ struct StudioTimelineView: View {
         .buttonStyle(.plain)
         .menuIndicator(.hidden)
         .background(theme.gutterCell)
-        .overlay(alignment: .trailing) {
-            Rectangle().fill(theme.gutterDivider).frame(width: 1)
-        }
         .frame(height: 34)
     }
 
@@ -792,9 +789,11 @@ struct StudioTimelineView: View {
                     p.addLine(to: CGPoint(x: size.width, y: y + h - 1))
                 }, with: .color(.black), lineWidth: 2)
                 let pillActive = resizingTrack?.key == row.key(in: model.scene)
-                ctx.fill(Path(roundedRect: CGRect(x: size.width / 2 - 16, y: y + h - 9,
-                                                  width: 32, height: 3), cornerRadius: 1.5),
-                         with: .color(Color(white: pillActive ? 0.8 : 0.4)))
+                ctx.fill(Path(roundedRect: CGRect(x: size.width / 2 - 12, y: y + h - 8,
+                                                  width: 24, height: 2), cornerRadius: 1),
+                         with: .color(pillActive
+                                      ? Color(white: lightMode ? 0.3 : 0.8)
+                                      : theme.mutedText.opacity(0.35)))
                 // Name + whole-track eye sit on the presence-strip line, so the
                 // eye reads as the label of that show/hide row.
                 var labelCtx = ctx
