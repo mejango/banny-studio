@@ -89,7 +89,9 @@ struct WideEditor: View {
             Text("BANNY STUDIO")
                 .font(.system(size: 17, weight: .heavy, design: .rounded))
                 .kerning(2)
-                .foregroundStyle(Color(red: 1, green: 0.54, blue: 0))
+                // Match the logo art: black in light mode, off-white in dark.
+                .foregroundStyle(lightMode ? Color.black
+                                           : Color(red: 0.92, green: 0.92, blue: 0.92))
             ThemeToggle()
                 .padding(.leading, 6)
             Spacer()
