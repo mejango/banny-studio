@@ -340,6 +340,12 @@ final class StudioModel {
         scene.backgroundTracks[0].cues = cues.sorted { $0.start < $1.start }
     }
 
+    func addAudioTrack() {
+        registerUndoSnapshot(label: "Add Audio Track")
+        scene.audioTracks.append(AudioTrack(id: ShowDocumentFile.newID(),
+                                            name: "Audio \(scene.audioTracks.count + 1)"))
+    }
+
     func addLightTrack() {
         registerUndoSnapshot(label: "Add Light")
         let cue = LightCue(id: ShowDocumentFile.newID(), start: time,

@@ -148,6 +148,7 @@ struct StudioTimelineView: View {
         VStack(spacing: 0) {
             TransportBar(model: model, file: file)
             ScrollView(.vertical) {
+                VStack(alignment: .leading, spacing: 0) {
                 HStack(alignment: .top, spacing: 0) {
                     gutterCanvas
                         .frame(width: laneLabelWidth, height: lanesTop + totalLaneHeight + 20)
@@ -177,6 +178,8 @@ struct StudioTimelineView: View {
                         .frame(width: max(600, contentWidth + 40),
                                height: lanesTop + totalLaneHeight + 20, alignment: .topLeading)
                     }
+                }
+                newTrackRow
                 }
             }
             .background(Color(red: 0.078, green: 0.078, blue: 0.11))
@@ -253,6 +256,47 @@ struct StudioTimelineView: View {
     private var contentWidth: CGFloat { CGFloat(model.duration) * pxPerSecond }
     private func x(forTime t: Double) -> CGFloat { 4 + CGFloat(t) * pxPerSecond }
     private func time(forX x: CGFloat) -> Double { max(0, Double((x - 4) / pxPerSecond)) }
+
+    /// Always the last row: create any track type in place.
+    private var newTrackRow: some View {
+        HStack {
+            Menu {
+                Menu("Character") {
+                    ForEach(BannyCore.Body.allCases, id: \.self) { body in
+                        Button(body.rawValue) { model.addCharacter(body: body) }
+                    }
+                }
+                Button("Audio") { model.addAudioTrack() }
+                Button("Light") { model.addLightTrack() }
+                Menu("Image") {
+                    let imageAssets = model.document.assets.filter { $0.kind == .image }
+                    if imageAssets.isEmpty {
+                        Text("add an image to the Asset Bank first")
+                    }
+                    ForEach(imageAssets) { asset in
+                        Button(asset.name) { model.addImageTrack(assetID: asset.id, assetName: asset.name) }
+                    }
+                }
+                Menu("Background") {
+                    if model.document.assets.isEmpty {
+                        Text("add an asset to the Asset Bank first")
+                    }
+                    ForEach(model.document.assets) { asset in
+                        Button(asset.name) { model.addBackgroundCue(assetID: asset.id, assetName: asset.name) }
+                    }
+                }
+            } label: {
+                Label("New track", systemImage: "plus")
+                    .font(.system(size: 11, weight: .semibold))
+            }
+            .menuStyle(.borderlessButton)
+            .frame(width: max(60, laneLabelWidth + 40), alignment: .leading)
+            .padding(.leading, 8)
+            Spacer()
+        }
+        .frame(height: 30)
+        .background(Color(red: 0.05, green: 0.07, blue: 0.05))
+    }
 
     /// Pinned label gutter: names, eye toggles, track-height pills, width handle.
     private var gutterCanvas: some View {
