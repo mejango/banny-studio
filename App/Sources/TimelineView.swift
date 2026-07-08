@@ -1738,6 +1738,18 @@ struct StudioTimelineView: View {
                 model.selectedOutfitEvent = nil
                 return
             }
+            if isHidden(row) {
+                // Whole track is hidden — the next possible state is SHOW:
+                // un-hide it and reveal from this point on.
+                model.registerUndoSnapshot(label: "Show From Here")
+                toggleHidden(row)
+                if events.isEmpty {
+                    events.append(VisibilityEvent(t: 0, visible: false))
+                }
+                events.append(VisibilityEvent(t: t, visible: true))
+                setPresence(row, events)
+                return
+            }
             model.registerUndoSnapshot(label: "Toggle Presence")
             let visibleNow = events.isPresent(at: t)
             events.append(VisibilityEvent(t: t, visible: !visibleNow))
