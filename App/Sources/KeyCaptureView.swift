@@ -71,6 +71,10 @@ struct KeyCaptureView: NSViewRepresentable {
                 model.liveKey(code: code, down: down)
                 return true
             }
+            if down, event.keyCode == 51 || event.keyCode == 117 { // Delete / ⌦
+                model.requestTimelineDelete()
+                return true
+            }
             if down, event.keyCode == 49 { // Space
                 if event.modifierFlags.contains(.shift) { model.record() } else { model.play() }
                 return true

@@ -251,6 +251,15 @@ final class StudioModel {
         }
     }
 
+    /// Delete/Backspace pressed anywhere outside a text field. The timeline
+    /// observes this counter — .onDeleteCommand needs view focus the canvas
+    /// timeline never has, so the key routes through the event monitor instead.
+    private(set) var timelineDeleteRequest = 0
+
+    func requestTimelineDelete() {
+        timelineDeleteRequest += 1
+    }
+
     // MARK: - Live keys
 
     /// A puppeteering key went down/up. Recording → capture; paused at start →

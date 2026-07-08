@@ -255,6 +255,7 @@ struct StudioTimelineView: View {
                         keepTime(tKeep, atViewX: anchorX)
                     }
                     .onEnded { _ in pinchZoomBase = nil })
+        .onChange(of: model.timelineDeleteRequest) { _, _ in deleteSelection() }
         #if os(macOS)
         .onDeleteCommand { deleteSelection() }
         #else
