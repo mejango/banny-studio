@@ -11,6 +11,7 @@ struct StageView: View {
     let file: ShowDocumentFile
 
     @State private var media = StageMediaCache()
+    @AppStorage("studioLightMode") private var lightMode = false
     @State private var dragLast: CGSize?
     @State private var stageSize: CGSize = .init(width: 1280, height: 720)
 
@@ -40,7 +41,7 @@ struct StageView: View {
             }
         }
         .aspectRatio(16 / 9, contentMode: .fit)
-        .background(Color.black)
+        .background(lightMode ? Color(red: 0.82, green: 0.81, blue: 0.78) : Color.black)
         .gesture(stageDrag)
     }
 

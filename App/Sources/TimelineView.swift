@@ -1289,6 +1289,8 @@ struct StudioTimelineView: View {
 struct TransportBar: View {
     @Bindable var model: StudioModel
     var file: ShowDocumentFile? = nil
+    @AppStorage("studioLightMode") private var lightMode = false
+    private var theme: Theme { lightMode ? .light : .dark }
 
     var body: some View {
         HStack(spacing: 12) {
@@ -1308,7 +1310,7 @@ struct TransportBar: View {
             .help("Record the selected characters (⇧Space)")
             Text(String(format: "%.1f / %.0fs", model.time, model.duration))
                 .font(.system(.caption, design: .monospaced))
-                .foregroundStyle(.green)
+                .foregroundStyle(lightMode ? Color(red: 0, green: 0.45, blue: 0.1) : .green)
             Spacer()
             ForEach(EventGroup.allCases, id: \.self) { group in
                 armDot(group)
@@ -1320,8 +1322,7 @@ struct TransportBar: View {
         .buttonStyle(.borderless)
         .padding(.horizontal, 10)
         .padding(.vertical, 5)
-        .background(Color(red: 0.055, green: 0.055, blue: 0.086))
-        // Transport stays dark in both themes: its colored dots/labels are tuned for it.
+        .background(theme.ruler)
     }
 
     @ViewBuilder

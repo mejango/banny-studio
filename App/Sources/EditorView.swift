@@ -72,6 +72,7 @@ struct WideEditor: View {
                         .frame(width: 300)
                 }
             }
+            .background(theme.surface)
         }
     }
 
