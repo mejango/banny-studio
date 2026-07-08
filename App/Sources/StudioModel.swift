@@ -94,6 +94,239 @@ final class StudioModel {
         selectedMarks = dups
     }
 
+    /// Mutates a clip wherever it lives (character or audio track).
+    private func setClip(id: String, _ transform: (inout AudioClip) -> Void) {
+        for i in scene.characters.indices {
+            if let ci = scene.characters[i].clips.firstIndex(where: { $0.id == id }) {
+                transform(&scene.characters[i].clips[ci])
+                return
+            }
+        }
+        for i in scene.audioTracks.indices {
+            if let ci = scene.audioTracks[i].clips.firstIndex(where: { $0.id == id }) {
+                transform(&scene.audioTracks[i].clips[ci])
+                return
+            }
+        }
+    }
+
+    /// Edge-drag trim: leading edge slides start (revealing/hiding the source
+    /// head), trailing edge changes duration (capped by the source length).
+    func trimClip(id: String, leading: Bool, baseStart: Double, baseDur: Double,
+                  baseOffset: Double, srcDur: Double, dt: Double) {
+        setClip(id: id) { clip in
+            if leading {
+                let minStart = max(0, baseStart - baseOffset)
+                let newStart = min(max(baseStart + dt, minStart), baseStart + baseDur - 0.2)
+                clip.offset = baseOffset + (newStart - baseStart)
+                clip.dur = baseDur - (newStart - baseStart)
+                clip.start = newStart
+            } else {
+                clip.dur = min(max(0.2, baseDur + dt), max(0.2, srcDur - baseOffset))
+            }
+        }
+    }
+
+    /// ⌘-drag: clone a clip in place (media ref copied) and return the copy's id.
+    func duplicateClip(id: String) -> String? {
+        registerUndoSnapshot(label: "Duplicate Clip")
+        func clone(_ clips: inout [AudioClip]) -> String? {
+            guard let ci = clips.firstIndex(where: { $0.id == id }) else { return nil }
+            var copy = clips[ci]
+            copy.id = ShowDocumentFile.newID()
+            if let media = file?.audio[id] { file?.audio[copy.id] = media }
+            clips.insert(copy, at: ci + 1)
+            return copy.id
+        }
+        for i in scene.characters.indices {
+            if let nid = clone(&scene.characters[i].clips) { return nid }
+        }
+        for i in scene.audioTracks.indices {
+            if let nid = clone(&scene.audioTracks[i].clips) { return nid }
+        }
+        return nil
+    }
+
+    /// ⌘-drag: clone a cue in place; returns the copy's id.
+    func duplicateCue(kind: TrackRowKind, id: String) -> String? {
+        registerUndoSnapshot(label: "Duplicate Cue")
+        switch kind {
+        case .image(let i):
+            guard scene.imageTracks.indices.contains(i),
+                  let ci = scene.imageTracks[i].cues.firstIndex(where: { $0.id == id }) else { return nil }
+            var copy = scene.imageTracks[i].cues[ci]
+            copy.id = ShowDocumentFile.newID()
+            scene.imageTracks[i].cues.insert(copy, at: ci + 1)
+            selectedImageCue = copy.id
+            return copy.id
+        case .light(let i):
+            guard scene.lightTracks.indices.contains(i),
+                  let ci = scene.lightTracks[i].cues.firstIndex(where: { $0.id == id }) else { return nil }
+            var copy = scene.lightTracks[i].cues[ci]
+            copy.id = ShowDocumentFile.newID()
+            scene.lightTracks[i].cues.insert(copy, at: ci + 1)
+            selectedLightCue = copy.id
+            return copy.id
+        case .background(let i):
+            guard scene.backgroundTracks.indices.contains(i),
+                  let ci = scene.backgroundTracks[i].cues.firstIndex(where: { $0.id == id }) else { return nil }
+            var copy = scene.backgroundTracks[i].cues[ci]
+            copy.id = ShowDocumentFile.newID()
+            scene.backgroundTracks[i].cues.insert(copy, at: ci + 1)
+            selectedBackgroundCue = copy.id
+            return copy.id
+        default:
+            return nil
+        }
+    }
+
+    // MARK: - Unified timeline clipboard (marks + clips + cues)
+
+    private var clipClipboard: [(owner: String, clip: AudioClip)] = []
+    private var imageCueClipboard: [(trackID: String, cue: ImageCue)] = []
+    private var lightCueClipboard: [(trackID: String, cue: LightCue)] = []
+    private var bgCueClipboard: [BackgroundCue] = []
+
+    var hasTimelineSelection: Bool {
+        !selectedMarks.isEmpty || !selectedClips.isEmpty || selectedImageCue != nil
+            || selectedLightCue != nil || selectedBackgroundCue != nil
+    }
+
+    /// ⌘C / right-click Copy: everything selected, times relative to the earliest.
+    func copyTimelineSelection() {
+        var t0 = Double.greatestFiniteMagnitude
+        for m in selectedMarks { t0 = min(t0, m.start) }
+        var pickedClips: [(String, AudioClip)] = []
+        for (i, c) in scene.characters.enumerated() {
+            for clip in c.clips where selectedClips.contains(clip.id) {
+                pickedClips.append(("c\(i)", clip))
+                t0 = min(t0, clip.start)
+            }
+        }
+        for t in scene.audioTracks {
+            for clip in t.clips where selectedClips.contains(clip.id) {
+                pickedClips.append((t.id, clip))
+                t0 = min(t0, clip.start)
+            }
+        }
+        var pickedImage: [(String, ImageCue)] = []
+        if let p = selectedImageCuePath {
+            let cue = scene.imageTracks[p.track].cues[p.cue]
+            pickedImage.append((scene.imageTracks[p.track].id, cue))
+            t0 = min(t0, cue.start)
+        }
+        var pickedLight: [(String, LightCue)] = []
+        if let p = selectedLightCuePath {
+            let cue = scene.lightTracks[p.track].cues[p.cue]
+            pickedLight.append((scene.lightTracks[p.track].id, cue))
+            t0 = min(t0, cue.start)
+        }
+        var pickedBG: [BackgroundCue] = []
+        if let id = selectedBackgroundCue,
+           let cue = scene.backgroundTracks.first?.cues.first(where: { $0.id == id }) {
+            pickedBG.append(cue)
+            t0 = min(t0, cue.start)
+        }
+        guard t0 < .greatestFiniteMagnitude else { return }
+        markClipboard = selectedMarks.map { ($0.character, $0.code, $0.start - t0, $0.end - t0) }
+        clipClipboard = pickedClips.map { owner, clip in
+            var c = clip; c.start -= t0; return (owner, c)
+        }
+        imageCueClipboard = pickedImage.map { tid, cue in var c = cue; c.start -= t0; return (tid, c) }
+        lightCueClipboard = pickedLight.map { tid, cue in var c = cue; c.start -= t0; return (tid, c) }
+        bgCueClipboard = pickedBG.map { var c = $0; c.start -= t0; return c }
+    }
+
+    /// ⌘V / right-click Paste: at `anchor` when given, right after the current
+    /// selection when one exists, else at the playhead. Pasted items select,
+    /// so repeated ⌘V chains.
+    func pasteTimeline(at anchor: Double? = nil) {
+        let hasContent = !markClipboard.isEmpty || !clipClipboard.isEmpty
+            || !imageCueClipboard.isEmpty || !lightCueClipboard.isEmpty || !bgCueClipboard.isEmpty
+        guard hasContent else { return }
+        var base = anchor ?? time
+        if anchor == nil {
+            var selEnd = -Double.greatestFiniteMagnitude
+            for m in selectedMarks { selEnd = max(selEnd, m.end) }
+            for i in scene.characters.indices {
+                for clip in scene.characters[i].clips where selectedClips.contains(clip.id) {
+                    selEnd = max(selEnd, clip.start + clip.dur)
+                }
+            }
+            for t in scene.audioTracks {
+                for clip in t.clips where selectedClips.contains(clip.id) {
+                    selEnd = max(selEnd, clip.start + clip.dur)
+                }
+            }
+            if selEnd > 0 { base = selEnd + 0.05 }
+        }
+        registerUndoSnapshot(label: "Paste")
+        var pastedMarks: Set<PerfMark> = []
+        for m in markClipboard {
+            guard scene.characters.indices.contains(m.character) else { continue }
+            var events = scene.characters[m.character].events
+            let s = ((base + m.start) * 1000).rounded() / 1000
+            let e = ((base + m.end) * 1000).rounded() / 1000
+            events.append(.key(t: s, code: m.code, down: true))
+            events.append(.key(t: e, code: m.code, down: false))
+            events.sort { $0.t < $1.t }
+            scene.characters[m.character].events = events
+            pastedMarks.insert(PerfMark(character: m.character, code: m.code, start: s, end: e))
+        }
+        var pastedClips: Set<String> = []
+        for (owner, clip) in clipClipboard {
+            var c = clip
+            let oldID = c.id
+            c.id = ShowDocumentFile.newID()
+            c.start = clip.start + base
+            if let media = file?.audio[oldID] { file?.audio[c.id] = media }
+            if owner.hasPrefix("c"), let i = Int(owner.dropFirst()),
+               scene.characters.indices.contains(i) {
+                scene.characters[i].clips.append(c)
+            } else if let ti = scene.audioTracks.firstIndex(where: { $0.id == owner }) {
+                scene.audioTracks[ti].clips.append(c)
+            } else { continue }
+            pastedClips.insert(c.id)
+        }
+        for (tid, cue) in imageCueClipboard {
+            var c = cue
+            c.id = ShowDocumentFile.newID()
+            c.start = cue.start + base
+            if let ti = scene.imageTracks.firstIndex(where: { $0.id == tid }) {
+                scene.imageTracks[ti].cues.append(c)
+                scene.imageTracks[ti].cues.sort { $0.start < $1.start }
+                selectedImageCue = c.id
+            }
+        }
+        for (tid, cue) in lightCueClipboard {
+            var c = cue
+            c.id = ShowDocumentFile.newID()
+            c.start = cue.start + base
+            if let ti = scene.lightTracks.firstIndex(where: { $0.id == tid }) {
+                scene.lightTracks[ti].cues.append(c)
+                scene.lightTracks[ti].cues.sort { $0.start < $1.start }
+                selectedLightCue = c.id
+            }
+        }
+        for cue in bgCueClipboard {
+            var c = cue
+            c.id = ShowDocumentFile.newID()
+            c.start = cue.start + base
+            if !scene.backgroundTracks.isEmpty {
+                scene.backgroundTracks[0].cues.append(c)
+                scene.backgroundTracks[0].cues.sort { $0.start < $1.start }
+                selectedBackgroundCue = c.id
+            }
+        }
+        if !pastedMarks.isEmpty { selectedMarks = pastedMarks }
+        if !pastedClips.isEmpty { selectedClips = pastedClips }
+    }
+
+    /// Hidden toggles apply mid-play (the audio graph rebuilds from here).
+    func resyncAudioIfPlaying() {
+        if playing { file?.audioEngine?.syncPlayback(self) }
+    }
+
     /// Delete the timeline selection (anchors handled by the view).
     func deleteTimelineSelection() {
         if !selectedMarks.isEmpty {

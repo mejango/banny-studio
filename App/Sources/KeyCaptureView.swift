@@ -86,12 +86,12 @@ struct KeyCaptureView: NSViewRepresentable {
 
             let down = event.type == .keyDown
             if down, event.modifierFlags.contains(.command) {
-                if event.keyCode == 8, !model.selectedMarks.isEmpty {       // ⌘C
-                    model.copySelectedMarks()
+                if event.keyCode == 8, model.hasTimelineSelection {        // ⌘C
+                    model.copyTimelineSelection()
                     return true
                 }
                 if event.keyCode == 9 {                                     // ⌘V
-                    model.pasteMarks()
+                    model.pasteTimeline()
                     return true
                 }
                 if event.keyCode == 6 {                                     // ⌘Z / ⇧⌘Z

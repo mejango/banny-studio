@@ -131,7 +131,8 @@ struct StudioTimelineView: View {
     @State private var zoom: Double = 1
     @State private var dragStartMarks: [Int: [PerfEvent]]?
     @State private var resizing: (mark: PerfMark, leading: Bool, baseEvents: [PerfEvent])?
-    @State private var draggingClip: (id: String, baseStart: Double)?
+    @State private var draggingClip: (id: String, baseStart: Double, baseDur: Double,
+                                      baseOffset: Double, srcDur: Double, edge: Int)?
     @State private var draggingCue: (row: TrackRow, cueID: String, baseStart: Double, baseDur: Double, edge: Int)?
     @State private var draggingSub: (char: Int, index: Int, baseStart: Double, baseDur: Double, edge: Int)?
     /// Export-range drag: edge -1/1 = a marker, 0 = slide the range, 2 = drag out a new one.
@@ -229,7 +230,7 @@ struct StudioTimelineView: View {
                                 #if os(macOS)
                                 .onExitCommand { editingLabel = nil }
                                 #endif
-                                .offset(x: editing.origin.x + laneLabelWidth, y: editing.origin.y)
+                                .offset(x: editing.origin.x, y: editing.origin.y)
                                 .onAppear { labelFocused = true }
                                 .onChange(of: labelFocused) { _, focused in
                                     if !focused { commitLabelEdit() }
@@ -486,6 +487,18 @@ struct StudioTimelineView: View {
     private func handleFileDrop(urls: [URL], location: CGPoint) -> Bool {
         guard let url = urls.first else { return false }
         let t = max(0, (time(forX: location.x) * 10).rounded() / 10)
+        // Audio files land as clips, not bank assets.
+        if ["mp3", "m4a", "wav", "aac", "aif", "aiff", "caf"].contains(url.pathExtension.lowercased()) {
+            switch row(at: location.y) {
+            case .audio(let i):
+                model.addAudioClip(from: url, characterIndex: nil, audioTrackIndex: i)
+            case .character(let i):
+                model.addAudioClip(from: url, characterIndex: i, audioTrackIndex: nil)
+            default:
+                return false
+            }
+            return true
+        }
         guard let asset = model.addAsset(from: url) else { return false }
         switch row(at: location.y) {
         case .image(let i) where asset.kind == .image:
@@ -1025,7 +1038,7 @@ struct StudioTimelineView: View {
                         if let op = outfitPopover {
                             Color.clear
                                 .frame(width: 1, height: 1)
-                                .offset(x: op.x + laneLabelWidth, y: op.y)
+                                .offset(x: op.x, y: op.y)
                                 .popover(isPresented: Binding(
                                     get: { outfitPopover != nil },
                                     set: { if !$0 { outfitPopover = nil } })) {
@@ -1049,7 +1062,7 @@ struct StudioTimelineView: View {
                         if let cm = clipMix {
                             Color.clear
                                 .frame(width: 1, height: 1)
-                                .offset(x: cm.x + laneLabelWidth, y: cm.y)
+                                .offset(x: cm.x, y: cm.y)
                                 .popover(isPresented: Binding(
                                     get: { clipMix != nil },
                                     set: { if !$0 { clipMix = nil } })) {
@@ -1102,6 +1115,15 @@ struct StudioTimelineView: View {
                 let t = (time(forX: p.x) * 10).rounded() / 10
                 Button(String(format: "Add light at %.1fs", t)) {
                     model.addLightCue(trackIndex: li, at: t)
+                }
+            }
+            if let p = hoverLanePoint {
+                Divider()
+                if model.hasTimelineSelection {
+                    Button("Copy") { model.copyTimelineSelection() }
+                }
+                Button(String(format: "Paste at %.1fs", (time(forX: p.x) * 10).rounded() / 10)) {
+                    model.pasteTimeline(at: (time(forX: p.x) * 10).rounded() / 10)
                 }
             }
         }
@@ -1604,6 +1626,8 @@ struct StudioTimelineView: View {
         case .light(let i): model.scene.lightTracks[i].hidden.toggle()
         case .background(let i): model.scene.backgroundTracks[i].hidden.toggle()
         }
+        // Muting/unmuting audio takes effect immediately during playback.
+        model.resyncAudioIfPlaying()
     }
 
     private func assetName(_ id: String) -> String {
@@ -1660,9 +1684,16 @@ struct StudioTimelineView: View {
 
     private func handleLaneDrag(_ value: DragGesture.Value) {
 
-        if let dragging = draggingClip {
+        if let d = draggingClip {
             let dt = Double(value.translation.width / pxPerSecond)
-            model.moveClip(id: dragging.id, toStart: dragging.baseStart + dt)
+            switch d.edge {
+            case -1, 1:
+                model.trimClip(id: d.id, leading: d.edge == -1, baseStart: d.baseStart,
+                               baseDur: d.baseDur, baseOffset: d.baseOffset,
+                               srcDur: d.srcDur, dt: dt)
+            default:
+                model.moveClip(id: d.id, toStart: max(0, d.baseStart + dt))
+            }
             return
         }
         if let r = resizing {
@@ -1740,7 +1771,10 @@ struct StudioTimelineView: View {
                         model.selectedClips.compactMap { id in clipStart(id: id).map { (id, $0) } })
                 }
             } else if let c = clip(at: value.startLocation) {
-                if model.selectedClips.contains(c.id),
+                let edge = 5.0
+                let e = abs(value.startLocation.x - x(forTime: c.start)) < edge ? -1
+                    : abs(value.startLocation.x - x(forTime: c.start + c.dur)) < edge ? 1 : 0
+                if e == 0, model.selectedClips.contains(c.id),
                    model.selectedClips.count + model.selectedMarks.count > 1 {
                     // Part of a marquee selection — drag the whole group.
                     dragStartMarks = Dictionary(uniqueKeysWithValues:
@@ -1748,8 +1782,16 @@ struct StudioTimelineView: View {
                     dragStartClips = Dictionary(uniqueKeysWithValues:
                         model.selectedClips.compactMap { id in clipStart(id: id).map { (id, $0) } })
                 } else {
-                    draggingClip = (c.id, c.start)
-                    model.selectedClips = [c.id]
+                    var clipID = c.id
+                    #if os(macOS)
+                    // ⌘-drag duplicates the clip and drags the copy.
+                    if e == 0, NSEvent.modifierFlags.contains(.command),
+                       let nid = model.duplicateClip(id: c.id) {
+                        clipID = nid
+                    }
+                    #endif
+                    draggingClip = (clipID, c.start, c.dur, c.offset, c.srcDur, e)
+                    model.selectedClips = [clipID]
                 }
                 return
             } else if let (row, cue) = cue(at: value.startLocation) {
@@ -1758,8 +1800,16 @@ struct StudioTimelineView: View {
                 let endX = x(forTime: cue.start + cue.dur)
                 let e = abs(value.startLocation.x - startX) < edge ? -1
                     : abs(value.startLocation.x - endX) < edge ? 1 : 0
-                draggingCue = (row, cue.id, cue.start, cue.dur, e)
-                selectCue(row: row, id: cue.id)
+                var cueID = cue.id
+                #if os(macOS)
+                // ⌘-drag duplicates the cue and drags the copy.
+                if e == 0, NSEvent.modifierFlags.contains(.command),
+                   let nid = model.duplicateCue(kind: kind(of: row), id: cue.id) {
+                    cueID = nid
+                }
+                #endif
+                draggingCue = (row, cueID, cue.start, cue.dur, e)
+                selectCue(row: row, id: cueID)
                 return
             } else {
                 // Empty space: rubber-band select a region.

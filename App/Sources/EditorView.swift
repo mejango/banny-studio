@@ -191,11 +191,10 @@ struct TrackInspector: View {
                 // The card's wardrobe edits the character's START state; timed
                 // mid-show changes remain as recorded outfit events (white dots).
                 WardrobePanel(model: model, characterIndex: i, baseOnly: true)
-            case .audio(let i):
-                if let file {
-                    AudioSection(model: model, file: file, audioTrackIndex: i)
-                }
+            case .audio:
                 MixSection(model: model, kind: kind)
+                Text("Drop an audio file onto the track to add a clip at the playhead.")
+                    .font(.caption2).foregroundStyle(.secondary)
             case .image:
                 ImageCueInspector(model: model)
                 if let file {
