@@ -1379,13 +1379,16 @@ struct StudioTimelineView: View {
                     guard let to = cue.to else { continue }
                     let x0 = x(forTime: cue.start)
                     let w = max(2, CGFloat(cue.dur) * pxPerSecond)
-                    let laneY = y + presenceStripH + 2 + barH + 6
+                    let lanesTopY = y + presenceStripH + 2 + barH + 6
+                    // Event lanes stretch to fill the row (easier targets).
+                    let avail = max(9, y + h - 6 - lanesTopY)
+                    let laneH = max(3, avail / 3 - 2)
                     var lane = 0
                     func changeBar(_ changed: Bool, _ color: Color) {
                         if changed {
-                            content.fill(Path(roundedRect: CGRect(x: x0, y: laneY + CGFloat(lane) * 4,
-                                                                  width: w, height: 3),
-                                              cornerRadius: 1.5),
+                            content.fill(Path(roundedRect: CGRect(
+                                x: x0, y: lanesTopY + CGFloat(lane) * (laneH + 2),
+                                width: w, height: laneH), cornerRadius: 2),
                                          with: .color(color))
                         }
                         lane += 1
