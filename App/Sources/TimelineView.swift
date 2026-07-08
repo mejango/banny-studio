@@ -291,10 +291,7 @@ struct StudioTimelineView: View {
     private var cornerCell: some View {
         Canvas { ctx, size in
             ctx.fill(Path(CGRect(origin: .zero, size: size)), with: .color(theme.gutterBase))
-            ctx.draw(Text("time").font(.system(size: 8, weight: .semibold))
-                        .foregroundStyle(theme.mutedText),
-                     at: CGPoint(x: 12, y: headerHeight / 2), anchor: .leading)
-            ctx.draw(Text("CC").font(.system(size: 9, weight: .bold))
+            ctx.draw(Text("Text").font(.system(size: 9, weight: .semibold))
                         .foregroundStyle(theme.mutedText),
                      at: CGPoint(x: 12, y: headerHeight + captionsRowH / 2), anchor: .leading)
             ctx.stroke(Path { p in
