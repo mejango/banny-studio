@@ -3,10 +3,10 @@ import Foundation
 /// Reads/writes the `.bannyshow` document package:
 /// ```
 /// MyShow.bannyshow/
-///   show.json            — ShowDocument (schema v2)
-///   audio/<clipId>.<ext> — audio sources
-///   bg/<sceneId>.<ext>   — background media
-///   thumbnail.png        — optional, written by the app
+///   show.json              — ShowDocument (schema v3)
+///   audio/<clipId>.<ext>   — audio sources
+///   assets/<assetId>.<ext> — bank assets (images/videos; v2 wrote bg/<sceneId>)
+///   thumbnail.png          — optional, written by the app
 /// ```
 public enum ShowPackage {
 
@@ -14,8 +14,8 @@ public enum ShowPackage {
         public var document: ShowDocument
         /// clipId → file URL inside the package.
         public var audioURLs: [String: URL]
-        /// sceneId → file URL inside the package.
-        public var backgroundURLs: [String: URL]
+        /// assetId → file URL inside the package (v2 bg/ files appear here too).
+        public var assetURLs: [String: URL]
     }
 
     public enum PackageError: Error, Equatable {
@@ -24,7 +24,7 @@ public enum ShowPackage {
 
     public static func write(_ document: ShowDocument,
                              audio: [String: (data: Data, ext: String)] = [:],
-                             backgrounds: [String: (data: Data, ext: String)] = [:],
+                             assets: [String: (data: Data, ext: String)] = [:],
                              to url: URL) throws {
         let fm = FileManager.default
         try fm.createDirectory(at: url, withIntermediateDirectories: true)
@@ -40,10 +40,10 @@ public enum ShowPackage {
                 try media.data.write(to: dir.appendingPathComponent("\(id).\(media.ext)"), options: .atomic)
             }
         }
-        if !backgrounds.isEmpty {
-            let dir = url.appendingPathComponent("bg")
+        if !assets.isEmpty {
+            let dir = url.appendingPathComponent("assets")
             try fm.createDirectory(at: dir, withIntermediateDirectories: true)
-            for (id, media) in backgrounds {
+            for (id, media) in assets {
                 try media.data.write(to: dir.appendingPathComponent("\(id).\(media.ext)"), options: .atomic)
             }
         }
@@ -55,9 +55,12 @@ public enum ShowPackage {
             throw PackageError.missingShowJSON
         }
         let document = try JSONDecoder().decode(ShowDocument.self, from: Data(contentsOf: showURL))
+        // v2 packages kept backgrounds in bg/; merge them into the asset index.
+        var assets = mediaIndex(dir: url.appendingPathComponent("bg"))
+        assets.merge(mediaIndex(dir: url.appendingPathComponent("assets"))) { _, new in new }
         return Contents(document: document,
                         audioURLs: mediaIndex(dir: url.appendingPathComponent("audio")),
-                        backgroundURLs: mediaIndex(dir: url.appendingPathComponent("bg")))
+                        assetURLs: assets)
     }
 
     /// Maps `<id>.<ext>` files in a package subfolder to id → URL.

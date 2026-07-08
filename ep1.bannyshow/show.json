@@ -172,8 +172,8 @@
         "characters" : [
           {
             "armedGroups" : [
-              "talk",
               "depth",
+              "talk",
               "move"
             ],
             "baseOutfit" : {
@@ -5091,7 +5091,8 @@
           }
         ],
         "cropAnchors" : [
-
+          0,
+          0
         ],
         "gScale" : 0.92,
         "gSize" : 1.84,
@@ -12317,7 +12318,7 @@
     }
   ],
   "settings" : {
-    "activeScene" : 1,
+    "activeScene" : 0,
     "lightSize" : 0
   },
   "show" : [

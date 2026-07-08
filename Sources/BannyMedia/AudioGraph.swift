@@ -74,12 +74,12 @@ public final class AudioGraph {
                                       player: player, eq: eq, reverb: reverb, file: file))
         }
 
-        for (i, c) in scene.characters.enumerated() {
+        for (i, c) in scene.characters.enumerated() where !c.hidden {
             for clip in c.clips {
                 try wire(clip, owner: "c\(i)", ownerFx: c.trackFx, characterIndex: i)
             }
         }
-        for track in scene.audioTracks {
+        for track in scene.audioTracks where !track.hidden {
             for clip in track.clips {
                 try wire(clip, owner: track.id, ownerFx: track.fx, characterIndex: nil)
             }

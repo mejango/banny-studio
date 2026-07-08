@@ -20,10 +20,9 @@ func shipCommand(_ args: [String]) throws {
     let elapsed = try clock.measure {
         try ShowExporter.export(
             document: contents.document,
-            activeScene: contents.document.settings.activeScene,
             assets: assets,
             audioURL: { contents.audioURLs[$0] },
-            backgroundURL: { contents.backgroundURLs[$0] },
+            assetURL: { contents.assetURLs[$0] },
             options: options,
             to: outURL,
             progress: { p in

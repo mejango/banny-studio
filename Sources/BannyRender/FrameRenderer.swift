@@ -35,6 +35,7 @@ public struct FrameRenderer: Sendable {
     /// (export, tests), pass `flipped: true`.
     public func draw(scene: SceneState, at t: Double, size: CGSize,
                      background: (image: CGImage, crop: Crop)? = nil,
+                     imageAsset: ((String) -> CGImage?)? = nil,
                      showSuns: Bool = false,
                      flipped: Bool = false,
                      in ctx: CGContext) {
@@ -56,9 +57,23 @@ public struct FrameRenderer: Sendable {
             drawBackground(background.image, crop: background.crop, size: CGSize(width: W, height: outH), in: ctx)
         }
 
+        // Image cues (between backdrop and characters).
+        if let imageAsset {
+            for track in scene.imageTracks where !track.hidden {
+                for cue in track.cues where t >= cue.start && t < cue.start + cue.dur {
+                    guard let img = imageAsset(cue.assetID) else { continue }
+                    let p = cue.placement(at: t)
+                    let w = p.scale * W
+                    let h = w * Double(img.height) / Double(max(1, img.width))
+                    drawImage(img, in: CGRect(x: p.x * W - w / 2, y: p.y * outH - h / 2,
+                                              width: w, height: h), ctx: ctx)
+                }
+            }
+        }
+
         // Poses + placements for every character, painter-sorted by depth.
         var entries: [(index: Int, pose: CharacterPose, placement: StageLayout.Placement)] = []
-        for i in scene.characters.indices {
+        for i in scene.characters.indices where !scene.characters[i].hidden {
             let pose = sim.pose(characterIndex: i, at: t)
             let placement = StageLayout.place(pose: pose, character: scene.characters[i],
                                               scene: scene, stageWidth: W, virtualHeight: H)

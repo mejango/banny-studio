@@ -65,9 +65,9 @@ public enum V1Importer {
                                     to: num(seg["to"])))
         }
 
-        let doc = ShowDocument(
-            scenes: scenes,
-            show: show,
+        // v1 → v2 scene list → v3 single timeline (same migration as v2 decode).
+        let doc = ShowDocument.migrateScenes(
+            scenes, show: show,
             settings: Settings(activeScene: (studio["active"] as? NSNumber)?.intValue ?? 0,
                                lightSize: num(studio["lightSize"])))
         return Result(document: doc, audioFiles: audioFiles, backgroundFiles: backgroundFiles)

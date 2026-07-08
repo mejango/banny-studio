@@ -14,22 +14,30 @@ private func tempDir() throws -> URL {
     defer { try? FileManager.default.removeItem(at: dir) }
 
     let doc = ShowDocument(
-        scenes: [Scene(id: "s1", name: "Scene 1", state: SceneState(
+        stage: SceneState(
             characters: [Character(body: .alien, events: [.key(t: 1, code: .keyJ, down: true)])],
-            background: .image(file: "s1.png", crop: .tile)))],
-        show: [ShowSegment(sceneID: "s1", name: "seg", from: 0, to: 5)],
+            imageTracks: [ImageTrack(id: "img1", name: "Props", cues: [
+                ImageCue(id: "cue1", assetID: "s1", start: 1, dur: 4,
+                         from: ImagePlacement(x: 0.2, y: 0.3, scale: 0.25),
+                         to: ImagePlacement(x: 0.8, y: 0.3, scale: 0.25)),
+            ])],
+            backgroundTracks: [BackgroundTrack(id: "bg1", name: "Backgrounds", cues: [
+                BackgroundCue(id: "bcue", assetID: "s1", start: 0, dur: 5, crop: .tile),
+            ])]),
+        assets: [Asset(id: "s1", name: "set piece", kind: .image, file: "s1.png")],
+        show: [ShowSegment(name: "seg", from: 0, to: 5)],
         settings: Settings(activeScene: 0, lightSize: 50))
 
     let pkg = dir.appendingPathComponent("Test.bannyshow")
     try ShowPackage.write(doc,
                           audio: ["clipA": (Data([0xFF, 0xFB, 0x00]), "mp3")],
-                          backgrounds: ["s1": (Data([0x89, 0x50]), "png")],
+                          assets: ["s1": (Data([0x89, 0x50]), "png")],
                           to: pkg)
 
     let contents = try ShowPackage.read(from: pkg)
     #expect(contents.document == doc)
     #expect(contents.audioURLs.keys.sorted() == ["clipA"])
-    #expect(contents.backgroundURLs.keys.sorted() == ["s1"])
+    #expect(contents.assetURLs.keys.sorted() == ["s1"])
     #expect(try Data(contentsOf: contents.audioURLs["clipA"]!) == Data([0xFF, 0xFB, 0x00]))
 }
 
@@ -49,18 +57,22 @@ private func tempDir() throws -> URL {
     let result = try V1Importer.importStudio(json: Data(contentsOf: staging))
     let pkg = dir.appendingPathComponent("ep1.bannyshow")
     try ShowPackage.write(result.document, audio: result.audioFiles,
-                          backgrounds: result.backgroundFiles, to: pkg)
+                          assets: result.backgroundFiles, to: pkg)
 
     let contents = try ShowPackage.read(from: pkg)
     #expect(contents.document == result.document)
     #expect(contents.audioURLs.count == result.audioFiles.count)
     #expect(contents.audioURLs.count >= 10) // ep1 has many voice clips
-    #expect(contents.backgroundURLs.count == result.backgroundFiles.count)
+    #expect(contents.assetURLs.count == result.backgroundFiles.count)
 
     // Every clip referenced by the document has its media in the package.
-    let clipIDs = contents.document.scenes.flatMap(\.state.characters).flatMap(\.clips).map(\.id)
-        + contents.document.scenes.flatMap(\.state.audioTracks).flatMap(\.clips).map(\.id)
+    let clipIDs = contents.document.stage.characters.flatMap(\.clips).map(\.id)
+        + contents.document.stage.audioTracks.flatMap(\.clips).map(\.id)
     for id in clipIDs {
         #expect(contents.audioURLs[id] != nil, "missing audio for clip \(id)")
     }
+    // Migration invariants: 4 character tracks on one timeline, bg cues + assets present.
+    #expect(contents.document.stage.characters.count == 4)
+    #expect(!contents.document.assets.isEmpty)
+    #expect(!contents.document.stage.backgroundTracks.flatMap(\.cues).isEmpty)
 }

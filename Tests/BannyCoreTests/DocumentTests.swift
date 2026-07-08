@@ -4,7 +4,7 @@ import Testing
 
 @Test func documentRoundTrip() throws {
     let doc = ShowDocument(
-        scenes: [Scene(id: "s1", name: "Scene 1", state: SceneState(
+        stage: SceneState(
             characters: [Character(
                 body: .orange, x: 0.4, depth: 0.2, face: -1,
                 baseOutfit: [5: "fierce", 11: "doc-coat"],
@@ -19,11 +19,18 @@ import Testing
                 name: "DARL",
                 recStart: StartPose(x: 0.3, depth: 0, face: 1))],
             audioTracks: [AudioTrack(id: "t1", name: "SAGE")],
+            imageTracks: [ImageTrack(id: "it", name: "Props", cues: [
+                ImageCue(id: "ic", assetID: "a1", start: 0, dur: 3,
+                         from: ImagePlacement(), to: ImagePlacement(x: 0.9, y: 0.1, scale: 0.5)),
+            ])],
+            backgroundTracks: [BackgroundTrack(id: "bt", name: "BG", cues: [
+                BackgroundCue(id: "bc", assetID: "a1", start: 0, dur: 10, crop: .fit),
+            ])],
             lights: [Light(x: 0.8, y: 0.18)],
-            cropAnchors: [3.0, 12.4],
-            background: .image(file: "s1.png", crop: .cover)
-        ))],
-        show: [ShowSegment(sceneID: "s1", name: "Scene 1 3.0–12.4s", from: 3, to: 12.4)],
+            cropAnchors: [3.0, 12.4]
+        ),
+        assets: [Asset(id: "a1", name: "thing", kind: .image, file: "a1.png")],
+        show: [ShowSegment(name: "Scene 1 3.0–12.4s", from: 3, to: 12.4)],
         settings: Settings(activeScene: 0, lightSize: 120)
     )
     let data = try JSONEncoder().encode(doc)

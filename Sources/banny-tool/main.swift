@@ -9,14 +9,14 @@ case "import":
     let data = try Data(contentsOf: URL(fileURLWithPath: args[2]))
     let result = try V1Importer.importStudio(json: data)
     try ShowPackage.write(result.document, audio: result.audioFiles,
-                          backgrounds: result.backgroundFiles,
+                          assets: result.backgroundFiles,
                           to: URL(fileURLWithPath: args[3]))
-    print("imported \(result.document.scenes.count) scenes, \(result.audioFiles.count) audio clips → \(args[3])")
+    let stage = result.document.stage
+    print("imported → \(args[3]): \(stage.characters.count) character tracks, \(result.audioFiles.count) audio clips, \(result.document.assets.count) assets")
 case "info":
     let contents = try ShowPackage.read(from: URL(fileURLWithPath: args[2]))
-    for s in contents.document.scenes {
-        print("\(s.name): \(s.state.characters.count) characters, \(s.state.characters.map { $0.events.count }.reduce(0,+)) events")
-    }
+    let st = contents.document.stage
+    print("tracks: \(st.characters.count) characters (\(st.characters.map(\.events.count).reduce(0,+)) events), \(st.audioTracks.count) audio, \(st.imageTracks.count) image, \(st.backgroundTracks.count) background; \(contents.document.assets.count) assets; end \(st.contentEnd)s")
 case "ship":
     try shipCommand(Array(args.dropFirst(2)))
 default:

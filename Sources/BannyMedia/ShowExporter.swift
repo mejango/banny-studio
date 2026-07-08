@@ -29,7 +29,6 @@ public enum ShowExporter {
     }
 
     public struct ResolvedSegment {
-        public let scene: BannyCore.Scene
         public let from: Double
         public let to: Double
     }
@@ -39,43 +38,30 @@ public enum ShowExporter {
         case writerFailed(String)
     }
 
-    /// Web tlDurNeeded, for a whole-scene export when the show playlist is empty.
+    /// Whole-timeline duration when the show playlist is empty.
     public static func contentDuration(of state: SceneState) -> Double {
-        var end = 0.0
-        for c in state.characters {
-            end = max(end, c.events.last?.t ?? 0)
-            for clip in c.clips { end = max(end, clip.start + clip.dur) }
-            for s in c.subs { end = max(end, s.start + s.dur) }
-        }
-        for t in state.audioTracks {
-            for clip in t.clips { end = max(end, clip.start + clip.dur) }
-        }
-        return max(1, end + 0.5)
+        max(1, state.contentEnd + 0.5)
     }
 
-    public static func resolveSegments(document: ShowDocument, activeScene: Int) -> [ResolvedSegment] {
+    public static func resolveSegments(document: ShowDocument) -> [ResolvedSegment] {
         if !document.show.isEmpty {
             return document.show.compactMap { seg in
-                guard let scene = document.scenes.first(where: { $0.id == seg.sceneID }),
-                      seg.to > seg.from else { return nil }
-                return ResolvedSegment(scene: scene, from: seg.from, to: seg.to)
+                seg.to > seg.from ? ResolvedSegment(from: seg.from, to: seg.to) : nil
             }
         }
-        guard document.scenes.indices.contains(activeScene) else { return [] }
-        let scene = document.scenes[activeScene]
-        return [ResolvedSegment(scene: scene, from: 0, to: contentDuration(of: scene.state))]
+        return [ResolvedSegment(from: 0, to: contentDuration(of: document.stage))]
     }
 
     /// Renders and writes the mp4. Blocking; call off the main thread.
+    /// `assetURL` resolves a bank asset id to its media file (images + videos).
     public static func export(document: ShowDocument,
-                              activeScene: Int = 0,
                               assets: AssetCatalog,
                               audioURL: @escaping (String) -> URL?,
-                              backgroundURL: (String) -> URL?,
+                              assetURL: @escaping (String) -> URL?,
                               options: Options = .p1080,
                               to outputURL: URL,
                               progress: ((Double) -> Void)? = nil) throws {
-        let segments = resolveSegments(document: document, activeScene: activeScene)
+        let segments = resolveSegments(document: document)
         guard !segments.isEmpty else { throw ExportError.nothingToExport }
 
         try? FileManager.default.removeItem(at: outputURL)
@@ -101,7 +87,8 @@ public enum ShowExporter {
 
         // Audio: bounce each segment offline up front so the writer interleaves cleanly.
         let audioFormat = AVAudioFormat(standardFormatWithSampleRate: 44100, channels: 2)!
-        let audioBuffers = try bounceAudio(segments: segments, format: audioFormat, audioURL: audioURL)
+        let audioBuffers = try bounceAudio(document: document, segments: segments,
+                                           format: audioFormat, audioURL: audioURL)
         var audioInput: AVAssetWriterInput?
         if !audioBuffers.isEmpty {
             let input = AVAssetWriterInput(mediaType: .audio, outputSettings: [
@@ -147,12 +134,12 @@ public enum ShowExporter {
         // Video frames.
         let fps = options.fps
         let renderer = FrameRenderer(assets: assets)
+        let stage = document.stage
+        let bg = BackgroundSampler(assets: document.assets, assetURL: assetURL)
+        let stillCache = StillAssetCache(assets: document.assets, assetURL: assetURL)
         let totalFrames = segments.reduce(0) { $0 + Int(((($1.to - $1.from) * Double(fps)).rounded(.up))) }
         var frameIndex = 0
         for segment in segments {
-            let sim = SceneSimulator(state: segment.scene.state)
-            _ = sim // simulator is constructed inside draw; kept for clarity
-            let bg = BackgroundSampler(scene: segment.scene, backgroundURL: backgroundURL)
             let segFrames = Int(((segment.to - segment.from) * Double(fps)).rounded(.up))
             for f in 0..<segFrames {
                 let t = segment.from + Double(f) / Double(fps)
@@ -169,8 +156,10 @@ public enum ShowExporter {
                                         space: CGColorSpace(name: CGColorSpace.sRGB)!,
                                         bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue
                                             | CGBitmapInfo.byteOrder32Little.rawValue)!
-                    renderer.draw(scene: segment.scene.state, at: t, size: options.size,
-                                  background: bg.frame(at: t),
+                    renderer.draw(scene: stage, at: t, size: options.size,
+                                  background: stage.activeBackgroundCue(at: t)
+                                      .flatMap { bg.frame(cue: $0, at: t) },
+                                  imageAsset: { stillCache.image(for: $0) },
                                   flipped: true, in: ctx)
                     CVPixelBufferUnlockBaseAddress(pb, [])
                     pumpAudio(upTo: Double(frameIndex) / Double(fps))
@@ -207,13 +196,15 @@ public enum ShowExporter {
 
     // MARK: - Audio bounce
 
-    /// Renders each segment's scene audio offline into PCM buffers (concatenated in show order).
-    private static func bounceAudio(segments: [ResolvedSegment], format: AVAudioFormat,
+    /// Renders each segment's audio offline into PCM buffers (concatenated in show order).
+    private static func bounceAudio(document: ShowDocument, segments: [ResolvedSegment],
+                                    format: AVAudioFormat,
                                     audioURL: (String) -> URL?) throws -> [AVAudioPCMBuffer] {
         var out: [AVAudioPCMBuffer] = []
+        let stage = document.stage
         for segment in segments {
-            let hasClips = !segment.scene.state.characters.flatMap(\.clips).isEmpty
-                || !segment.scene.state.audioTracks.flatMap(\.clips).isEmpty
+            let hasClips = !stage.characters.filter({ !$0.hidden }).flatMap(\.clips).isEmpty
+                || !stage.audioTracks.filter({ !$0.hidden }).flatMap(\.clips).isEmpty
             let graph = AudioGraph()
             let duration = segment.to - segment.from
             let frames = AVAudioFrameCount(duration * format.sampleRate)
@@ -221,15 +212,15 @@ public enum ShowExporter {
 
             try graph.engine.enableManualRenderingMode(.offline, format: format, maximumFrameCount: 4096)
             if hasClips {
-                try graph.build(scene: segment.scene.state) { audioURL($0) }
+                try graph.build(scene: stage) { audioURL($0) }
             }
             try graph.engine.start()
             if hasClips {
                 graph.schedule(from: segment.from)
                 // Static pan per segment (follow pans update per-frame only in live playback).
-                let sim = SceneSimulator(state: segment.scene.state)
+                let sim = SceneSimulator(state: stage)
                 graph.updatePans { i in
-                    segment.scene.state.characters.indices.contains(i)
+                    stage.characters.indices.contains(i)
                         ? sim.pose(characterIndex: i, at: segment.from).x : nil
                 }
                 graph.playAll()
@@ -287,46 +278,64 @@ public enum ShowExporter {
         return sample
     }
 
-    /// Per-segment background source: static image, or video sampled
-    /// deterministically at t mod duration (the web bg <video> loops).
+    /// Bank-asset background source: still images cached; videos sampled
+    /// deterministically at (t - cue.start) mod duration (the web bg <video> loops).
     final class BackgroundSampler {
-        private let crop: Crop
-        private let still: CGImage?
-        private let generator: AVAssetImageGenerator?
-        private let videoDuration: Double
+        private let byID: [String: Asset]
+        private let assetURL: (String) -> URL?
+        private var stills: [String: CGImage] = [:]
+        private var videos: [String: (gen: AVAssetImageGenerator, duration: Double)] = [:]
 
-        init(scene: BannyCore.Scene, backgroundURL: (String) -> URL?) {
-            guard let spec = scene.state.background, let url = backgroundURL(scene.id) else {
-                crop = .cover; still = nil; generator = nil; videoDuration = 0
-                return
-            }
-            switch spec {
-            case .image(_, let c):
-                crop = c
-                still = CGImageSourceCreateWithURL(url as CFURL, nil)
-                    .flatMap { CGImageSourceCreateImageAtIndex($0, 0, nil) }
-                generator = nil
-                videoDuration = 0
-            case .video(_, let c):
-                crop = c
-                still = nil
-                let asset = AVURLAsset(url: url)
-                let gen = AVAssetImageGenerator(asset: asset)
-                gen.requestedTimeToleranceBefore = CMTime(value: 1, timescale: 30)
-                gen.requestedTimeToleranceAfter = CMTime(value: 1, timescale: 30)
-                gen.appliesPreferredTrackTransform = true
-                generator = gen
-                videoDuration = CMTimeGetSeconds(asset.duration)
-            }
+        init(assets: [Asset], assetURL: @escaping (String) -> URL?) {
+            self.byID = Dictionary(uniqueKeysWithValues: assets.map { ($0.id, $0) })
+            self.assetURL = assetURL
         }
 
-        func frame(at t: Double) -> (image: CGImage, crop: Crop)? {
-            if let still { return (still, crop) }
-            guard let generator, videoDuration > 0 else { return nil }
-            let vt = t.truncatingRemainder(dividingBy: videoDuration)
-            guard let img = try? generator.copyCGImage(at: CMTime(seconds: vt, preferredTimescale: 600),
+        func frame(cue: BackgroundCue, at t: Double) -> (image: CGImage, crop: Crop)? {
+            guard let asset = byID[cue.assetID], let url = assetURL(cue.assetID) else { return nil }
+            switch asset.kind {
+            case .image:
+                if stills[asset.id] == nil {
+                    stills[asset.id] = CGImageSourceCreateWithURL(url as CFURL, nil)
+                        .flatMap { CGImageSourceCreateImageAtIndex($0, 0, nil) }
+                }
+                return stills[asset.id].map { ($0, cue.crop) }
+            case .video:
+                if videos[asset.id] == nil {
+                    let av = AVURLAsset(url: url)
+                    let gen = AVAssetImageGenerator(asset: av)
+                    gen.requestedTimeToleranceBefore = CMTime(value: 1, timescale: 30)
+                    gen.requestedTimeToleranceAfter = CMTime(value: 1, timescale: 30)
+                    gen.appliesPreferredTrackTransform = true
+                    videos[asset.id] = (gen, CMTimeGetSeconds(av.duration))
+                }
+                guard let v = videos[asset.id], v.duration > 0 else { return nil }
+                let vt = (t - cue.start).truncatingRemainder(dividingBy: v.duration)
+                guard let img = try? v.gen.copyCGImage(at: CMTime(seconds: max(0, vt), preferredTimescale: 600),
                                                        actualTime: nil) else { return nil }
-            return (img, crop)
+                return (img, cue.crop)
+            }
+        }
+    }
+
+    /// Still-image bank assets for the image-cue layer.
+    final class StillAssetCache {
+        private let byID: [String: Asset]
+        private let assetURL: (String) -> URL?
+        private var cache: [String: CGImage] = [:]
+
+        init(assets: [Asset], assetURL: @escaping (String) -> URL?) {
+            self.byID = Dictionary(uniqueKeysWithValues: assets.map { ($0.id, $0) })
+            self.assetURL = assetURL
+        }
+
+        func image(for id: String) -> CGImage? {
+            if let hit = cache[id] { return hit }
+            guard byID[id]?.kind == .image, let url = assetURL(id),
+                  let src = CGImageSourceCreateWithURL(url as CFURL, nil),
+                  let img = CGImageSourceCreateImageAtIndex(src, 0, nil) else { return nil }
+            cache[id] = img
+            return img
         }
     }
 }
