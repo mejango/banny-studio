@@ -420,6 +420,17 @@ final class StudioModel {
         scene.characters[characterIndex] = c
     }
 
+    /// Timed wardrobe change at an explicit time (the lane's wardrobe strip).
+    func setOutfitEvent(characterIndex: Int, slot: Int, name: String?, at t: Double) {
+        guard scene.characters.indices.contains(characterIndex) else { return }
+        registerUndoSnapshot(label: "Outfit Change")
+        var c = scene.characters[characterIndex]
+        let ev = PerfEvent.outfit(t: t, slot: slot, name: name)
+        let insertAt = c.events.firstIndex { $0.t > t } ?? c.events.count
+        c.events.insert(ev, at: insertAt)
+        scene.characters[characterIndex] = c
+    }
+
     func setOutfit(characterIndex: Int, slot: Int, name: String?) {
         guard scene.characters.indices.contains(characterIndex) else { return }
         registerUndoSnapshot(label: "Outfit")

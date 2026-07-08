@@ -9,6 +9,8 @@ struct WardrobePanel: View {
     let characterIndex: Int
     /// Edit the base (t=0) outfit instead of recording timed changes.
     var baseOnly = false
+    /// Record changes as timed outfit events at this exact time.
+    var eventTime: Double? = nil
 
     private static let outfitSlots = [2, 3, 4, 6, 8, 9, 10, 11, 12, 13]
     private let columns = Array(repeating: GridItem(.flexible(), spacing: 0), count: 3)
@@ -67,12 +69,17 @@ struct WardrobePanel: View {
     }
 
     private var currentOutfit: [Int: String] {
-        baseOnly ? (model.scene.characters[safe: characterIndex]?.baseOutfit ?? [:])
-                 : model.simulator.pose(characterIndex: characterIndex, at: model.time).outfit
+        if let t = eventTime {
+            return model.simulator.pose(characterIndex: characterIndex, at: t).outfit
+        }
+        return baseOnly ? (model.scene.characters[safe: characterIndex]?.baseOutfit ?? [:])
+                        : model.simulator.pose(characterIndex: characterIndex, at: model.time).outfit
     }
 
     private func apply(slot: Int, name: String?) {
-        if baseOnly {
+        if let t = eventTime {
+            model.setOutfitEvent(characterIndex: characterIndex, slot: slot, name: name, at: t)
+        } else if baseOnly {
             model.setBaseOutfit(characterIndex: characterIndex, slot: slot, name: name)
         } else {
             model.setOutfit(characterIndex: characterIndex, slot: slot, name: name)

@@ -168,6 +168,8 @@ struct StudioTimelineView: View {
     @State private var pinchAnchor: (t: Double, vx: CGFloat, fy: CGFloat)?
     @State private var lastGutterTap: (key: String, at: Date)?
     @State private var renamingRow: TrackRow?
+    /// Wardrobe-strip click: add a timed outfit change here.
+    @State private var outfitPopover: (char: Int, t: Double, x: CGFloat, y: CGFloat)?
     @State private var renamingText = ""
     @FocusState private var renameFocused: Bool
     @State private var editorOpenedAt = Date.distantPast
@@ -200,6 +202,30 @@ struct StudioTimelineView: View {
                                                    value: geo.frame(in: .named("tlScroll")).origin)
                         }
                         timelineCanvas
+                        if let op = outfitPopover {
+                            Color.clear
+                                .frame(width: 1, height: 1)
+                                .offset(x: op.x + laneLabelWidth, y: op.y)
+                                .popover(isPresented: Binding(
+                                    get: { outfitPopover != nil },
+                                    set: { if !$0 { outfitPopover = nil } })) {
+                                    ScrollView {
+                                        VStack(alignment: .leading, spacing: 8) {
+                                            Text(String(format: "Outfit change at %.1fs", op.t))
+                                                .font(.caption.bold())
+                                            WardrobePanel(model: model, characterIndex: op.char,
+                                                          eventTime: op.t)
+                                        }
+                                        .padding(12)
+                                    }
+                                    .frame(width: 300, height: 430)
+                                    .background(lightMode ? Color(red: 1, green: 0.99, blue: 0.95)
+                                                          : Color(red: 0.13, green: 0.13, blue: 0.16))
+                                    .presentationBackground(lightMode ? Color(red: 1, green: 0.99, blue: 0.95)
+                                                                      : Color(red: 0.13, green: 0.13, blue: 0.16))
+                                    .environment(\.colorScheme, lightMode ? .light : .dark)
+                                }
+                        }
                         if let editing = editingLabel, editing.kind != .caption {
                             TextField("", text: $editingText)
                                 .textFieldStyle(.plain)
@@ -415,6 +441,17 @@ struct StudioTimelineView: View {
             model.addImageTrack(assetID: asset.id, assetName: asset.name)
         }
         return true
+    }
+
+    /// An empty spot on a character lane's wardrobe strip (the dots row).
+    private func wardrobeSlot(at point: CGPoint) -> (char: Int, t: Double, x: CGFloat, y: CGFloat)? {
+        guard let row = row(at: point.y), case .character(let ci) = row,
+              model.scene.characters.indices.contains(ci) else { return nil }
+        let zones = characterLaneZones(h: height(of: row))
+        let bandTop = laneTop(of: row) + zones.eventTop + 6 * zones.subH
+        guard point.y >= bandTop - 2, point.y <= bandTop + zones.subH + 4 else { return nil }
+        let t = (time(forX: point.x) * 10).rounded() / 10
+        return (ci, t, point.x, bandTop + zones.subH / 2)
     }
 
     /// The outfit-change dot near a click, if any.
@@ -1165,6 +1202,10 @@ struct StudioTimelineView: View {
                            with: .color(lightMode ? .black : .white), lineWidth: 1)
             }
         }
+        let stripY = y + zones.eventTop + 6 * zones.subH
+        ctx.fill(Path(CGRect(x: 0, y: stripY - 1, width: contentWidth + 40,
+                             height: zones.subH + 2)),
+                 with: .color(theme.stripTint.opacity(0.7)))
         for ev in character.events {
             guard case .outfit(let t, _, _) = ev else { continue }
             let cx = x(forTime: t)
@@ -1598,6 +1639,11 @@ struct StudioTimelineView: View {
             } else {
                 model.selectedOutfitEvent = dot
             }
+            return
+        }
+        if let slot = wardrobeSlot(at: point) {
+            model.selectedOutfitEvent = nil
+            outfitPopover = slot
             return
         }
         if model.selectedOutfitEvent != nil { model.selectedOutfitEvent = nil }
