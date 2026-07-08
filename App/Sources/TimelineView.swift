@@ -1340,7 +1340,7 @@ struct StudioTimelineView: View {
     /// Character lane vertical layout: captions strip, then audio clips, then
     /// the seven event sub-lanes. Everything gets its own band — no overlap.
     /// Bottom band of every character lane: the wardrobe (outfit change) strip.
-    private var wardrobeStripH: CGFloat { 16 }
+    private var wardrobeStripH: CGFloat { 20 }
 
     private func characterLaneZones(h fullH: CGFloat) -> (clipTop: CGFloat, clipH: CGFloat,
                                                           eventTop: CGFloat, subH: CGFloat) {
