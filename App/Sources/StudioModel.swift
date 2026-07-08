@@ -135,7 +135,6 @@ final class StudioModel {
             for i in scene.lightTracks.indices {
                 scene.lightTracks[i].cues.removeAll { $0.id == id }
             }
-            scene.lightTracks.removeAll { $0.cues.isEmpty }
             selectedLightCue = nil
         }
     }
@@ -665,6 +664,26 @@ final class StudioModel {
         registerUndoSnapshot(label: "Add Audio Track")
         scene.audioTracks.append(AudioTrack(id: ShowDocumentFile.newID(),
                                             name: "Audio \(scene.audioTracks.count + 1)"))
+    }
+
+    /// New cue on an existing light track, seeded from where the light was
+    /// last (previous cue's end state; else the next cue's start; else default).
+    func addLightCue(trackIndex: Int, at t: Double) {
+        guard scene.lightTracks.indices.contains(trackIndex) else { return }
+        registerUndoSnapshot(label: "Add Light Cue")
+        let cues = scene.lightTracks[trackIndex].cues
+        let prev = cues.filter { $0.start + $0.dur <= t + 0.01 }
+            .max { ($0.start + $0.dur) < ($1.start + $1.dur) }
+        let next = cues.filter { $0.start > t }.min { $0.start < $1.start }
+        let state = prev.map { $0.state(at: $0.start + $0.dur) }
+            ?? next.map { $0.state(at: $0.start) }
+            ?? LightState()
+        let dur = max(0.5, (next?.start ?? t + 10) - t)
+        let cue = LightCue(id: ShowDocumentFile.newID(), start: t, dur: dur, from: state)
+        scene.lightTracks[trackIndex].cues.append(cue)
+        scene.lightTracks[trackIndex].cues.sort { $0.start < $1.start }
+        selectedLightCue = cue.id
+        selectedTrackKey = scene.lightTracks[trackIndex].id
     }
 
     func addLightTrack() {

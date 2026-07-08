@@ -1098,6 +1098,12 @@ struct StudioTimelineView: View {
                     }
                 }
             }
+            if let p = hoverLanePoint, case .light(let li) = row(at: p.y) {
+                let t = (time(forX: p.x) * 10).rounded() / 10
+                Button(String(format: "Add light at %.1fs", t)) {
+                    model.addLightCue(trackIndex: li, at: t)
+                }
+            }
         }
     }
 
