@@ -48,28 +48,22 @@ struct WideEditor: View {
             // Stage never letterboxes vertically: it takes exactly its 16:9 height
             // for the available width, and the timeline absorbs all remaining space.
             let availH = Double(geo.size.height) - headerH
-            let stageWidth = Double(max(200, geo.size.width - 300))
+            let stageWidth = Double(max(200, geo.size.width))
             let requestedTL = min(max(120, timelineHeight), availH - 140)
             let stageH = min(stageWidth * 9.0 / 16.0, availH - 6 - requestedTL)
             let tlH = max(120, availH - 6 - stageH)
-            HStack(spacing: 0) {
-                VStack(spacing: 0) {
-                    header
-                    StageView(model: model, file: file)
-                        .frame(width: CGFloat(stageWidth), height: CGFloat(stageH))
-                        .overlay(alignment: .bottom) {
-                            if showDeck {
-                                PerformanceDeck(model: model)
-                            }
+            VStack(spacing: 0) {
+                header
+                StageView(model: model, file: file)
+                    .frame(width: CGFloat(stageWidth), height: CGFloat(stageH))
+                    .overlay(alignment: .bottom) {
+                        if showDeck {
+                            PerformanceDeck(model: model)
                         }
-                    divider(maxHeight: availH - 140)
-                    StudioTimelineView(model: model, file: file, showShip: false)
-                        .frame(height: CGFloat(tlH))
-                }
-                Divider()
-                SidePanel(model: model, file: file)
-                    .frame(width: 300)
-                    .frame(maxHeight: .infinity)
+                    }
+                divider(maxHeight: availH - 140)
+                StudioTimelineView(model: model, file: file, showShip: false)
+                    .frame(height: CGFloat(tlH))
             }
             .background(theme.surface)
             // Drive SwiftUI's semantic colors (.primary on buttons/menus) from the
@@ -161,129 +155,92 @@ struct CompactEditor: View {
     }
 }
 
-/// Right panel: the expanded inspector for the selected track.
-struct SidePanel: View {
+/// Per-track inspector — lives in each track's gutter-card popover
+/// (and the iPhone wardrobe tab via SidePanel).
+struct TrackInspector: View {
     @Bindable var model: StudioModel
     var file: ShowDocumentFile? = nil
-    @AppStorage("studioLightMode") private var lightMode = false
-    private var theme: Theme { lightMode ? .light : .dark }
+    let kind: TrackRowKind
 
     @State private var confirmDelete = false
     @FocusState private var nameFocused: Bool
 
-    private enum Target {
-        case character(Int), audio(Int), image(Int), light(Int), background(Int), none
-    }
-
-    private var target: Target {
-        guard let key = model.selectedTrackKey else { return .none }
-        for i in model.scene.characters.indices where "c-\(i)" == key { return .character(i) }
-        for (i, t) in model.scene.audioTracks.enumerated() where t.id == key { return .audio(i) }
-        for (i, t) in model.scene.imageTracks.enumerated() where t.id == key { return .image(i) }
-        for (i, t) in model.scene.lightTracks.enumerated() where t.id == key { return .light(i) }
-        for (i, t) in model.scene.backgroundTracks.enumerated() where t.id == key { return .background(i) }
-        return .none
-    }
-
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 14) {
-                switch target {
-                case .character(let i):
-                    nameHeader(kind: .character(i))
-                    MotionSection(model: model, characterIndex: i)
-                    if let file {
-                        AudioSection(model: model, file: file)
-                    }
-                    WardrobePanel(model: model, characterIndex: i)
-                case .audio(let i):
-                    nameHeader(kind: .audio(i))
-                    if let file {
-                        AudioSection(model: model, file: file, audioTrackIndex: i)
-                    }
-                case .image(let i):
-                    nameHeader(kind: .image(i))
-                    ImageCueInspector(model: model)
-                    if let file {
-                        AssetBankSection(model: model, file: file)
-                    }
-                case .light(let i):
-                    nameHeader(kind: .light(i))
-                    LightCueInspector(model: model)
-                case .background(let i):
-                    nameHeader(kind: .background(i))
-                    if let file {
-                        BackgroundPreview(model: model, file: file)
-                    }
-                    stageSection
-                    if let file {
-                        AssetBankSection(model: model, file: file)
-                    }
-                case .none:
-                    Text("Select a track to edit it here.")
-                        .font(.caption).foregroundStyle(.secondary)
+        VStack(alignment: .leading, spacing: 14) {
+            TextField("name", text: nameBinding)
+                .textFieldStyle(.plain)
+                .font(.headline)
+                .focused($nameFocused)
+            switch kind {
+            case .character(let i):
+                MotionSection(model: model, characterIndex: i)
+                if let file {
+                    AudioSection(model: model, file: file)
                 }
-
-                if let kind = deletableKind {
-                    Spacer(minLength: 18)
-                    Button {
-                        confirmDelete = true
-                    } label: {
-                        Text(deleteTitle)
-                            .font(.caption.bold())
-                            .foregroundStyle(.red)
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 7)
-                            .background(Color.red.opacity(0.09), in: RoundedRectangle(cornerRadius: 6))
-                            .overlay(RoundedRectangle(cornerRadius: 6)
-                                .stroke(Color.red.opacity(0.35), lineWidth: 1))
-                    }
-                    .buttonStyle(.plain)
-                    .confirmationDialog(deleteTitle + "?", isPresented: $confirmDelete,
-                                        titleVisibility: .visible) {
-                        Button(deleteTitle, role: .destructive) {
-                            model.removeTrack(kind)
-                            model.selectedTrackKey = nil
-                        }
-                        Button("Cancel", role: .cancel) {}
-                    } message: {
-                        Text("This removes the track and everything on it. Undo (⌘Z) brings it back.")
-                    }
+                WardrobePanel(model: model, characterIndex: i)
+            case .audio(let i):
+                if let file {
+                    AudioSection(model: model, file: file, audioTrackIndex: i)
+                }
+            case .image:
+                ImageCueInspector(model: model)
+                if let file {
+                    AssetBankSection(model: model, file: file)
+                }
+            case .light:
+                LightCueInspector(model: model)
+            case .background:
+                if let file {
+                    BackgroundPreview(model: model, file: file)
+                }
+                stageSection
+                if let file {
+                    AssetBankSection(model: model, file: file)
                 }
             }
-            .padding(10)
+
+            if deletable {
+                Spacer(minLength: 18)
+                Button {
+                    confirmDelete = true
+                } label: {
+                    Text(deleteTitle)
+                        .font(.caption.bold())
+                        .foregroundStyle(.red)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 7)
+                        .background(Color.red.opacity(0.09), in: RoundedRectangle(cornerRadius: 6))
+                        .overlay(RoundedRectangle(cornerRadius: 6)
+                            .stroke(Color.red.opacity(0.35), lineWidth: 1))
+                }
+                .buttonStyle(.plain)
+                .confirmationDialog(deleteTitle + "?", isPresented: $confirmDelete,
+                                    titleVisibility: .visible) {
+                    Button(deleteTitle, role: .destructive) {
+                        model.removeTrack(kind)
+                        model.selectedTrackKey = nil
+                    }
+                    Button("Cancel", role: .cancel) {}
+                } message: {
+                    Text("This removes the track and everything on it. Undo (⌘Z) brings it back.")
+                }
+            }
         }
-        .background(lightMode ? Color(red: 1, green: 0.99, blue: 0.95)
-                              : Color(red: 0.1, green: 0.1, blue: 0.13))
         .contentShape(Rectangle())
         .onTapGesture { nameFocused = false }
-        .environment(\.colorScheme, lightMode ? .light : .dark)
     }
 
-    private var deletableKind: TrackRowKind? {
-        switch target {
-        case .character(let i): return .character(i)
-        case .audio(let i): return .audio(i)
-        case .image(let i): return .image(i)
-        case .light(let i): return .light(i)
-        case .background, .none: return nil
-        }
+    private var deletable: Bool {
+        if case .background = kind { return false }
+        return true
     }
 
     private var deleteTitle: String {
-        if case .character = target { return "Delete character" }
+        if case .character = kind { return "Delete character" }
         return "Delete track"
     }
 
-    /// Editable track name (deleting lives at the panel's bottom, behind a confirm).
-    private func nameHeader(kind: TrackRowKind) -> some View {
-        TextField("name", text: nameBinding(kind))
-            .textFieldStyle(.plain)
-            .font(.headline)
-            .focused($nameFocused)
-    }
-
-    private func nameBinding(_ kind: TrackRowKind) -> Binding<String> {
+    private var nameBinding: Binding<String> {
         Binding(
             get: {
                 switch kind {
@@ -314,7 +271,7 @@ struct SidePanel: View {
         VStack(alignment: .leading, spacing: 6) {
             Text("STAGE").font(.caption.bold()).foregroundStyle(.secondary)
             valueSlider("Character size", value: Binding(get: { model.scene.gSize },
-                                                          set: { model.scene.gSize = $0 }),
+                                                         set: { model.scene.gSize = $0 }),
                         range: 0.3...2.5)
             valueSlider("Depth", value: Binding(get: { model.scene.gScale },
                                                 set: { model.scene.gScale = $0 }),
@@ -336,6 +293,120 @@ struct SidePanel: View {
                 .font(.system(size: 9, design: .monospaced)).foregroundStyle(.secondary)
                 .frame(width: 30, alignment: .trailing)
         }
+    }
+}
+
+/// Each track's gutter card: a face (outfit mannequin / type icon) that opens
+/// the track's inspector in a popover. Replaces the old right panel.
+struct TrackCardButton: View {
+    @Bindable var model: StudioModel
+    var file: ShowDocumentFile? = nil
+    let row: TrackRow
+    var cardHeight: CGFloat = 54
+    @AppStorage("studioLightMode") private var lightMode = false
+    @State private var open = false
+
+    var body: some View {
+        Button {
+            model.selectedTrackKey = row.key(in: model.scene)
+            if case .character(let i) = row { model.selection = [i] }
+            open = true
+        } label: {
+            face
+        }
+        .buttonStyle(.plain)
+        .help("Track settings")
+        .popover(isPresented: $open) {
+            ScrollView {
+                TrackInspector(model: model, file: file, kind: kind)
+                    .padding(12)
+            }
+            .frame(width: 320, height: popoverHeight)
+            .environment(\.colorScheme, lightMode ? .light : .dark)
+        }
+    }
+
+    private var popoverHeight: CGFloat {
+        switch row {
+        case .character: return 520
+        case .background, .image: return 380
+        case .audio, .light: return 190
+        }
+    }
+
+    private var kind: TrackRowKind {
+        switch row {
+        case .character(let i): return .character(i)
+        case .image(let i): return .image(i)
+        case .audio(let i): return .audio(i)
+        case .light(let i): return .light(i)
+        case .background(let i): return .background(i)
+        }
+    }
+
+    @ViewBuilder private var face: some View {
+        switch row {
+        case .character(let i):
+            if let c = model.scene.characters[safe: i] {
+                OutfitCard(character: c)
+                    .frame(width: (cardHeight * 30 / 54).rounded(), height: cardHeight)
+                    .clipShape(RoundedRectangle(cornerRadius: 4))
+                    .overlay(RoundedRectangle(cornerRadius: 4)
+                        .stroke(Color.primary.opacity(0.3), lineWidth: 1))
+            }
+        default:
+            let style = faceStyle
+            Image(systemName: style.symbol)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(style.tint)
+                .frame(width: 28, height: 28)
+                .background(style.tint.opacity(0.12), in: RoundedRectangle(cornerRadius: 4))
+                .overlay(RoundedRectangle(cornerRadius: 4)
+                    .stroke(style.tint.opacity(0.45), lineWidth: 1))
+        }
+    }
+
+    private var faceStyle: (symbol: String, tint: Color) {
+        switch row {
+        case .audio: return ("waveform", Color(red: 0.45, green: 0.9, blue: 0.75))
+        case .image: return ("photo", Color(red: 0.9, green: 0.7, blue: 0.4))
+        case .light: return ("sun.max", Color(red: 1, green: 0.85, blue: 0.35))
+        case .background: return ("photo.on.rectangle", Color(red: 0.65, green: 0.6, blue: 0.95))
+        case .character: return ("person", .orange)
+        }
+    }
+}
+
+/// iPhone wardrobe tab: the same inspector, panel-style.
+struct SidePanel: View {
+    @Bindable var model: StudioModel
+    var file: ShowDocumentFile? = nil
+    @AppStorage("studioLightMode") private var lightMode = false
+
+    private var kind: TrackRowKind? {
+        guard let key = model.selectedTrackKey else { return nil }
+        for i in model.scene.characters.indices where "c-\(i)" == key { return .character(i) }
+        for (i, t) in model.scene.audioTracks.enumerated() where t.id == key { return .audio(i) }
+        for (i, t) in model.scene.imageTracks.enumerated() where t.id == key { return .image(i) }
+        for (i, t) in model.scene.lightTracks.enumerated() where t.id == key { return .light(i) }
+        for (i, t) in model.scene.backgroundTracks.enumerated() where t.id == key { return .background(i) }
+        return nil
+    }
+
+    var body: some View {
+        ScrollView {
+            if let kind {
+                TrackInspector(model: model, file: file, kind: kind)
+                    .padding(10)
+            } else {
+                Text("Select a track to edit it here.")
+                    .font(.caption).foregroundStyle(.secondary)
+                    .padding(10)
+            }
+        }
+        .background(lightMode ? Color(red: 1, green: 0.99, blue: 0.95)
+                              : Color(red: 0.1, green: 0.1, blue: 0.13))
+        .environment(\.colorScheme, lightMode ? .light : .dark)
     }
 }
 

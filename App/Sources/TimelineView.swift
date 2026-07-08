@@ -245,13 +245,12 @@ struct StudioTimelineView: View {
             ZStack(alignment: .topLeading) {
                 GutterWheelRedirect(gutterWidth: laneLabelWidth)
                 gutterCanvas
-                // Starting-outfit cards: click to edit the base wardrobe.
-                ForEach(Array(model.scene.characters.indices), id: \.self) { ci in
-                    let row = TrackRow.character(ci)
+                // Every track's card: face + popover inspector (the old right panel).
+                ForEach(Array(rows.enumerated()), id: \.offset) { _, row in
                     let available = height(of: row) - presenceStripH - 16
-                    if available >= 30 {
-                        OutfitCardButton(model: model, characterIndex: ci,
-                                         cardHeight: min(54, available))
+                    if available >= 26 {
+                        TrackCardButton(model: model, file: file, row: row,
+                                        cardHeight: min(54, available))
                             .offset(x: 10, y: laneTop(of: row) + presenceStripH + 4 - scrollOffset.y)
                     }
                 }
