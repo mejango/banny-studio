@@ -224,6 +224,7 @@ struct StudioTimelineView: View {
                     .offset(y: totalLaneHeight - scrollOffset.y)
             }
             .frame(width: laneLabelWidth)
+            .frame(maxHeight: .infinity, alignment: .topLeading)
             .clipped()
             }
         }
@@ -640,7 +641,8 @@ struct StudioTimelineView: View {
                 }
             }
         }
-        .frame(width: laneLabelWidth, height: totalLaneHeight, alignment: .topLeading)
+        .frame(width: laneLabelWidth, alignment: .topLeading)
+        .frame(maxHeight: .infinity, alignment: .topLeading)
     }
 
     private var gutterInteraction: some Gesture {
