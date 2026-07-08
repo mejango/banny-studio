@@ -81,6 +81,12 @@ struct WideEditor: View {
 
     private var header: some View {
         HStack {
+            Image("HeaderLogo")
+                .resizable()
+                .interpolation(.none)
+                .scaledToFit()
+                .frame(height: 18)
+                .foregroundStyle(Color(red: 1, green: 0.54, blue: 0))
             Text("BANNY STUDIO")
                 .font(.system(size: 13, weight: .heavy, design: .rounded))
                 .kerning(2)

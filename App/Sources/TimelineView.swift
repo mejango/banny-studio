@@ -156,6 +156,8 @@ struct StudioTimelineView: View {
     @State private var resizingGutter = false
     @State private var scrubZoomBase: Double?
     @State private var pinchZoomBase: Double?
+    /// Lanes viewport scroll offset (drives the pinned header band + gutter).
+    @State private var scrollOffset: CGPoint = .zero
     private let rulerHeight: CGFloat = 18
     private let scrubHeight: CGFloat = 16
     private let defaultLaneHeight: CGFloat = 52
@@ -163,43 +165,55 @@ struct StudioTimelineView: View {
     var body: some View {
         VStack(spacing: 0) {
             TransportBar(model: model, file: showShip ? file : nil)
-            ScrollView(.vertical) {
-                VStack(alignment: .leading, spacing: 0) {
-                HStack(alignment: .top, spacing: 0) {
-                    gutterCanvas
-                        .frame(width: laneLabelWidth, height: lanesTop + totalLaneHeight + 20)
-                    ScrollView(.horizontal) {
-                        ZStack(alignment: .topLeading) {
-                            timelineCanvas
-                            if let editing = editingLabel {
-                        TextField("", text: $editingText)
-                            .textFieldStyle(.plain)
-                            .font(.system(size: 9, weight: .medium))
-                            .foregroundStyle(.white)
-                            .padding(.horizontal, 3)
-                            .frame(width: 110)
-                            .background(Color.black.opacity(0.75), in: RoundedRectangle(cornerRadius: 3))
-                            .focused($labelFocused)
-                            .onSubmit { commitLabelEdit() }
-                            #if os(macOS)
-                            .onExitCommand { editingLabel = nil }
-                            #endif
-                                    .offset(x: editing.origin.x, y: editing.origin.y)
-                                    .onAppear { labelFocused = true }
-                                    .onChange(of: labelFocused) { _, focused in
-                                        if !focused { commitLabelEdit() }
-                                    }
-                            }
-                        }
-                        .frame(width: max(600, contentWidth + 40),
-                               height: lanesTop + totalLaneHeight + 20, alignment: .topLeading)
-                    }
-                }
-                newTrackRow
-                }
+            HStack(spacing: 0) {
+                cornerCell
+                headerBand
             }
-            .background(theme.surface)
-            .simultaneousGesture(
+            .frame(height: lanesTop)
+            ZStack(alignment: .topLeading) {
+                ScrollView([.horizontal, .vertical]) {
+                    ZStack(alignment: .topLeading) {
+                        GeometryReader { geo in
+                            Color.clear.preference(key: TLOffsetKey.self,
+                                                   value: geo.frame(in: .named("tlScroll")).origin)
+                        }
+                        timelineCanvas
+                        if let editing = editingLabel {
+                            TextField("", text: $editingText)
+                                .textFieldStyle(.plain)
+                                .font(.system(size: 9, weight: .medium))
+                                .foregroundStyle(.white)
+                                .padding(.horizontal, 3)
+                                .frame(width: 110)
+                                .background(Color.black.opacity(0.75), in: RoundedRectangle(cornerRadius: 3))
+                                .focused($labelFocused)
+                                .onSubmit { commitLabelEdit() }
+                                #if os(macOS)
+                                .onExitCommand { editingLabel = nil }
+                                #endif
+                                .offset(x: editing.origin.x + laneLabelWidth, y: editing.origin.y)
+                                .onAppear { labelFocused = true }
+                                .onChange(of: labelFocused) { _, focused in
+                                    if !focused { commitLabelEdit() }
+                                }
+                        }
+                    }
+                    .padding(.leading, laneLabelWidth)
+                    .frame(width: laneLabelWidth + max(600, contentWidth + 40),
+                           height: totalLaneHeight + 20, alignment: .topLeading)
+                }
+                .coordinateSpace(name: "tlScroll")
+                .onPreferenceChange(TLOffsetKey.self) { origin in
+                    scrollOffset = CGPoint(x: -origin.x - laneLabelWidth, y: -origin.y)
+                }
+                gutterCanvas
+                    .frame(width: laneLabelWidth)
+                    .clipped()
+            }
+            newTrackRow
+        }
+        .background(theme.surface)
+        .simultaneousGesture(
                 MagnifyGesture()
                     .onChanged { g in
                         let base = pinchZoomBase ?? zoom
@@ -207,7 +221,6 @@ struct StudioTimelineView: View {
                         zoom = min(16, max(1, base * g.magnification))
                     }
                     .onEnded { _ in pinchZoomBase = nil })
-        }
         #if os(macOS)
         .onDeleteCommand { deleteSelection() }
         #else
@@ -250,7 +263,7 @@ struct StudioTimelineView: View {
     }
 
     private func laneTop(of row: TrackRow) -> CGFloat {
-        var y = lanesTop
+        var y: CGFloat = 0
         for r in rows {
             if r == row { return y }
             y += height(of: r)
@@ -259,7 +272,7 @@ struct StudioTimelineView: View {
     }
 
     private func row(at y: CGFloat) -> TrackRow? {
-        var top = lanesTop
+        var top: CGFloat = 0
         for r in rows {
             let h = height(of: r)
             if y >= top && y < top + h { return r }
@@ -272,6 +285,107 @@ struct StudioTimelineView: View {
     private var contentWidth: CGFloat { CGFloat(model.duration) * pxPerSecond }
     private func x(forTime t: Double) -> CGFloat { 4 + CGFloat(t) * pxPerSecond }
     private func time(forX x: CGFloat) -> Double { max(0, Double((x - 4) / pxPerSecond)) }
+
+    /// Fixed top-left corner of the pinned band.
+    private var cornerCell: some View {
+        Canvas { ctx, size in
+            ctx.fill(Path(CGRect(origin: .zero, size: size)), with: .color(theme.gutterBase))
+            ctx.draw(Text("time").font(.system(size: 8, weight: .semibold))
+                        .foregroundStyle(theme.mutedText),
+                     at: CGPoint(x: 12, y: headerHeight / 2), anchor: .leading)
+            ctx.draw(Text("CC").font(.system(size: 9, weight: .bold))
+                        .foregroundStyle(theme.mutedText),
+                     at: CGPoint(x: 12, y: headerHeight + captionsRowH / 2), anchor: .leading)
+            ctx.stroke(Path { p in
+                p.move(to: CGPoint(x: size.width - 0.5, y: 0))
+                p.addLine(to: CGPoint(x: size.width - 0.5, y: size.height))
+            }, with: .color(theme.gutterDivider), lineWidth: 1)
+        }
+        .frame(width: laneLabelWidth, height: lanesTop)
+    }
+
+    /// Pinned ruler/scrub/CC band, shifted by the horizontal scroll offset.
+    private var headerBand: some View {
+        Canvas { ctx0, size in
+            let fullW = max(size.width + scrollOffset.x, contentWidth + 40)
+            var ctx = ctx0
+            ctx.translateBy(x: -scrollOffset.x, y: 0)
+            drawRuler(ctx: ctx, size: CGSize(width: fullW, height: size.height))
+            drawCaptionsRow(ctx: ctx, size: CGSize(width: fullW, height: size.height))
+            let px = x(forTime: model.time)
+            ctx.stroke(Path { p in
+                p.move(to: CGPoint(x: px, y: 0))
+                p.addLine(to: CGPoint(x: px, y: size.height))
+            }, with: .color(Color(red: 0.6, green: 1, blue: 0.6)), lineWidth: 1)
+        }
+        .clipped()
+        .gesture(headerInteraction)
+    }
+
+    private var headerInteraction: some Gesture {
+        DragGesture(minimumDistance: 0)
+            .onChanged { value in
+                if editingLabel != nil { commitLabelEdit(); return }
+                let cx = value.location.x + scrollOffset.x
+                if let ds = draggingSub {
+                    applySubDrag(ds, translation: Double(value.translation.width / pxPerSecond))
+                    return
+                }
+                if value.startLocation.y >= headerHeight {
+                    let sx = value.startLocation.x + scrollOffset.x
+                    if let st = subtitleAt(contentX: sx) {
+                        let edge = 4.0
+                        let startX = x(forTime: st.sub.start)
+                        let endX = x(forTime: st.sub.start + st.sub.dur)
+                        let e = abs(sx - startX) < edge ? -1 : abs(sx - endX) < edge ? 1 : 0
+                        draggingSub = (st.char, st.index, st.sub.start, st.sub.dur, e)
+                    }
+                    return
+                }
+                model.seek(to: time(forX: cx))
+                let base = scrubZoomBase ?? zoom
+                scrubZoomBase = base
+                let dy = Double(value.translation.height)
+                if abs(dy) > 8 {
+                    zoom = min(16, max(1, base * pow(2, dy / 90)))
+                }
+            }
+            .onEnded { _ in
+                if draggingSub != nil {
+                    model.registerUndoSnapshot(label: "Edit Captions")
+                }
+                draggingSub = nil
+                scrubZoomBase = nil
+            }
+    }
+
+    private func applySubDrag(_ ds: (char: Int, index: Int, baseStart: Double, baseDur: Double, edge: Int),
+                              translation dt: Double) {
+        var subs = model.scene.characters[ds.char].subs
+        guard subs.indices.contains(ds.index) else { return }
+        switch ds.edge {
+        case -1:
+            let newStart = max(0, min(ds.baseStart + dt, ds.baseStart + ds.baseDur - 0.2))
+            subs[ds.index].dur = ds.baseDur + (ds.baseStart - newStart)
+            subs[ds.index].start = newStart
+        case 1:
+            subs[ds.index].dur = max(0.2, ds.baseDur + dt)
+        default:
+            subs[ds.index].start = max(0, ds.baseStart + dt)
+        }
+        model.scene.characters[ds.char].subs = subs
+    }
+
+    private func subtitleAt(contentX: CGFloat) -> (char: Int, index: Int, sub: Subtitle)? {
+        for (ci, character) in model.scene.characters.enumerated().reversed() {
+            for (si, sub) in character.subs.enumerated() {
+                let minX = x(forTime: sub.start)
+                let maxX = minX + max(8, CGFloat(sub.dur) * pxPerSecond)
+                if contentX >= minX - 2, contentX <= maxX + 2 { return (ci, si, sub) }
+            }
+        }
+        return nil
+    }
 
     /// Always the last row: create any track type in place.
     private var newTrackRow: some View {
@@ -315,16 +429,11 @@ struct StudioTimelineView: View {
 
     /// Pinned label gutter: names, eye toggles, track-height pills, width handle.
     private var gutterCanvas: some View {
-        Canvas { ctx, size in
-            ctx.fill(Path(CGRect(origin: .zero, size: size)),
-                     with: .color(theme.gutterBase))
-            ctx.draw(Text("CC").font(.system(size: 9, weight: .bold))
-                        .foregroundStyle(theme.mutedText),
-                     at: CGPoint(x: 12, y: headerHeight + captionsRowH / 2), anchor: .leading)
-            ctx.stroke(Path { p in
-                p.move(to: CGPoint(x: 0, y: lanesTop))
-                p.addLine(to: CGPoint(x: size.width, y: lanesTop))
-            }, with: .color(.black), lineWidth: 1)
+        Canvas { ctx0, size in
+            ctx0.fill(Path(CGRect(origin: .zero, size: size)),
+                      with: .color(theme.gutterBase))
+            var ctx = ctx0
+            ctx.translateBy(x: 0, y: -scrollOffset.y)
             ctx.stroke(Path { p in
                 p.move(to: CGPoint(x: size.width - 0.5, y: 0))
                 p.addLine(to: CGPoint(x: size.width - 0.5, y: size.height))
@@ -430,22 +539,21 @@ struct StudioTimelineView: View {
                     return
                 }
                 if let dragging = draggingRow {
-                    draggingRow = (dragging.row, value.location.y)
+                    draggingRow = (dragging.row, value.location.y + scrollOffset.y)
                     return
                 }
                 if abs(value.startLocation.x - laneLabelWidth) < 6 {
                     resizingGutter = true
                     return
                 }
-                if let row = rowNearBottomEdge(of: value.startLocation.y) {
+                if let row = rowNearBottomEdge(of: value.startLocation.y + scrollOffset.y) {
                     resizingTrack = (row.key(in: model.scene), height(of: row), minHeight(of: row))
                     return
                 }
                 // Vertical pull on a row label lifts the row for reordering.
                 if abs(value.translation.height) > 8,
-                   value.startLocation.y >= lanesTop,
-                   let row = row(at: value.startLocation.y) {
-                    draggingRow = (row, value.location.y)
+                   let row = row(at: value.startLocation.y + scrollOffset.y) {
+                    draggingRow = (row, value.location.y + scrollOffset.y)
                 }
             }
             .onEnded { value in
@@ -457,7 +565,7 @@ struct StudioTimelineView: View {
                     return
                 }
                 if value.translation.width.magnitude < 3, value.translation.height.magnitude < 3,
-                   let row = row(at: value.location.y) {
+                   let row = row(at: value.location.y + scrollOffset.y) {
                     if value.location.x > laneLabelWidth - 24 {
                         toggleHidden(row)
                     } else if case .character(let i) = row {
@@ -497,8 +605,6 @@ struct StudioTimelineView: View {
 
     private var timelineCanvas: some View {
         Canvas { ctx, size in
-            drawRuler(ctx: ctx, size: size)
-            drawCaptionsRow(ctx: ctx, size: size)
             for row in rows { drawLane(row, ctx: ctx, size: size) }
             drawPlayhead(ctx: ctx, size: size)
         }
@@ -870,19 +976,7 @@ struct StudioTimelineView: View {
                     commitLabelEdit()
                     return
                 }
-                let y = value.startLocation.y
-                if y < headerHeight {
-                    // Horizontal scrubs; vertical zooms (down = in, up = out, web-style).
-                    model.seek(to: time(forX: value.location.x))
-                    let base = scrubZoomBase ?? zoom
-                    scrubZoomBase = base
-                    let dy = Double(value.translation.height)
-                    if abs(dy) > 8 {
-                        zoom = min(16, max(1, base * pow(2, dy / 90)))
-                    }
-                } else {
-                    handleLaneDrag(value)
-                }
+                handleLaneDrag(value)
             }
             .onEnded { value in
                 if value.translation.width.magnitude < 3, value.translation.height.magnitude < 3 {
@@ -912,7 +1006,6 @@ struct StudioTimelineView: View {
     }
 
     private func handleLaneDrag(_ value: DragGesture.Value) {
-        guard value.startLocation.y >= headerHeight else { return }
 
         if let dragging = draggingClip {
             let dt = Double(value.translation.width / pxPerSecond)
@@ -955,8 +1048,7 @@ struct StudioTimelineView: View {
             return
         }
         if dragStartMarks == nil {
-            if value.startLocation.y >= lanesTop,
-               let row = row(at: value.startLocation.y),
+            if let row = row(at: value.startLocation.y),
                value.startLocation.y - laneTop(of: row) < presenceStripH {
                 // Grab an existing marker if close; the tap handler adds new ones.
                 let events = presence(of: row)
@@ -966,15 +1058,6 @@ struct StudioTimelineView: View {
                 }), abs(x(forTime: events[idx].t) - value.startLocation.x) < 8 {
                     draggingPresence = (row, idx)
                 }
-                return
-            }
-            if let st = subtitle(at: value.startLocation) {
-                let edge = 4.0
-                let startX = x(forTime: st.sub.start)
-                let endX = x(forTime: st.sub.start + st.sub.dur)
-                let e = abs(value.startLocation.x - startX) < edge ? -1
-                    : abs(value.startLocation.x - endX) < edge ? 1 : 0
-                draggingSub = (st.char, st.index, st.sub.start, st.sub.dur, e)
                 return
             }
             if let hit = mark(at: value.startLocation) {
@@ -1056,7 +1139,7 @@ struct StudioTimelineView: View {
 
     private func handleTap(at point: CGPoint) {
         let y = point.y
-        if let row = row(at: y), y - laneTop(of: row) < presenceStripH, y >= lanesTop {
+        if let row = row(at: y), y - laneTop(of: row) < presenceStripH {
             var events = presence(of: row)
             let t = (time(forX: point.x) * 10).rounded() / 10
             let isDoubleClick = lastTap.map {
@@ -1116,7 +1199,7 @@ struct StudioTimelineView: View {
             }
         } else if let (row, cue) = cue(at: point) {
             selectCue(row: row, id: cue.id)
-        } else if y >= headerHeight {
+        } else {
             model.selectedMarks = []
             model.selectedClips = []
             model.selectedImageCue = nil
@@ -1210,19 +1293,6 @@ struct StudioTimelineView: View {
                               width: max(6, CGFloat(m.end - m.start) * pxPerSecond),
                               height: max(4, zones.subH - 1))
             if rect.insetBy(dx: -2, dy: -2).contains(point) { return m }
-        }
-        return nil
-    }
-
-    /// Caption bar under the pointer (the global CC strip above the lanes).
-    private func subtitle(at point: CGPoint) -> (char: Int, index: Int, sub: Subtitle)? {
-        guard point.y >= headerHeight, point.y < lanesTop else { return nil }
-        for (ci, character) in model.scene.characters.enumerated().reversed() {
-            for (si, sub) in character.subs.enumerated() {
-                let rect = CGRect(x: x(forTime: sub.start), y: headerHeight + 2,
-                                  width: max(8, CGFloat(sub.dur) * pxPerSecond), height: captionsRowH - 4)
-                if rect.insetBy(dx: -2, dy: 0).contains(point) { return (ci, si, sub) }
-            }
         }
         return nil
     }
@@ -1323,21 +1393,28 @@ struct TransportBar: View {
                 Image(systemName: model.playing && !model.recording ? "pause.fill" : "play.fill")
             }
             .help("Play/Pause (Space)")
-            Button(action: model.record) {
-                Text("● REC")
-                    .font(.system(size: 11, weight: .bold))
-                    .foregroundStyle(model.recording ? .white : .red)
-                    .padding(.horizontal, 6).padding(.vertical, 2)
-                    .background(model.recording ? Color.red : Color.clear)
+            // Record cluster: REC + what it records (armed event groups).
+            HStack(spacing: 6) {
+                Button(action: model.record) {
+                    Text("● REC")
+                        .font(.system(size: 11, weight: .bold))
+                        .foregroundStyle(model.recording ? .white : .red)
+                        .padding(.horizontal, 6).padding(.vertical, 3)
+                        .background(model.recording ? Color.red : Color.clear,
+                                    in: RoundedRectangle(cornerRadius: 4))
+                }
+                .help("Record the selected characters (⇧Space)")
+                ForEach(EventGroup.allCases, id: \.self) { group in
+                    armChip(group)
+                }
             }
-            .help("Record the selected characters (⇧Space)")
+            .padding(.horizontal, 6)
+            .padding(.vertical, 3)
+            .background(theme.scrub, in: RoundedRectangle(cornerRadius: 6))
+            Spacer()
             Text(String(format: "%.1f / %.0fs", model.time, model.duration))
                 .font(.system(.caption, design: .monospaced))
                 .foregroundStyle(lightMode ? Color(red: 0, green: 0.45, blue: 0.1) : .green)
-            Spacer()
-            ForEach(EventGroup.allCases, id: \.self) { group in
-                armDot(group)
-            }
             if let file {
                 ShipButton(model: model, file: file)
             }
@@ -1348,19 +1425,35 @@ struct TransportBar: View {
         .background(theme.ruler)
     }
 
+    /// Labeled arm toggle: colored + filled when it records, hollow when it plays back.
     @ViewBuilder
-    private func armDot(_ group: EventGroup) -> some View {
+    private func armChip(_ group: EventGroup) -> some View {
         if let i = model.selection.first, model.scene.characters.indices.contains(i) {
             let armed = model.scene.characters[i].armedGroups.contains(group)
+            let tint = group.color(light: lightMode)
             Button {
                 var c = model.scene.characters[i]
                 if armed { c.armedGroups.remove(group) } else { c.armedGroups.insert(group) }
                 model.scene.characters[i] = c
             } label: {
-                Circle().fill(group.color(light: lightMode).opacity(armed ? 1 : 0.25))
-                    .frame(width: 10, height: 10)
+                Text(group.rawValue)
+                    .font(.system(size: 9, weight: .bold))
+                    .foregroundStyle(armed ? Color.white : tint.opacity(0.9))
+                    .padding(.horizontal, 6).padding(.vertical, 3)
+                    .background(armed ? tint : tint.opacity(0.12),
+                                in: RoundedRectangle(cornerRadius: 4))
+                    .overlay(RoundedRectangle(cornerRadius: 4)
+                        .stroke(tint.opacity(armed ? 0 : 0.6), lineWidth: 1))
             }
             .help("\(group.rawValue): \(armed ? "armed (records)" : "disarmed (plays back)")")
         }
+    }
+}
+
+/// Scroll offset reporter for the pinned header/gutter overlays.
+struct TLOffsetKey: PreferenceKey {
+    static let defaultValue: CGPoint = .zero
+    static func reduce(value: inout CGPoint, nextValue: () -> CGPoint) {
+        value = nextValue()
     }
 }
