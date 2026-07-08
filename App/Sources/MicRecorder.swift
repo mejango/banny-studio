@@ -127,12 +127,12 @@ final class CueThumbCache {
                 }
                 let gen = AVAssetImageGenerator(asset: AVURLAsset(url: url))
                 gen.appliesPreferredTrackTransform = true
-                gen.maximumSize = CGSize(width: 160, height: 160)
+                gen.maximumSize = CGSize(width: 512, height: 512)
                 img = try? gen.copyCGImage(at: CMTime(seconds: 0.1, preferredTimescale: 600), actualTime: nil)
             } else if let src = CGImageSourceCreateWithData(media.data as CFData, nil) {
                 img = CGImageSourceCreateThumbnailAtIndex(src, 0, [
                     kCGImageSourceCreateThumbnailFromImageAlways: true,
-                    kCGImageSourceThumbnailMaxPixelSize: 160,
+                    kCGImageSourceThumbnailMaxPixelSize: 512,
                 ] as CFDictionary)
             }
             await MainActor.run { [weak self] in

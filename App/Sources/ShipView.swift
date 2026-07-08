@@ -7,6 +7,8 @@ import BannyMedia
 struct ShipButton: View {
     @Bindable var model: StudioModel
     let file: ShowDocumentFile
+    /// Timeline-corner style: small plain label on the Export row.
+    var compact = false
 
     @State private var shipping = false
     @State private var progress: Double = 0
@@ -19,11 +21,13 @@ struct ShipButton: View {
                 ship()
             } label: {
                 Text(shipping ? "Exporting… \(Int(progress * 100))%" : "Export")
-                    .font(.system(size: 12, weight: .bold))
+                    .font(.system(size: compact ? 10 : 12, weight: compact ? .semibold : .bold))
+                    .foregroundStyle(Color.orange)
             }
+            .buttonStyle(.plain)
             .disabled(shipping)
             .keyboardShortcut("e", modifiers: .command)
-            .help("Render the show to an mp4 (⌘E)")
+            .help("Render the show to an mp4 (⌘E). Markers on this row bound what ships; empty = the whole show.")
         }
         .alert("Export failed", isPresented: .init(get: { exportError != nil },
                                                    set: { if !$0 { exportError = nil } })) {

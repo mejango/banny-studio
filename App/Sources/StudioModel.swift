@@ -124,6 +124,10 @@ final class StudioModel {
             first.cues.sort { $0.start < $1.start }
             doc.stage.backgroundTracks = [first]
         }
+        if doc.stage.backgroundTracks[0].name == "Backgrounds" {
+            // Pre-rename documents used the plural.
+            doc.stage.backgroundTracks[0].name = "Background"
+        }
         self.document = doc
         self.activeSceneIndex = 0
     }
@@ -154,6 +158,7 @@ final class StudioModel {
 
     func play() {
         guard !playing else { pause(); return }
+        clearFreeform()
         playing = true
         startWall = Date.timeIntervalSinceReferenceDate - time
         file?.audioEngine?.syncPlayback(self)
@@ -172,6 +177,7 @@ final class StudioModel {
     }
 
     func seek(to t: Double) {
+        clearFreeform()
         time = max(0, min(duration, t))
         if playing {
             startWall = Date.timeIntervalSinceReferenceDate - time
@@ -184,6 +190,7 @@ final class StudioModel {
     func record() {
         if recording || playing { pause(); return }
         guard !selection.isEmpty else { return }
+        clearFreeform()
         recTargets = selection
         recStartTime = time
         recPunched = [:]
@@ -261,38 +268,75 @@ final class StudioModel {
         heldCodes = []
     }
 
-    // Freeform: while paused, arrows walk the selected characters' start pose in
-    // real time (a 60 Hz nudge loop lives in EditorView); face flips immediately.
+    // MARK: - Freeform puppeteering (transport stopped)
+
+    /// Synthetic live events, per character: freeform keys run through the SAME
+    /// simulator as recorded ones, so walking/talking/jumping previews exactly
+    /// like playback. Cleared whenever the transport moves.
+    private(set) var freeformEvents: [Int: [PerfEvent]] = [:]
+    private var freeformStarts: [Int: StartPose] = [:]
+    private(set) var freeformClock: Double = 0
+    private var freeformLastEvent: Double = 0
+
+    var freeformActive: Bool { !freeformEvents.isEmpty }
+    /// Motion can still be decaying (turn grace, jump arc) after the keys lift.
+    var freeformSettling: Bool { freeformActive && freeformClock < freeformLastEvent + 1.5 }
+
+    func clearFreeform() {
+        freeformEvents = [:]
+        freeformStarts = [:]
+        freeformClock = 0
+        freeformLastEvent = 0
+    }
+
     private func freeformKey(code: EventCode, down: Bool) {
-        guard down else { return }
-        for i in selection {
-            var c = scene.characters[i]
-            switch code {
-            case .arrowLeft where c.face != -1: c.face = -1
-            case .arrowRight where c.face != 1: c.face = 1
-            default: break
+        for i in selection where scene.characters.indices.contains(i) {
+            if freeformStarts[i] == nil {
+                let pose = simulator.pose(characterIndex: i, at: time)
+                freeformStarts[i] = StartPose(x: pose.x, depth: pose.depth, face: pose.face)
             }
+            freeformEvents[i, default: []].append(.key(t: freeformClock, code: code, down: down))
+        }
+        freeformLastEvent = freeformClock
+    }
+
+    /// Advances the freeform clock at 60 Hz (driven by the stage render loop).
+    /// Near t=0 the resulting pose also commits as the start pose, so freeform
+    /// doubles as "place your character before the take" (web parked behavior).
+    func freeformNudge(dt: Double) {
+        guard !playing, !recording, freeformActive,
+              !heldCodes.isEmpty || freeformSettling else { return }
+        freeformClock += dt
+        guard time < 0.1 else { return }
+        for (i, evs) in freeformEvents where scene.characters.indices.contains(i) {
+            guard let start = freeformStarts[i] else { continue }
+            let sp = simulatePosition(events: evs, recStart: start,
+                                      speed: scene.characters[i].speed,
+                                      gScale: scene.gScale, at: freeformClock)
+            var c = scene.characters[i]
+            c.x = sp.x
+            c.depth = sp.depth
+            c.face = sp.face
+            c.recStart = StartPose(x: sp.x, depth: sp.depth, face: sp.face)
             scene.characters[i] = c
         }
     }
 
-    /// 60 Hz freeform integration while paused with arrows held (web step() freeform).
-    func freeformNudge(dt: Double) {
-        guard !playing, !recording, !heldCodes.isEmpty else { return }
-        let dx = (heldCodes.contains(.arrowRight) ? 1.0 : 0) - (heldCodes.contains(.arrowLeft) ? 1.0 : 0)
-        let dz = (heldCodes.contains(.arrowUp) ? 1.0 : 0) - (heldCodes.contains(.arrowDown) ? 1.0 : 0)
-        guard dx != 0 || dz != 0 else { return }
-        for i in selection {
-            var c = scene.characters[i]
-            guard (dx > 0 && c.face == 1) || (dx < 0 && c.face == -1) || dx == 0 else { continue }
-            let depthRate = (c.speed / 320) * 0.36 / max(scene.gScale, 0.1)
-            c.x = min(1 - 0.044, max(0.044, c.x + c.speed / 900 * dx * dt))
-            c.depth = min(1, max(-12, c.depth + dz * dt * depthRate))
-            if time < 0.1 {
-                c.recStart = StartPose(x: c.x, depth: c.depth, face: c.face)
-            }
-            scene.characters[i] = c
-        }
+    /// Freeform preview pose: synthetic live events simulated on top of the pose
+    /// at the playhead. Wardrobe and captions stay from the timeline.
+    func freeformPose(characterIndex i: Int, basePose: CharacterPose) -> CharacterPose? {
+        guard let evs = freeformEvents[i], let start = freeformStarts[i],
+              scene.characters.indices.contains(i) else { return nil }
+        var s = scene
+        var c = s.characters[i]
+        c.events = evs
+        c.recStart = start
+        c.subs = []
+        s.characters[i] = c
+        var pose = SceneSimulator(state: s).pose(characterIndex: i, at: freeformClock)
+        pose.outfit = basePose.outfit
+        pose.activeSubtitle = basePose.activeSubtitle
+        return pose
     }
 
     // MARK: - Characters
@@ -341,7 +385,7 @@ final class StudioModel {
     func addBackgroundCue(assetID: String, assetName: String) {
         registerUndoSnapshot(label: "Set Background")
         if scene.backgroundTracks.isEmpty {
-            scene.backgroundTracks = [BackgroundTrack(id: ShowDocumentFile.newID(), name: "Backgrounds")]
+            scene.backgroundTracks = [BackgroundTrack(id: ShowDocumentFile.newID(), name: "Background")]
         }
         // New cue runs from the playhead to the end of content (or +30s).
         let end = max(scene.contentEnd, time + 30)
@@ -404,12 +448,20 @@ final class StudioModel {
         return nil
     }
 
-    // MARK: - Show playlist
+    // MARK: - Export range (the Export row's start/end markers)
 
-    func addShowSegment(from: Double, to: Double) {
-        document.show.append(ShowSegment(
-            name: "\(String(format: "%.1f", from))–\(String(format: "%.1f", to))s",
-            from: from, to: to))
+    var exportRange: (from: Double, to: Double)? {
+        get {
+            guard let seg = document.show.first, seg.to > seg.from else { return nil }
+            return (seg.from, seg.to)
+        }
+        set {
+            if let r = newValue {
+                document.show = [ShowSegment(name: "export", from: r.from, to: r.to)]
+            } else {
+                document.show = []
+            }
+        }
     }
 
     // MARK: - Undo

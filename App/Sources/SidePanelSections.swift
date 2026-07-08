@@ -205,6 +205,49 @@ struct LightCueInspector: View {
     }
 }
 
+/// Larger preview of the background under the playhead (or the selected cue).
+struct BackgroundPreview: View {
+    @Bindable var model: StudioModel
+    let file: ShowDocumentFile
+    @State private var thumbs = CueThumbCache()
+
+    var body: some View {
+        let cue = selectedCue ?? model.scene.activeBackgroundCue(at: model.time)
+        if let cue, let asset = model.document.assets.first(where: { $0.id == cue.assetID }) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("CURRENT BACKGROUND").font(.caption.bold()).foregroundStyle(.secondary)
+                ZStack(alignment: .bottomLeading) {
+                    Group {
+                        if let img = thumbs.thumb(assetID: asset.id, file: file) {
+                            Image(decorative: img, scale: 1).resizable().scaledToFill()
+                        } else {
+                            Color.primary.opacity(0.08)
+                        }
+                    }
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 110)
+                    Text(asset.name + (asset.kind == .video ? " · video, loops" : ""))
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 5).padding(.vertical, 2)
+                        .background(Color.black.opacity(0.55))
+                }
+                .frame(maxWidth: .infinity)
+                .frame(height: 110)
+                .clipShape(RoundedRectangle(cornerRadius: 6))
+            }
+        }
+    }
+
+    private var selectedCue: BackgroundCue? {
+        guard let id = model.selectedBackgroundCue else { return nil }
+        for track in model.scene.backgroundTracks {
+            if let cue = track.cues.first(where: { $0.id == id }) { return cue }
+        }
+        return nil
+    }
+}
+
 /// Script: one caption per line for the selected character (web SCRIPT box).
 struct ScriptSection: View {
     @Bindable var model: StudioModel

@@ -36,6 +36,7 @@ public struct FrameRenderer: Sendable {
     public func draw(scene: SceneState, at t: Double, size: CGSize,
                      background: (image: CGImage, crop: Crop)? = nil,
                      imageAsset: ((String) -> CGImage?)? = nil,
+                     poseOverride: ((Int, CharacterPose) -> CharacterPose)? = nil,
                      flipped: Bool = false,
                      in ctx: CGContext) {
         let W = Double(size.width)
@@ -74,7 +75,8 @@ public struct FrameRenderer: Sendable {
         var entries: [(index: Int, pose: CharacterPose, placement: StageLayout.Placement)] = []
         for i in scene.characters.indices
             where !scene.characters[i].hidden && scene.characters[i].presence.isPresent(at: t) {
-            let pose = sim.pose(characterIndex: i, at: t)
+            var pose = sim.pose(characterIndex: i, at: t)
+            if let poseOverride { pose = poseOverride(i, pose) }
             let placement = StageLayout.place(pose: pose, character: scene.characters[i],
                                               scene: scene, stageWidth: W, virtualHeight: H)
             entries.append((i, pose, placement))
@@ -231,7 +233,7 @@ public struct FrameRenderer: Sendable {
             ctLines.append((ct, line.speaker))
         }
 
-        let boxW = min(maxWidth + pad * 2 + 8, W * 0.9)
+        let boxW = min(maxWidth + pad * 2, W * 0.9)
         let boxH = Double(shown.count) * lineHeight + pad
         let boxX = (W - boxW) / 2
         let boxY = outH - boxH - outH * 0.02
@@ -239,15 +241,12 @@ public struct FrameRenderer: Sendable {
         ctx.setFillColor(CGColor(gray: 0, alpha: 0.82))
         ctx.fill(CGRect(x: boxX, y: boxY, width: boxW, height: boxH))
 
-        for (i, (ct, speaker)) in ctLines.enumerated() {
+        for (i, (ct, _)) in ctLines.enumerated() {
             let y = boxY + pad * 0.7 + Double(i) * lineHeight + fontSize
-            // Speaker color bar.
-            ctx.setFillColor(bodyColor(speaker.body))
-            ctx.fill(CGRect(x: boxX + 3, y: y - fontSize, width: 4, height: fontSize * 1.1))
             ctx.saveGState()
             // CoreText draws in unflipped coords; flip locally around the baseline.
             ctx.textMatrix = CGAffineTransform(scaleX: 1, y: -1)
-            ctx.textPosition = CGPoint(x: boxX + pad + 8, y: y)
+            ctx.textPosition = CGPoint(x: boxX + pad, y: y)
             CTLineDraw(ct, ctx)
             ctx.restoreGState()
         }

@@ -79,32 +79,24 @@ struct WardrobePanel: View {
                           items: [(name: String, label: String, image: CGImage?)],
                           choose: @escaping (String) -> Void) -> some View {
         VStack(alignment: .leading, spacing: 4) {
-            HStack(spacing: 8) {
-                Text(title).font(.caption2.bold()).foregroundStyle(.secondary)
-                if allowNone {
-                    Button("none") { choose("") }
-                        .buttonStyle(.plain)
-                        .font(.system(size: 9, weight: .semibold))
-                        .padding(.horizontal, 7).padding(.vertical, 2)
-                        .background(selected.isEmpty ? Color.orange : Color.primary.opacity(0.08),
-                                    in: Capsule())
-                        .foregroundStyle(selected.isEmpty ? .white : .secondary)
-                }
-            }
+            Text(title).font(.caption2.bold()).foregroundStyle(.secondary)
             LazyVGrid(columns: columns, spacing: 0) {
                 ForEach(items, id: \.name) { item in
                     thumbCell(name: item.name, label: item.label, image: item.image, crop: crop,
-                              selected: item.name == selected, choose: choose)
+                              selected: item.name == selected, allowNone: allowNone, choose: choose)
                 }
             }
         }
     }
 
     private func thumbCell(name: String, label: String, image: CGImage?, crop: CGRect,
-                           selected: Bool, choose: @escaping (String) -> Void) -> some View {
+                           selected: Bool, allowNone: Bool,
+                           choose: @escaping (String) -> Void) -> some View {
         let body_ = model.scene.characters[safe: characterIndex]?.body ?? .orange
         return Button {
-            choose(name)
+            // Tapping the worn item takes it off (when the slot can be empty);
+            // tapping anything else swaps to it.
+            choose(selected && allowNone ? "" : name)
         } label: {
             VStack(spacing: 3) {
                 Group {
@@ -152,6 +144,9 @@ struct MannequinThumb: View {
 
     var body: some View {
         Canvas(rendersAsynchronously: false) { ctx, size in
+            // Fixed light paper behind the mannequin so dark mode reads identically.
+            ctx.fill(Path(CGRect(origin: .zero, size: size)),
+                     with: .color(Color(red: 0.96, green: 0.95, blue: 0.91)))
             let s = size.width / crop.width
             let box = CGRect(x: -crop.minX * s, y: -crop.minY * s,
                              width: 400 * s, height: 400 * s)

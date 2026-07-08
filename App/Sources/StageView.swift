@@ -18,7 +18,7 @@ struct StageView: View {
     /// The 60fps schedule only runs while something is actually animating;
     /// paused edits redraw via model observation instead.
     private var renderLoopPaused: Bool {
-        !model.playing && model.heldCodes.isEmpty
+        !model.playing && model.heldCodes.isEmpty && !model.freeformSettling
     }
 
     var body: some View {
@@ -38,6 +38,9 @@ struct StageView: View {
                         scene: scene, at: model.time, size: size,
                         background: bg,
                         imageAsset: { media.still(assetID: $0, file: file) },
+                        poseOverride: !model.playing && model.freeformActive
+                            ? { i, pose in model.freeformPose(characterIndex: i, basePose: pose) ?? pose }
+                            : nil,
                         in: cg)
                 }
                 drawImageCueHighlight(context: context, size: size)
@@ -151,7 +154,7 @@ struct StageView: View {
 }
 
 /// Decodes bank assets for the stage: still images cached, background videos
-/// previewed at ~7 fps via throttled async frame generation (export is exact).
+/// previewed at ~14 fps via throttled async frame generation (export is exact).
 @Observable
 final class StageMediaCache {
     private var stills: [String: CGImage] = [:]
@@ -214,7 +217,7 @@ final class StageMediaCache {
         guard let entry = videoGen[assetID] else { return nil }
         let vt = max(0, t).truncatingRemainder(dividingBy: entry.duration)
         let current = videoFrame[assetID]
-        if current == nil || abs(current!.t - vt) > 0.15, !videoBusy.contains(assetID) {
+        if current == nil || abs(current!.t - vt) > 0.07, !videoBusy.contains(assetID) {
             videoBusy.insert(assetID)
             let gen = entry.gen
             Task.detached(priority: .userInitiated) { [weak self] in

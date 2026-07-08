@@ -134,6 +134,8 @@ struct StudioTimelineView: View {
     @State private var draggingClip: (id: String, baseStart: Double)?
     @State private var draggingCue: (row: TrackRow, cueID: String, baseStart: Double, baseDur: Double, edge: Int)?
     @State private var draggingSub: (char: Int, index: Int, baseStart: Double, baseDur: Double, edge: Int)?
+    /// Export-range drag: edge -1/1 = a marker, 0 = slide the range, 2 = drag out a new one.
+    @State private var draggingExport: (edge: Int, baseFrom: Double, baseTo: Double)?
     @State private var draggingPresence: (row: TrackRow, index: Int)?
     @State private var selectedPresence: (rowKey: String, index: Int)?
     @State private var lastTap: (location: CGPoint, at: Date)?
@@ -210,6 +212,7 @@ struct StudioTimelineView: View {
                 .frame(width: laneLabelWidth + max(600, contentWidth + 40),
                        height: totalLaneHeight + 34, alignment: .topLeading)
             }
+            .contentMargins(.leading, laneLabelWidth, for: .scrollIndicators)
             .coordinateSpace(name: "tlScroll")
             .onPreferenceChange(TLOffsetKey.self) { [offsets] origin in
                 // origin.x includes the leading gutter padding at rest.
@@ -286,9 +289,12 @@ struct StudioTimelineView: View {
     }
 
     private var headerHeight: CGFloat { rulerHeight + scrubHeight }
+    /// Export range row: bracket markers bound what ships.
+    private let exportRowH: CGFloat = 18
+    private var captionsTop: CGFloat { headerHeight + exportRowH }
     /// Global closed-caption strip: one row above all tracks.
     private let captionsRowH: CGFloat = 22
-    private var lanesTop: CGFloat { headerHeight + captionsRowH }
+    private var lanesTop: CGFloat { captionsTop + captionsRowH }
 
     private func minHeight(of row: TrackRow) -> CGFloat {
         if case .character = row { return 64 }   // presence + audio + 7 event rows
@@ -333,13 +339,22 @@ struct StudioTimelineView: View {
     private var cornerCell: some View {
         Canvas { ctx, size in
             ctx.fill(Path(CGRect(origin: .zero, size: size)), with: .color(theme.gutterBase))
-            ctx.draw(Text("Captions").font(.system(size: 9, weight: .semibold))
+            ctx.draw(Text("Captions").font(.system(size: 10, weight: .semibold))
                         .foregroundStyle(theme.mutedText),
-                     at: CGPoint(x: 12, y: headerHeight + captionsRowH / 2), anchor: .leading)
+                     at: CGPoint(x: 12, y: captionsTop + captionsRowH / 2), anchor: .leading)
             ctx.stroke(Path { p in
                 p.move(to: CGPoint(x: size.width - 0.5, y: 0))
                 p.addLine(to: CGPoint(x: size.width - 0.5, y: size.height))
             }, with: .color(theme.gutterDivider), lineWidth: 1)
+        }
+        .overlay(alignment: .topLeading) {
+            // The Export action lives on its row, like a gutter label that acts.
+            if let file {
+                ShipButton(model: model, file: file, compact: true)
+                    .padding(.leading, 12)
+                    .frame(height: exportRowH)
+                    .offset(y: headerHeight)
+            }
         }
         .frame(width: laneLabelWidth, height: lanesTop)
     }
@@ -351,6 +366,7 @@ struct StudioTimelineView: View {
             var ctx = ctx0
             ctx.translateBy(x: -scrollOffset.x, y: 0)
             drawRuler(ctx: ctx, size: CGSize(width: fullW, height: size.height))
+            drawExportRow(ctx: ctx, size: CGSize(width: fullW, height: size.height))
             drawCaptionsRow(ctx: ctx, size: CGSize(width: fullW, height: size.height))
             let px = x(forTime: model.time)
             ctx.stroke(Path { p in
@@ -373,7 +389,7 @@ struct StudioTimelineView: View {
                     #if os(macOS)
                     .onExitCommand { editingLabel = nil }
                     #endif
-                    .offset(x: editing.origin.x - scrollOffset.x, y: headerHeight + 3)
+                    .offset(x: editing.origin.x - scrollOffset.x, y: captionsTop + 3)
                     .onAppear { labelFocused = true }
                     .onChange(of: labelFocused) { _, focused in
                         if !focused { commitLabelEdit() }
@@ -392,7 +408,27 @@ struct StudioTimelineView: View {
                     applySubDrag(ds, translation: Double(value.translation.width / pxPerSecond))
                     return
                 }
-                if value.startLocation.y >= headerHeight {
+                if let de = draggingExport {
+                    applyExportDrag(de, value: value)
+                    return
+                }
+                if value.startLocation.y >= headerHeight, value.startLocation.y < captionsTop {
+                    // Export row: grab a marker, slide the range, or drag out a new one.
+                    let sx = value.startLocation.x + scrollOffset.x
+                    let t0 = time(forX: sx)
+                    if let r = model.exportRange {
+                        let grab: CGFloat = 6
+                        if abs(sx - x(forTime: r.from)) < grab { draggingExport = (-1, r.from, r.to) }
+                        else if abs(sx - x(forTime: r.to)) < grab { draggingExport = (1, r.from, r.to) }
+                        else if t0 > r.from, t0 < r.to { draggingExport = (0, r.from, r.to) }
+                        else { draggingExport = (2, t0, t0) }
+                    } else {
+                        draggingExport = (2, t0, t0)
+                    }
+                    if let de = draggingExport { applyExportDrag(de, value: value) }
+                    return
+                }
+                if value.startLocation.y >= captionsTop {
                     let sx = value.startLocation.x + scrollOffset.x
                     if let st = subtitleAt(contentX: sx) {
                         let edge = 4.0
@@ -412,8 +448,17 @@ struct StudioTimelineView: View {
                 }
             }
             .onEnded { value in
+                if let de = draggingExport {
+                    if de.edge == 2, value.translation.width.magnitude < 3 {
+                        // A plain click on the empty row clears the range.
+                        model.exportRange = nil
+                    }
+                    model.registerUndoSnapshot(label: "Export Range")
+                    draggingExport = nil
+                    return
+                }
                 if value.translation.width.magnitude < 3, value.translation.height.magnitude < 3,
-                   value.location.y >= headerHeight {
+                   value.location.y >= captionsTop {
                     let cx = value.location.x + scrollOffset.x
                     if let st = subtitleAt(contentX: cx) {
                         // Click a caption → edit its text in place.
@@ -439,6 +484,26 @@ struct StudioTimelineView: View {
                 draggingSub = nil
                 scrubZoomBase = nil
             }
+    }
+
+    private func applyExportDrag(_ de: (edge: Int, baseFrom: Double, baseTo: Double),
+                                 value: DragGesture.Value) {
+        let dt = Double(value.translation.width / pxPerSecond)
+        switch de.edge {
+        case -1:
+            model.exportRange = (max(0, min(de.baseFrom + dt, de.baseTo - 0.1)), de.baseTo)
+        case 1:
+            model.exportRange = (de.baseFrom, min(model.duration, max(de.baseFrom + 0.1, de.baseTo + dt)))
+        case 0:
+            let len = de.baseTo - de.baseFrom
+            let f = max(0, min(de.baseFrom + dt, model.duration - len))
+            model.exportRange = (f, f + len)
+        default:
+            let t1 = time(forX: value.location.x + scrollOffset.x)
+            let lo = min(de.baseFrom, t1)
+            let hi = max(de.baseFrom, t1)
+            if hi - lo >= 0.1 { model.exportRange = (lo, hi) }
+        }
     }
 
     private func applySubDrag(_ ds: (char: Int, index: Int, baseStart: Double, baseDur: Double, edge: Int),
@@ -696,6 +761,41 @@ struct StudioTimelineView: View {
         }
     }
 
+    /// Export range row: green brackets bound what ships; empty ships everything.
+    private func drawExportRow(ctx: GraphicsContext, size: CGSize) {
+        let y = headerHeight
+        ctx.fill(Path(CGRect(x: 0, y: y, width: size.width, height: exportRowH)),
+                 with: .color(theme.ccRow.opacity(0.6)))
+        ctx.stroke(Path { p in
+            p.move(to: CGPoint(x: 0, y: y + exportRowH - 0.5))
+            p.addLine(to: CGPoint(x: size.width, y: y + exportRowH - 0.5))
+        }, with: .color(theme.gutterDivider), lineWidth: 1)
+        if let r = model.exportRange {
+            let x0 = x(forTime: r.from)
+            let x1 = x(forTime: r.to)
+            let green = Color(red: 0.25, green: 0.72, blue: 0.35)
+            ctx.fill(Path(CGRect(x: x0, y: y + 2, width: max(2, x1 - x0), height: exportRowH - 4)),
+                     with: .color(green.opacity(0.28)))
+            for (mx, dir) in [(x0, 1.0), (x1, -1.0)] {
+                var p = Path()
+                p.move(to: CGPoint(x: mx + CGFloat(dir) * 4, y: y + 2))
+                p.addLine(to: CGPoint(x: mx, y: y + 2))
+                p.addLine(to: CGPoint(x: mx, y: y + exportRowH - 2))
+                p.addLine(to: CGPoint(x: mx + CGFloat(dir) * 4, y: y + exportRowH - 2))
+                ctx.stroke(p, with: .color(green), lineWidth: 2)
+            }
+            if x1 - x0 > 90 {
+                ctx.draw(Text(String(format: "%.1f–%.1fs", r.from, r.to))
+                            .font(.system(size: 8, weight: .semibold)).foregroundStyle(green),
+                         at: CGPoint(x: (x0 + x1) / 2, y: y + exportRowH / 2))
+            }
+        } else {
+            ctx.draw(Text("drag here to mark an export range — empty ships the whole show")
+                        .font(.system(size: 8)).foregroundStyle(theme.mutedText.opacity(0.8)),
+                     at: CGPoint(x: scrollOffset.x + 10, y: y + exportRowH / 2), anchor: .leading)
+        }
+    }
+
     private func drawLane(_ row: TrackRow, ctx: GraphicsContext, size: CGSize) {
         let y = laneTop(of: row)
         let h = height(of: row)
@@ -792,7 +892,7 @@ struct StudioTimelineView: View {
 
     /// The global CC strip: every character's captions, tinted per speaker body color.
     private func drawCaptionsRow(ctx: GraphicsContext, size: CGSize) {
-        let y = headerHeight
+        let y = captionsTop
         ctx.fill(Path(CGRect(x: 0, y: y, width: size.width, height: captionsRowH)),
                  with: .color(theme.ccRow))
         ctx.stroke(Path { p in
@@ -1485,8 +1585,10 @@ struct TransportBar: View {
                         .font(.system(size: 11, weight: .bold))
                         .foregroundStyle(model.recording ? .white : .red)
                         .padding(.horizontal, 6).padding(.vertical, 3)
-                        .background(model.recording ? Color.red : Color.clear,
+                        .background(model.recording ? Color.red : Color.red.opacity(0.12),
                                     in: RoundedRectangle(cornerRadius: 4))
+                        .overlay(RoundedRectangle(cornerRadius: 4)
+                            .stroke(Color.red.opacity(model.recording ? 0 : 0.6), lineWidth: 1))
                 }
                 .help("Record the selected characters (⇧Space)")
                 Text(recTargetNames)
@@ -1529,6 +1631,7 @@ struct TransportBar: View {
         switch group {
         case .move: return "Move L/R"
         case .depth: return "Move F/B"
+        case .talk: return "mouth"
         default: return group.rawValue
         }
     }

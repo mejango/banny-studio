@@ -93,7 +93,6 @@ struct WideEditor: View {
                                            : Color(red: 0.92, green: 0.92, blue: 0.92))
             ThemeToggle()
             Spacer()
-            ShipButton(model: model, file: file)
         }
         .padding(.horizontal, 14)
         .frame(height: CGFloat(headerH))
@@ -169,6 +168,8 @@ struct SidePanel: View {
     @AppStorage("studioLightMode") private var lightMode = false
     private var theme: Theme { lightMode ? .light : .dark }
 
+    @State private var confirmDelete = false
+
     private enum Target {
         case character(Int), audio(Int), image(Int), light(Int), background(Int), none
     }
@@ -210,6 +211,9 @@ struct SidePanel: View {
                     LightCueInspector(model: model)
                 case .background(let i):
                     nameHeader(kind: .background(i))
+                    if let file {
+                        BackgroundPreview(model: model, file: file)
+                    }
                     stageSection
                     if let file {
                         AssetBankSection(model: model, file: file)
@@ -217,6 +221,33 @@ struct SidePanel: View {
                 case .none:
                     Text("Select a track to edit it here.")
                         .font(.caption).foregroundStyle(.secondary)
+                }
+
+                if let kind = deletableKind {
+                    Spacer(minLength: 18)
+                    Button {
+                        confirmDelete = true
+                    } label: {
+                        Text(deleteTitle)
+                            .font(.caption.bold())
+                            .foregroundStyle(.red)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 7)
+                            .background(Color.red.opacity(0.09), in: RoundedRectangle(cornerRadius: 6))
+                            .overlay(RoundedRectangle(cornerRadius: 6)
+                                .stroke(Color.red.opacity(0.35), lineWidth: 1))
+                    }
+                    .buttonStyle(.plain)
+                    .confirmationDialog(deleteTitle + "?", isPresented: $confirmDelete,
+                                        titleVisibility: .visible) {
+                        Button(deleteTitle, role: .destructive) {
+                            model.removeTrack(kind)
+                            model.selectedTrackKey = nil
+                        }
+                        Button("Cancel", role: .cancel) {}
+                    } message: {
+                        Text("This removes the track and everything on it. Undo (⌘Z) brings it back.")
+                    }
                 }
             }
             .padding(10)
@@ -226,25 +257,26 @@ struct SidePanel: View {
         .environment(\.colorScheme, lightMode ? .light : .dark)
     }
 
-    /// Editable track name + delete, replacing the old gear popover.
-    private func nameHeader(kind: TrackRowKind) -> some View {
-        HStack {
-            TextField("name", text: nameBinding(kind))
-                .textFieldStyle(.plain)
-                .font(.headline)
-            if case .background = kind {} else {
-                Button {
-                    model.removeTrack(kind)
-                    model.selectedTrackKey = nil
-                } label: {
-                    Image(systemName: "trash")
-                        .font(.system(size: 11))
-                        .foregroundStyle(.red)
-                }
-                .buttonStyle(.plain)
-                .help("Delete this track")
-            }
+    private var deletableKind: TrackRowKind? {
+        switch target {
+        case .character(let i): return .character(i)
+        case .audio(let i): return .audio(i)
+        case .image(let i): return .image(i)
+        case .light(let i): return .light(i)
+        case .background, .none: return nil
         }
+    }
+
+    private var deleteTitle: String {
+        if case .character = target { return "Delete character" }
+        return "Delete track"
+    }
+
+    /// Editable track name (deleting lives at the panel's bottom, behind a confirm).
+    private func nameHeader(kind: TrackRowKind) -> some View {
+        TextField("name", text: nameBinding(kind))
+            .textFieldStyle(.plain)
+            .font(.headline)
     }
 
     private func nameBinding(_ kind: TrackRowKind) -> Binding<String> {
@@ -277,22 +309,24 @@ struct SidePanel: View {
     private var stageSection: some View {
         VStack(alignment: .leading, spacing: 6) {
             Text("STAGE").font(.caption.bold()).foregroundStyle(.secondary)
-            valueSlider("size", value: Binding(get: { model.scene.gSize },
-                                               set: { model.scene.gSize = $0 }),
+            valueSlider("Character size", value: Binding(get: { model.scene.gSize },
+                                                          set: { model.scene.gSize = $0 }),
                         range: 0.3...2.5)
-            valueSlider("scale (depth)", value: Binding(get: { model.scene.gScale },
-                                                        set: { model.scene.gScale = $0 }),
+            valueSlider("Depth", value: Binding(get: { model.scene.gScale },
+                                                set: { model.scene.gScale = $0 }),
                         range: 0...1.2)
-            valueSlider("gravity", value: Binding(get: { model.scene.gravity },
+            valueSlider("Gravity", value: Binding(get: { model.scene.gravity },
                                                   set: { model.scene.gravity = $0 }),
                         range: 0.3...2.5)
+            Text("Gravity affects walking, wobbling, and jumping.")
+                .font(.caption2).foregroundStyle(.secondary)
         }
     }
 
     private func valueSlider(_ label: String, value: Binding<Double>,
                              range: ClosedRange<Double>) -> some View {
         HStack {
-            Text(label).font(.caption2).frame(width: 78, alignment: .leading)
+            Text(label).font(.caption2).frame(width: 88, alignment: .leading)
             Slider(value: value, in: range)
             Text(String(format: "%.2f", value.wrappedValue))
                 .font(.system(size: 9, design: .monospaced)).foregroundStyle(.secondary)
