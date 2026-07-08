@@ -5,38 +5,12 @@ import UniformTypeIdentifiers
 /// or import a shared .bs archive (zipped .bannyshow package).
 struct ProjectMenu: View {
     @State private var projectName = ""
-    @State private var renaming = false
-    @State private var newName = ""
     @State private var importing = false
     @State private var importError: String?
-    @FocusState private var nameFocused: Bool
 
     var body: some View {
-        if renaming {
-            // Inline rename: the label itself becomes a text field.
-            TextField("Project name", text: $newName)
-                .textFieldStyle(.plain)
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(Color(white: 0.75))
-                .frame(width: 160)
-                .focused($nameFocused)
-                .onSubmit { rename(); renaming = false }
-                .onExitCommand { renaming = false }
-                .onAppear { nameFocused = true }
-                .onChange(of: nameFocused) { _, focused in
-                    if !focused { renaming = false }
-                }
-        } else {
-            menu
-        }
-    }
-
-    private var menu: some View {
         Menu {
-            Button("Rename project…") {
-                newName = projectName
-                renaming = true
-            }
+            Button("Rename project…") { rename() }
             Button("New project") {
                 #if os(macOS)
                 NSDocumentController.shared.newDocument(nil)
@@ -53,6 +27,7 @@ struct ProjectMenu: View {
             }
             .foregroundStyle(Color(white: 0.6))
         }
+        .onHover { if $0 { refreshName() } }
         .menuStyle(.button)
         .buttonStyle(.plain)
         .menuIndicator(.hidden)
@@ -87,24 +62,18 @@ struct ProjectMenu: View {
         #endif
     }
 
+    /// The system titlebar rename: inline, and the ONLY sandbox-legal way to
+    /// rename in place — the app has access to the document file, not to
+    /// creating a sibling name in its folder; the powerbox handles this one.
     private func rename() {
         #if os(macOS)
         guard let doc = NSDocumentController.shared.currentDocument else { return }
-        let name = newName.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !name.isEmpty else { return }
-        guard let current = doc.fileURL else {
+        guard doc.fileURL != nil else {
             // Never saved: a rename is just the first save.
             NSApp.sendAction(#selector(NSDocument.save(_:)), to: doc, from: nil)
             return
         }
-        let dest = current.deletingLastPathComponent()
-            .appendingPathComponent(name)
-            .appendingPathExtension(current.pathExtension)
-        guard dest != current else { return }
-        doc.move(to: dest) { error in
-            if let error { importError = error.localizedDescription }
-            refreshName()
-        }
+        NSApp.sendAction(Selector(("renameDocument:")), to: doc, from: nil)
         #endif
     }
 
