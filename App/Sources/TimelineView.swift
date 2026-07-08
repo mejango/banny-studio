@@ -1439,7 +1439,10 @@ struct TransportBar: View {
             } label: {
                 Text(group.rawValue)
                     .font(.system(size: 9, weight: .bold))
-                    .foregroundStyle(armed ? Color.white : tint.opacity(0.9))
+                    // Dark theme uses bright chip colors → black text; light theme
+                    // uses deep chip colors → white text.
+                    .foregroundStyle(armed ? (lightMode ? Color.white : Color.black.opacity(0.85))
+                                           : tint.opacity(0.9))
                     .padding(.horizontal, 6).padding(.vertical, 3)
                     .background(armed ? tint : tint.opacity(0.12),
                                 in: RoundedRectangle(cornerRadius: 4))
