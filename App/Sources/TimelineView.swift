@@ -1598,39 +1598,63 @@ struct TLOffsetKey: PreferenceKey {
 #if os(macOS)
 import AppKit
 
-/// The pinned gutter sits over the timeline's scroll view and would swallow
-/// scroll-wheel events. This redirector re-posts wheel events that land on the
-/// gutter to just right of it, so scrolling works anywhere.
+/// The pinned gutter sits over the timeline's scroll view, and scroll events
+/// bubble up the canvas's responder chain without reaching any scroller. A
+/// local event monitor catches wheel events over the gutter and hands them to
+/// the scroll view just right of it.
 struct GutterWheelRedirect: NSViewRepresentable {
     let gutterWidth: CGFloat
 
-    func makeNSView(context: Context) -> RedirectView {
-        let v = RedirectView()
-        v.gutterWidth = gutterWidth
+    func makeNSView(context: Context) -> NSView {
+        let v = NSView()
+        context.coordinator.install(host: v)
         return v
     }
 
-    func updateNSView(_ nsView: RedirectView, context: Context) {
-        nsView.gutterWidth = gutterWidth
-    }
+    func updateNSView(_ nsView: NSView, context: Context) {}
 
-    final class RedirectView: NSView {
-        var gutterWidth: CGFloat = 110
+    func makeCoordinator() -> Coordinator { Coordinator() }
 
-        override func scrollWheel(with event: NSEvent) {
-            // Find the scroll view sharing our window and hand it the event.
-            guard let window, let content = window.contentView else { return }
-            let probe = NSPoint(x: convert(NSPoint(x: gutterWidth + 20, y: bounds.midY), to: nil).x,
-                                y: event.locationInWindow.y)
-            if let target = content.hitTest(probe), let scroll = target.enclosingScrollView {
-                scroll.scrollWheel(with: event)
+    final class Coordinator {
+        private var monitor: Any?
+        private weak var host: NSView?
+
+        func install(host: NSView) {
+            self.host = host
+            guard monitor == nil else { return }
+            monitor = NSEvent.addLocalMonitorForEvents(matching: [.scrollWheel]) { [weak self] event in
+                guard let self, let host = self.host, let window = host.window,
+                      event.window === window else { return event }
+                let local = host.convert(event.locationInWindow, from: nil)
+                guard host.bounds.contains(local) else { return event }
+                // Forward to the scroll view immediately right of the gutter.
+                if let content = window.contentView,
+                   let scroll = Self.scrollView(in: content, atWindowPoint:
+                        NSPoint(x: host.convert(NSPoint(x: host.bounds.maxX + 24, y: local.y), to: nil).x,
+                                y: event.locationInWindow.y)) {
+                    scroll.scrollWheel(with: event)
+                    return nil
+                }
+                return event
             }
         }
+
+        deinit {
+            if let monitor { NSEvent.removeMonitor(monitor) }
+        }
+
+        static func scrollView(in root: NSView, atWindowPoint p: NSPoint) -> NSScrollView? {
+            var found: NSScrollView?
+            func walk(_ view: NSView) {
+                if let sv = view as? NSScrollView {
+                    let local = sv.superview?.convert(p, from: nil) ?? .zero
+                    if sv.frame.contains(local) { found = sv }
+                }
+                for sub in view.subviews { walk(sub) }
+            }
+            walk(root)
+            return found
+        }
     }
-}
-#else
-struct GutterWheelRedirect: View {
-    let gutterWidth: CGFloat
-    var body: some View { Color.clear }
 }
 #endif
