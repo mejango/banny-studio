@@ -1105,7 +1105,17 @@ struct StudioTimelineView: View {
         .gesture(interaction)
         #if os(macOS)
         .onContinuousHover { phase in
-            if case .active(let p) = phase { hoverLanePoint = p }
+            switch phase {
+            case .active(let p):
+                hoverLanePoint = p
+                if resizeEdgeHit(at: p) {
+                    NSCursor.resizeLeftRight.set()
+                } else {
+                    NSCursor.arrow.set()
+                }
+            case .ended:
+                NSCursor.arrow.set()
+            }
         }
         #endif
         .contextMenu {
@@ -1883,6 +1893,24 @@ struct StudioTimelineView: View {
             proxy.scrollTo("tlContent", anchor: UnitPoint(x: target / maxScroll, y: fy))
         }
         offsets.x = target
+    }
+
+    /// Pointer within grabbing distance of a clip/cue/mark edge?
+    private func resizeEdgeHit(at p: CGPoint) -> Bool {
+        let edge: CGFloat = 5
+        if let c = clip(at: p),
+           abs(p.x - x(forTime: c.start)) < edge || abs(p.x - x(forTime: c.start + c.dur)) < edge {
+            return true
+        }
+        if let (_, cue) = cue(at: p),
+           abs(p.x - x(forTime: cue.start)) < edge || abs(p.x - x(forTime: cue.start + cue.dur)) < edge {
+            return true
+        }
+        if let m = mark(at: p),
+           abs(p.x - x(forTime: m.start)) < 4 || abs(p.x - x(forTime: m.end)) < 4 {
+            return true
+        }
+        return false
     }
 
     private func clipStart(id: String) -> Double? {
