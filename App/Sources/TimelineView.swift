@@ -511,11 +511,11 @@ struct StudioTimelineView: View {
             }
     }
 
-    /// The row whose bottom edge is within 6px of y (for track-height resizing).
+    /// The row whose bottom edge is within 8px of y (for track-height resizing).
     private func rowNearBottomEdge(of y: CGFloat) -> TrackRow? {
         for r in rows {
             let bottom = laneTop(of: r) + height(of: r)
-            if abs(bottom - y) < 6 { return r }
+            if abs(bottom - y) < 8 { return r }
         }
         return nil
     }
