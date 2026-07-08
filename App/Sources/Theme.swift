@@ -66,7 +66,10 @@ struct ThemeToggle: View {
                 .font(.system(size: 12))
                 .foregroundStyle(lightMode ? Color.orange : Color(white: 0.75))
         }
-        .buttonStyle(.borderless)
+        .buttonStyle(.plain)
+        #if os(macOS)
+        .focusEffectDisabled()
+        #endif
         .help("Switch light/dark studio theme")
     }
 }
