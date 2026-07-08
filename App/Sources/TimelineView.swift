@@ -2031,7 +2031,6 @@ struct TransportBar: View {
                         .stroke(model.recording ? Color.clear : Color.primary.opacity(0.22), lineWidth: 1))
                 }
                 .help("Record the selected characters (⇧Space)")
-                .padding(.trailing, 12)
                 let pose = livePose
                 ForEach(EventGroup.allCases, id: \.self) { group in
                     armChip(group, pose: pose)
