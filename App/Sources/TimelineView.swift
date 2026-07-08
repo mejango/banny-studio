@@ -162,6 +162,10 @@ struct StudioTimelineView: View {
     @State private var resizingGutter = false
     @State private var scrubZoomBase: Double?
     @State private var pinchZoomBase: Double?
+    /// Locked once at pinch start: anchored time, its view-x, and the vertical
+    /// scroll fraction. Recomputing these per tick from lagging preference
+    /// values fed an oscillation (the "shake" while zooming).
+    @State private var pinchAnchor: (t: Double, vx: CGFloat, fy: CGFloat)?
     /// Lanes viewport scroll offset. An observable holder (not view @State) so
     /// scrolling re-renders ONLY the pinned overlays that read it — the heavy
     /// lanes canvas is untouched by scroll ticks.
@@ -251,13 +255,24 @@ struct StudioTimelineView: View {
                     .onChanged { g in
                         let base = pinchZoomBase ?? zoom
                         pinchZoomBase = base
-                        // The time under the pointer stays put while zooming.
-                        let anchorX = g.startLocation.x
-                        let tKeep = time(forX: anchorX - laneLabelWidth + scrollOffset.x)
-                        zoom = min(16, max(1, base * g.magnification))
-                        keepTime(tKeep, atViewX: anchorX)
+                        if pinchAnchor == nil {
+                            // The time under the pointer stays put while zooming.
+                            let vx = g.startLocation.x
+                            let contentH = totalLaneHeight + 34
+                            let fy = min(1, max(0, offsets.y / max(1, contentH - tlViewport.height)))
+                            pinchAnchor = (time(forX: vx - laneLabelWidth + scrollOffset.x), vx, fy)
+                        }
+                        var tr = Transaction()
+                        tr.disablesAnimations = true
+                        withTransaction(tr) {
+                            zoom = min(16, max(1, base * g.magnification))
+                            if let p = pinchAnchor { keepTime(p.t, atViewX: p.vx, fy: p.fy) }
+                        }
                     }
-                    .onEnded { _ in pinchZoomBase = nil })
+                    .onEnded { _ in
+                        pinchZoomBase = nil
+                        pinchAnchor = nil
+                    })
         .onChange(of: model.timelineDeleteRequest) { _, _ in deleteSelection() }
         #if os(macOS)
         .onDeleteCommand { deleteSelection() }
@@ -375,13 +390,12 @@ struct StudioTimelineView: View {
     /// Programmatic scroll so `t` lands at view-x `vx` (zoom anchoring). Goes
     /// through ScrollViewProxy — writing the NSScrollView's bounds directly
     /// desyncs SwiftUI's own scroll bookkeeping (band/gutter stop tracking).
-    private func keepTime(_ t: Double, atViewX vx: CGFloat) {
+    private func keepTime(_ t: Double, atViewX vx: CGFloat, fy: CGFloat) {
         guard let proxy = tlProxy, tlViewport.width > 0 else { return }
         let contentW = laneLabelWidth + max(600, contentWidth + 40)
-        let contentH = totalLaneHeight + 34
-        let target = max(0, x(forTime: t) - (vx - laneLabelWidth))
+        // Whole device pixels: subpixel scroll positions shimmer the canvas.
+        let target = (max(0, x(forTime: t) - (vx - laneLabelWidth)) * 2).rounded() / 2
         let fx = min(1, max(0, target / max(1, contentW - tlViewport.width)))
-        let fy = min(1, max(0, offsets.y / max(1, contentH - tlViewport.height)))
         proxy.scrollTo("tlContent", anchor: UnitPoint(x: fx, y: fy))
         offsets.x = target
     }
