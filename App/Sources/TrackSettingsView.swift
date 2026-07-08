@@ -6,6 +6,7 @@ import BannyCore
 struct TrackSettingsView: View {
     @Bindable var model: StudioModel
     let row: TrackRow
+    var initialExpanded: String? = nil
 
     @State private var expanded: String?
 
@@ -32,6 +33,7 @@ struct TrackSettingsView: View {
         }
         .padding(12)
         .frame(width: 230)
+        .onAppear { expanded = initialExpanded }
     }
 
     private var canDelete: Bool {

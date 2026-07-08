@@ -143,6 +143,7 @@ struct StudioTimelineView: View {
     @State private var dragPreviewIndex: Int?
     /// Which track's settings popover is open (row key).
     @State private var settingsRowKey: String?
+    @State private var settingsExpand: String?
     @State private var peakCache = PeakCache()
     /// Per-track lane heights (session-scoped), keyed by TrackRow.key.
     @State private var trackHeights: [String: CGFloat] = [:]
@@ -548,6 +549,17 @@ struct StudioTimelineView: View {
                 labelCtx.draw(Text(label(for: row)).font(.system(size: 10, weight: .semibold))
                                 .foregroundStyle(labelColor(for: row)),
                               at: CGPoint(x: 12, y: y + presenceStripH / 2), anchor: .leading)
+                if case .character(let ci) = row, h >= 52,
+                   let c = model.scene.characters[safe: ci] {
+                    let sizeName = abs(c.size - 1) < 0.01 ? "Normal"
+                        : abs(c.size - 0.62) < 0.01 ? "Small"
+                        : abs(c.size - 0.38) < 0.01 ? "Baby"
+                        : String(format: "%.2f", c.size)
+                    labelCtx.draw(Text(String(format: "spd %.0f · wob %.1f · %@", c.speed, c.wobble, sizeName))
+                                    .font(.system(size: 8.5))
+                                    .foregroundStyle(theme.mutedText),
+                                  at: CGPoint(x: 12, y: y + presenceStripH + 10), anchor: .leading)
+                }
                 ctx.draw(Text(Image(systemName: hidden ? "eye.slash" : "eye"))
                             .font(.system(size: 10))
                             .foregroundStyle(hidden ? Color.gray : theme.mutedText),
@@ -604,7 +616,7 @@ struct StudioTimelineView: View {
                 .popover(isPresented: Binding(
                     get: { settingsRowKey == key },
                     set: { if !$0 { settingsRowKey = nil } })) {
-                    TrackSettingsView(model: model, row: row)
+                    TrackSettingsView(model: model, row: row, initialExpanded: settingsExpand)
                         .environment(\.colorScheme, lightMode ? .light : .dark)
                 }
             }
@@ -657,8 +669,15 @@ struct StudioTimelineView: View {
                 }
                 if value.translation.width.magnitude < 3, value.translation.height.magnitude < 3,
                    let row = row(at: value.location.y + scrollOffset.y) {
+                    let localY = value.location.y + scrollOffset.y - laneTop(of: row)
                     if value.location.x > laneLabelWidth - 24 {
                         toggleHidden(row)
+                    } else if case .character = row, localY > presenceStripH + 2,
+                              localY < presenceStripH + 18 {
+                        // Values line → open settings on the tapped value.
+                        settingsExpand = value.location.x < 62 ? "speed"
+                            : value.location.x < 118 ? "wobble" : nil
+                        settingsRowKey = row.key(in: model.scene)
                     } else if case .character(let i) = row {
                         model.selection = [i]
                     }
