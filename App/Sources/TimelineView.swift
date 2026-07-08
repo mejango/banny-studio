@@ -276,7 +276,7 @@ struct StudioTimelineView: View {
                             .overlay(Capsule().stroke(Color.orange.opacity(0.55), lineWidth: 1))
                             .help("The character isn't at its saved start — save where it stands now")
                             .offset(x: 10,
-                                    y: laneTop(of: row) + height(of: row) - wardrobeStripH - 24
+                                    y: laneTop(of: row) + height(of: row) - wardrobeStripH - 2
                                         - scrollOffset.y)
                     }
                 }
@@ -849,7 +849,7 @@ struct StudioTimelineView: View {
                 }
                 for (li, line) in readouts.enumerated() {
                     let ly = y + presenceStripH + 13 + CGFloat(li) * 13
-                    if ly < y + h - 10 {
+                    if ly < y + h - wardrobeStripH - 6 {
                         ctx.draw(Text(line).font(.system(size: 8.5, weight: .medium))
                                     .foregroundStyle(theme.mutedText),
                                  at: CGPoint(x: readoutX, y: ly), anchor: .leading)
