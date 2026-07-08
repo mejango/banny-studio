@@ -299,7 +299,7 @@ struct StudioTimelineView: View {
             ctx.fill(Path(CGRect(origin: .zero, size: size)),
                      with: .color(theme.gutterBase))
             ctx.draw(Text("CC").font(.system(size: 9, weight: .bold))
-                        .foregroundStyle(Color(red: 0.85, green: 0.8, blue: 0.6)),
+                        .foregroundStyle(theme.mutedText),
                      at: CGPoint(x: 12, y: headerHeight + captionsRowH / 2), anchor: .leading)
             ctx.stroke(Path { p in
                 p.move(to: CGPoint(x: 0, y: lanesTop))
@@ -337,7 +337,7 @@ struct StudioTimelineView: View {
                               at: CGPoint(x: 12, y: y + presenceStripH / 2), anchor: .leading)
                 ctx.draw(Text(Image(systemName: hidden ? "eye.slash" : "eye"))
                             .font(.system(size: 10))
-                            .foregroundStyle(hidden ? Color.gray : Color(white: 0.55)),
+                            .foregroundStyle(hidden ? Color.gray : theme.mutedText),
                          at: CGPoint(x: size.width - 18, y: y + presenceStripH / 2))
             }
             if let dragging = draggingRow,
@@ -496,7 +496,7 @@ struct StudioTimelineView: View {
             let px = x(forTime: t)
             ctx.stroke(Path { $0.move(to: CGPoint(x: px, y: 10)); $0.addLine(to: CGPoint(x: px, y: rulerHeight)) },
                        with: .color(.gray), lineWidth: 1)
-            ctx.draw(Text("\(Int(t))s").font(.system(size: 9)).foregroundStyle(.gray),
+            ctx.draw(Text("\(Int(t))s").font(.system(size: 9)).foregroundStyle(theme.mutedText),
                      at: CGPoint(x: px + 12, y: 7))
             t += step
         }
@@ -614,6 +614,8 @@ struct StudioTimelineView: View {
                 let selected = draggingSub?.char == ci && draggingSub?.index == si
                 ctx.fill(Path(roundedRect: rect, cornerRadius: 3),
                          with: .color(tint.opacity(selected ? 0.95 : 0.7)))
+                ctx.stroke(Path(roundedRect: rect, cornerRadius: 3),
+                           with: .color(theme.chipStroke), lineWidth: 1)
                 if rect.width > 30 {
                     var clipped = ctx
                     clipped.clip(to: Path(rect.insetBy(dx: 3, dy: 0)))

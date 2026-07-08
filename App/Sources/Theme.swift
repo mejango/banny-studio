@@ -16,6 +16,8 @@ struct Theme {
     var labelText: Color      // unselected track names
     var stripTint: Color      // presence strip wash
     var shade: Color          // hidden-span overlay
+    var mutedText: Color      // ruler numbers, eyes, CC label
+    var chipStroke: Color     // caption chip outline
 
     static let dark = Theme(
         header: Color(red: 0.04, green: 0.04, blue: 0.065),
@@ -30,7 +32,9 @@ struct Theme {
         dividerBar: Color(red: 0.16, green: 0.16, blue: 0.22),
         labelText: Color(white: 0.7),
         stripTint: Color.white.opacity(0.025),
-        shade: Color.black.opacity(0.55))
+        shade: Color.black.opacity(0.55),
+        mutedText: Color(white: 0.55),
+        chipStroke: Color.black.opacity(0.25))
 
     static let light = Theme(
         header: Color(red: 0.93, green: 0.92, blue: 0.88),
@@ -45,7 +49,9 @@ struct Theme {
         dividerBar: Color(red: 0.7, green: 0.7, blue: 0.66),
         labelText: Color(white: 0.25),
         stripTint: Color.black.opacity(0.03),
-        shade: Color.black.opacity(0.22))
+        shade: Color.black.opacity(0.22),
+        mutedText: Color(white: 0.35),
+        chipStroke: Color.black.opacity(0.35))
 }
 
 /// Sun/moon toggle for the header.
