@@ -26,7 +26,7 @@ extension EventGroup {
         case .move: return Color(red: 0.13, green: 0.4, blue: 0.85)
         case .depth: return Color(red: 0.8, green: 0.2, blue: 0.2)
         case .tilt: return Color(red: 0.1, green: 0.58, blue: 0.22)
-        case .talk: return Color(red: 0.72, green: 0.58, blue: 0.02)
+        case .talk: return Color(red: 0.93, green: 0.74, blue: 0.13)
         case .blink: return Color(red: 0.82, green: 0.45, blue: 0.08)
         case .jump: return Color(red: 0.5, green: 0.3, blue: 0.85)
         }
@@ -1558,10 +1558,7 @@ struct TransportBar: View {
             } label: {
                 Text(chipTitle(group))
                     .font(.system(size: 9, weight: .bold))
-                    // Dark theme uses bright chip colors → black text; light theme
-                    // uses deep chip colors → white text.
-                    .foregroundStyle(armed ? (lightMode ? Color.white : Color.black.opacity(0.85))
-                                           : tint.opacity(0.9))
+                    .foregroundStyle(armed ? Color.black.opacity(0.85) : tint.opacity(0.9))
                     .padding(.horizontal, 6).padding(.vertical, 3)
                     .background(armed ? tint : tint.opacity(0.12),
                                 in: RoundedRectangle(cornerRadius: 4))
