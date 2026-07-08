@@ -171,6 +171,10 @@ struct StudioTimelineView: View {
     @State private var hoverGutterRow: TrackRow?
     /// Double-clicked audio clip: per-clip mix override editor.
     @State private var clipMix: (kind: TrackRowKind, clipID: String, x: CGFloat, y: CGFloat)?
+    /// Rubber-band selection over empty lane space.
+    @State private var marquee: (start: CGPoint, current: CGPoint)?
+    /// Group-drag base positions for selected clips.
+    @State private var dragStartClips: [String: Double]?
     /// Wardrobe-strip click: add a timed outfit change here.
     @State private var outfitPopover: (char: Int, t: Double, x: CGFloat, y: CGFloat)?
     @State private var renamingText = ""
@@ -1061,6 +1065,13 @@ struct StudioTimelineView: View {
     private var timelineCanvas: some View {
         Canvas { ctx, size in
             for row in rows { drawLane(row, ctx: ctx, size: size) }
+            if let m = marquee {
+                let r = CGRect(x: min(m.start.x, m.current.x), y: min(m.start.y, m.current.y),
+                               width: abs(m.start.x - m.current.x),
+                               height: abs(m.start.y - m.current.y))
+                ctx.fill(Path(r), with: .color(Color.orange.opacity(0.1)))
+                ctx.stroke(Path(r), with: .color(Color.orange.opacity(0.7)), lineWidth: 1)
+            }
         }
         .gesture(interaction)
     }
@@ -1588,6 +1599,14 @@ struct StudioTimelineView: View {
                     || draggingCue != nil || draggingSub != nil || draggingPresence != nil {
                     model.registerUndoSnapshot(label: "Edit Timeline")
                 }
+                if let m = marquee {
+                    applyMarquee(m.start, m.current)
+                    marquee = nil
+                }
+                if dragStartMarks != nil || dragStartClips != nil {
+                    model.registerUndoSnapshot(label: "Move Selection")
+                }
+                dragStartClips = nil
                 dragStartMarks = nil
                 resizing = nil
                 draggingClip = nil
@@ -1618,6 +1637,10 @@ struct StudioTimelineView: View {
             let t = time(forX: value.location.x)
             model.scene.characters[r.mark.character].events =
                 TimelineMath.resizeMark(r.mark, leading: r.leading, to: t, in: r.baseEvents)
+            return
+        }
+        if marquee != nil {
+            marquee = (marquee!.start, value.location)
             return
         }
         if let dc = draggingCue {
@@ -1680,10 +1703,21 @@ struct StudioTimelineView: View {
                     #endif
                     dragStartMarks = Dictionary(uniqueKeysWithValues:
                         Set(model.selectedMarks.map(\.character)).map { ($0, model.scene.characters[$0].events) })
+                    dragStartClips = Dictionary(uniqueKeysWithValues:
+                        model.selectedClips.compactMap { id in clipStart(id: id).map { (id, $0) } })
                 }
             } else if let c = clip(at: value.startLocation) {
-                draggingClip = (c.id, c.start)
-                model.selectedClips = [c.id]
+                if model.selectedClips.contains(c.id),
+                   model.selectedClips.count + model.selectedMarks.count > 1 {
+                    // Part of a marquee selection — drag the whole group.
+                    dragStartMarks = Dictionary(uniqueKeysWithValues:
+                        Set(model.selectedMarks.map(\.character)).map { ($0, model.scene.characters[$0].events) })
+                    dragStartClips = Dictionary(uniqueKeysWithValues:
+                        model.selectedClips.compactMap { id in clipStart(id: id).map { (id, $0) } })
+                } else {
+                    draggingClip = (c.id, c.start)
+                    model.selectedClips = [c.id]
+                }
                 return
             } else if let (row, cue) = cue(at: value.startLocation) {
                 let edge = 5.0
@@ -1694,15 +1728,81 @@ struct StudioTimelineView: View {
                 draggingCue = (row, cue.id, cue.start, cue.dur, e)
                 selectCue(row: row, id: cue.id)
                 return
+            } else {
+                // Empty space: rubber-band select a region.
+                marquee = (value.startLocation, value.location)
+                return
             }
         }
-        guard let base = dragStartMarks else { return }
+        guard dragStartMarks != nil || dragStartClips != nil else { return }
         let dt = Double(value.translation.width / pxPerSecond)
-        for (charIndex, events) in base {
-            let charMarks = Set(model.selectedMarks.filter { $0.character == charIndex })
-            model.scene.characters[charIndex].events =
-                TimelineMath.shiftMarks(charMarks, in: events, by: dt)
+        if let base = dragStartMarks {
+            for (charIndex, events) in base {
+                let charMarks = Set(model.selectedMarks.filter { $0.character == charIndex })
+                model.scene.characters[charIndex].events =
+                    TimelineMath.shiftMarks(charMarks, in: events, by: dt)
+            }
         }
+        if let clips = dragStartClips {
+            for (id, s) in clips {
+                model.moveClip(id: id, toStart: max(0, s + dt))
+            }
+        }
+    }
+
+    private func clipStart(id: String) -> Double? {
+        for c in model.scene.characters {
+            if let clip = c.clips.first(where: { $0.id == id }) { return clip.start }
+        }
+        for t in model.scene.audioTracks {
+            if let clip = t.clips.first(where: { $0.id == id }) { return clip.start }
+        }
+        return nil
+    }
+
+    /// Marquee release: select every mark and clip inside the dragged region.
+    private func applyMarquee(_ a: CGPoint, _ b: CGPoint) {
+        let rect = CGRect(x: min(a.x, b.x), y: min(a.y, b.y),
+                          width: abs(a.x - b.x), height: abs(a.y - b.y))
+        guard rect.width > 4 || rect.height > 4 else { return }
+        let t0 = time(forX: rect.minX)
+        let t1 = time(forX: rect.maxX)
+        var marks: Set<PerfMark> = []
+        var clips: Set<String> = []
+        for row in rows {
+            let top = laneTop(of: row)
+            let h = height(of: row)
+            guard rect.maxY > top, rect.minY < top + h else { continue }
+            switch row {
+            case .character(let i):
+                let zones = characterLaneZones(h: h)
+                if rect.maxY > top + zones.clipTop, rect.minY < top + zones.clipTop + zones.clipH {
+                    for clip in model.scene.characters[i].clips
+                        where clip.start < t1 && clip.start + clip.dur > t0 {
+                        clips.insert(clip.id)
+                    }
+                }
+                for mark in TimelineMath.marks(for: model.scene.characters[i].events,
+                                               character: i, duration: model.duration)
+                    where mark.end > t0 && mark.start < t1 {
+                    let my = top + zones.eventTop + CGFloat(mark.code.group.laneIndex) * zones.subH
+                    if rect.maxY > my, rect.minY < my + zones.subH {
+                        marks.insert(mark)
+                    }
+                }
+            case .audio(let i):
+                if rect.maxY > top + presenceStripH {
+                    for clip in model.scene.audioTracks[i].clips
+                        where clip.start < t1 && clip.start + clip.dur > t0 {
+                        clips.insert(clip.id)
+                    }
+                }
+            default:
+                break
+            }
+        }
+        model.selectedMarks = marks
+        model.selectedClips = clips
     }
 
     /// Background cue boundaries: the show's scene-change anchor points.
