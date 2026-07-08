@@ -99,8 +99,11 @@ struct WideEditor: View {
     private func divider(maxHeight: Double) -> some View {
         Rectangle()
             .fill(theme.dividerBar)
-            .frame(height: 6)
-            .overlay(Capsule().fill(Color(white: 0.4)).frame(width: 48, height: 3))
+            .frame(height: 9)
+            .overlay(Capsule()
+                .fill(lightMode ? Color(white: 0.35) : Color(white: 0.72))
+                .frame(width: 56, height: 4))
+            .contentShape(Rectangle().inset(by: -4))
             #if os(macOS)
             .onHover { inside in
                 if inside { NSCursor.resizeUpDown.push() } else { NSCursor.pop() }
