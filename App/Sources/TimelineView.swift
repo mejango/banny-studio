@@ -646,6 +646,11 @@ struct StudioTimelineView: View {
                         editorOpenedAt = Date()
                         editingLabel = (.caption, "\(st.char)-\(st.index)",
                                         CGPoint(x: x(forTime: st.sub.start), y: 0))
+                    } else if model.selectedOutfitEvent != nil || exportRangeSelected || selectedPresence != nil {
+                        // Click-away from a selection only deselects.
+                        model.selectedOutfitEvent = nil
+                        exportRangeSelected = false
+                        selectedPresence = nil
                     } else if !model.scene.characters.isEmpty {
                         // Click empty strip → new caption for the selected character.
                         let ci = model.selection.first ?? 0
@@ -1617,7 +1622,12 @@ struct StudioTimelineView: View {
                 }
                 return
             }
-            selectedPresence = nil
+            if selectedPresence != nil || model.selectedOutfitEvent != nil {
+                // Click-away from a selection only deselects.
+                selectedPresence = nil
+                model.selectedOutfitEvent = nil
+                return
+            }
             model.registerUndoSnapshot(label: "Toggle Presence")
             let visibleNow = events.isPresent(at: t)
             events.append(VisibilityEvent(t: t, visible: !visibleNow))
@@ -1653,7 +1663,11 @@ struct StudioTimelineView: View {
             return
         }
         if let slot = wardrobeSlot(at: point) {
-            model.selectedOutfitEvent = nil
+            if model.selectedOutfitEvent != nil || selectedPresence != nil {
+                model.selectedOutfitEvent = nil
+                selectedPresence = nil
+                return
+            }
             outfitPopover = slot
             return
         }
