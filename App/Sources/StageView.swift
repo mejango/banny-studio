@@ -20,6 +20,7 @@ struct StageView: View {
     /// paused edits redraw via model observation instead.
     private var renderLoopPaused: Bool {
         !model.playing && model.heldCodes.isEmpty && !model.freeformSettling
+            && model.heldLightKeys.isEmpty
     }
 
     var body: some View {
@@ -27,6 +28,7 @@ struct StageView: View {
             Canvas(rendersAsynchronously: false) { context, size in
                 model.tick(now: Date.timeIntervalSinceReferenceDate)
                 model.freeformNudge(dt: 1 / 60)
+                model.lightTick(dt: 1 / 60)
                 file.audioEngine?.tick(model: model)
                 let scene = model.scene
                 let bg = scene.activeBackgroundCue(at: model.time).flatMap {

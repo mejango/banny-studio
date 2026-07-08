@@ -104,6 +104,18 @@ struct KeyCaptureView: NSViewRepresentable {
                 }
                 return false
             }
+            // Light tracks take the arrows and +/- (move + intensity).
+            if let key = model.selectedTrackKey,
+               model.scene.lightTracks.contains(where: { $0.id == key }) {
+                let lightMap: [UInt16: StudioModel.LightKey] = [
+                    123: .left, 124: .right, 126: .up, 125: .down,
+                    24: .plus, 69: .plus, 27: .minus, 78: .minus,
+                ]
+                if let lk = lightMap[event.keyCode] {
+                    if !event.isARepeat { model.lightKey(lk, down: down) }
+                    return true
+                }
+            }
             if event.isARepeat { return codeMap[event.keyCode] != nil } // swallow OS repeats
 
             if let code = codeMap[event.keyCode] {

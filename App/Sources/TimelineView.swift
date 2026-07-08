@@ -2462,9 +2462,15 @@ struct TransportBar: View {
                         .stroke(model.recording ? Color.clear : Color.primary.opacity(0.22), lineWidth: 1))
                 }
                 .help("Record the selected characters (⇧Space)")
-                let pose = livePose
-                ForEach(EventGroup.allCases, id: \.self) { group in
-                    armChip(group, pose: pose)
+                if let key = model.selectedTrackKey,
+                   model.scene.lightTracks.contains(where: { $0.id == key }) {
+                    lightChip(title: "Move", keys: ["←", "→", "↑", "↓"])
+                    lightChip(title: "Intensity", keys: ["−", "+"])
+                } else {
+                    let pose = livePose
+                    ForEach(EventGroup.allCases, id: \.self) { group in
+                        armChip(group, pose: pose)
+                    }
                 }
             }
             .padding(.horizontal, 6)
@@ -2517,6 +2523,30 @@ struct TransportBar: View {
             return c.name.isEmpty ? "banny \((i + 1) % 10)" : c.name
         }
         return names.isEmpty ? "—" : names.joined(separator: ", ")
+    }
+
+    /// Key-hint chip for light control (matches the arm-chip look, yellow).
+    private func lightChip(title: String, keys: [String]) -> some View {
+        let tint = Color(red: 0.95, green: 0.78, blue: 0.25)
+        return HStack(spacing: 4) {
+            Text(title)
+                .font(.system(size: 9, weight: .bold))
+            HStack(spacing: 2) {
+                ForEach(keys, id: \.self) { key in
+                    Text(key)
+                        .font(.system(size: 7.5, weight: .bold, design: .monospaced))
+                        .frame(width: 11, height: 11)
+                        .background(tint.opacity(0.14), in: RoundedRectangle(cornerRadius: 3))
+                        .overlay(RoundedRectangle(cornerRadius: 3)
+                            .stroke(tint.opacity(0.4), lineWidth: 0.5))
+                }
+            }
+        }
+        .foregroundStyle(tint.opacity(0.9))
+        .padding(.horizontal, 6).padding(.vertical, 3)
+        .background(tint.opacity(0.12), in: RoundedRectangle(cornerRadius: 4))
+        .overlay(RoundedRectangle(cornerRadius: 4)
+            .stroke(tint.opacity(0.6), lineWidth: 1))
     }
 
     /// The physical keys that drive each group (web key map), one keycap each.

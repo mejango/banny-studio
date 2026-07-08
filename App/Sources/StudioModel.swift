@@ -462,17 +462,59 @@ final class StudioModel {
     // MARK: - Light path recording ("draw" the light over time)
 
     private(set) var lightRecordTrack: Int?
-    private var lightSamples: [(t: Double, x: Double, y: Double)] = []
+    private var lightSamples: [(t: Double, x: Double, y: Double, intensity: Double)] = []
     var isLightRecording: Bool { lightRecordTrack != nil }
-    var lastLightSample: (t: Double, x: Double, y: Double)? { lightSamples.last }
+    var lastLightSample: (t: Double, x: Double, y: Double, intensity: Double)? { lightSamples.last }
+
+    /// Keyboard light control: arrows move, +/- change intensity.
+    enum LightKey: Hashable { case up, down, left, right, plus, minus }
+    private(set) var heldLightKeys: Set<LightKey> = []
+    /// The "pen": position/intensity the keys steer (recording or nudging).
+    private var lightPen: (x: Double, y: Double, intensity: Double) = (0.8, 0.18, 1)
+
+    func lightKey(_ key: LightKey, down: Bool) {
+        if down { heldLightKeys.insert(key) } else { heldLightKeys.remove(key) }
+    }
+
+    /// 60Hz driver (stage render loop): recording draws with the pen; paused
+    /// with a light track selected nudges the current cue directly.
+    func lightTick(dt: Double) {
+        guard !heldLightKeys.isEmpty else { return }
+        let dx = (heldLightKeys.contains(.right) ? 1.0 : 0) - (heldLightKeys.contains(.left) ? 1.0 : 0)
+        let dy = (heldLightKeys.contains(.down) ? 1.0 : 0) - (heldLightKeys.contains(.up) ? 1.0 : 0)
+        let di = (heldLightKeys.contains(.plus) ? 1.0 : 0) - (heldLightKeys.contains(.minus) ? 1.0 : 0)
+        if isLightRecording {
+            lightPen.x = min(1.1, max(-0.1, lightPen.x + dx * 0.4 * dt))
+            lightPen.y = min(1.1, max(-0.1, lightPen.y + dy * 0.4 * dt))
+            lightPen.intensity = min(1, max(0, lightPen.intensity + di * 0.8 * dt))
+            lightRecordSample(x: lightPen.x, y: lightPen.y)
+            return
+        }
+        // Paused nudge of the selected/active cue on the selected light track.
+        guard !playing, let key = selectedTrackKey,
+              let li = scene.lightTracks.firstIndex(where: { $0.id == key }),
+              !scene.lightTracks[li].cues.isEmpty else { return }
+        let ci = scene.lightTracks[li].cues.firstIndex { selectedLightCue == $0.id }
+            ?? scene.lightTracks[li].cues.firstIndex { time >= $0.start && time < $0.start + $0.dur }
+            ?? 0
+        var cue = scene.lightTracks[li].cues[ci]
+        func nudge(_ s: inout LightState) {
+            s.x = min(1.1, max(-0.1, s.x + dx * 0.4 * dt))
+            s.y = min(1.1, max(-0.1, s.y + dy * 0.4 * dt))
+            s.intensity = min(1, max(0, s.intensity + di * 0.8 * dt))
+        }
+        nudge(&cue.from)
+        if cue.to != nil { nudge(&cue.to!) }
+        scene.lightTracks[li].cues[ci] = cue
+    }
 
     /// Stage drags while light-recording feed the path.
     func lightRecordSample(x: Double, y: Double) {
         guard isLightRecording else { return }
-        let clampedX = min(1.1, max(-0.1, x))
-        let clampedY = min(1.1, max(-0.1, y))
+        lightPen.x = min(1.1, max(-0.1, x))
+        lightPen.y = min(1.1, max(-0.1, y))
         if let last = lightSamples.last, time - last.t < 0.15 { return } // ~7Hz
-        lightSamples.append((time, clampedX, clampedY))
+        lightSamples.append((time, lightPen.x, lightPen.y, lightPen.intensity))
     }
 
     /// Turns the drawn samples into a chain of linear cues, punching in over
@@ -487,9 +529,6 @@ final class StudioModel {
         registerUndoSnapshot(label: "Record Light Path")
         let t0 = lightSamples[0].t
         let tEnd = lightSamples[lightSamples.count - 1].t
-        // Intensity carries over from whatever the light was doing at t0.
-        let intensity = scene.lightTracks[li].cues
-            .first { t0 >= $0.start && t0 < $0.start + $0.dur }?.state(at: t0).intensity ?? 1
         // Simplify: drop samples that barely deviate from the line between
         // their neighbours (keeps the cue count sane).
         var pts = lightSamples
@@ -500,7 +539,8 @@ final class StudioModel {
             let f = (b.t - a.t) / span
             let lx = a.x + (c.x - a.x) * f
             let ly = a.y + (c.y - a.y) * f
-            if abs(lx - b.x) < 0.008, abs(ly - b.y) < 0.008 {
+            let lint = a.intensity + (c.intensity - a.intensity) * f
+            if abs(lx - b.x) < 0.008, abs(ly - b.y) < 0.008, abs(lint - b.intensity) < 0.02 {
                 pts.remove(at: i)
             } else {
                 i += 1
@@ -540,8 +580,8 @@ final class StudioModel {
             guard b.t - a.t > 0.02 else { continue }
             cues.append(LightCue(id: ShowDocumentFile.newID(),
                                  start: a.t, dur: b.t - a.t,
-                                 from: LightState(x: a.x, y: a.y, intensity: intensity),
-                                 to: LightState(x: b.x, y: b.y, intensity: intensity)))
+                                 from: LightState(x: a.x, y: a.y, intensity: a.intensity),
+                                 to: LightState(x: b.x, y: b.y, intensity: b.intensity)))
         }
         cues.sort { $0.start < $1.start }
         scene.lightTracks[li].cues = cues
@@ -555,6 +595,11 @@ final class StudioModel {
             clearFreeform()
             lightRecordTrack = li
             lightSamples = []
+            let state = scene.lightTracks[li].cues
+                .first { time >= $0.start && time < $0.start + $0.dur }?.state(at: time)
+                ?? scene.lightTracks[li].cues.first?.from
+                ?? LightState()
+            lightPen = (state.x, state.y, state.intensity)
             recording = true
             playing = true
             startWall = Date.timeIntervalSinceReferenceDate - time
