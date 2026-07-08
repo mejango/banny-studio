@@ -1282,6 +1282,12 @@ struct StudioTimelineView: View {
                     return
                 }
                 if model.selectedMarks.contains(hit) {
+                    #if os(macOS)
+                    // ⌘-drag duplicates the selection and drags the copies.
+                    if NSEvent.modifierFlags.contains(.command) {
+                        model.duplicateSelectedMarksInPlace()
+                    }
+                    #endif
                     dragStartMarks = Dictionary(uniqueKeysWithValues:
                         Set(model.selectedMarks.map(\.character)).map { ($0, model.scene.characters[$0].events) })
                 }

@@ -10,7 +10,9 @@ import BannyCore
 final class StudioModel {
     var document: ShowDocument
     weak var file: ShowDocumentFile?
-    var undoManager: UndoManager?
+    var undoManager: UndoManager? {
+        didSet { undoManager?.levelsOfUndo = 0 } // 0 = unlimited history
+    }
 
     // Transport (web TL).
     var time: Double = 0
@@ -47,18 +49,45 @@ final class StudioModel {
         markClipboard = selectedMarks.map { ($0.character, $0.code, $0.start - t0, $0.end - t0) }
     }
 
-    /// ⌘V: paste the copied marks at the playhead onto their original characters.
+    /// ⌘V: paste right after the selected marks (or at the playhead when nothing
+    /// is selected). The copies become the selection, so repeated ⌘V chains.
     func pasteMarks() {
         guard !markClipboard.isEmpty else { return }
         registerUndoSnapshot(label: "Paste Marks")
+        let base = selectedMarks.map(\.end).max().map { $0 + 0.05 } ?? time
+        var pasted: Set<PerfMark> = []
         for m in markClipboard {
             guard scene.characters.indices.contains(m.character) else { continue }
             var events = scene.characters[m.character].events
-            events.append(.key(t: ((time + m.start) * 1000).rounded() / 1000, code: m.code, down: true))
-            events.append(.key(t: ((time + m.end) * 1000).rounded() / 1000, code: m.code, down: false))
+            let s = ((base + m.start) * 1000).rounded() / 1000
+            let e = ((base + m.end) * 1000).rounded() / 1000
+            events.append(.key(t: s, code: m.code, down: true))
+            events.append(.key(t: e, code: m.code, down: false))
             events.sort { $0.t < $1.t }
             scene.characters[m.character].events = events
+            pasted.insert(PerfMark(character: m.character, code: m.code, start: s, end: e))
         }
+        if !pasted.isEmpty { selectedMarks = pasted }
+    }
+
+    /// ⌘-drag: duplicate the selected marks (nudged +0.05s so the copies are
+    /// distinct) and select the copies — the drag then moves the copies.
+    func duplicateSelectedMarksInPlace() {
+        guard !selectedMarks.isEmpty else { return }
+        registerUndoSnapshot(label: "Duplicate Marks")
+        var dups: Set<PerfMark> = []
+        for m in selectedMarks {
+            guard scene.characters.indices.contains(m.character) else { continue }
+            var events = scene.characters[m.character].events
+            let s = m.start + 0.05
+            let e = m.end + 0.05
+            events.append(.key(t: s, code: m.code, down: true))
+            events.append(.key(t: e, code: m.code, down: false))
+            events.sort { $0.t < $1.t }
+            scene.characters[m.character].events = events
+            dups.insert(PerfMark(character: m.character, code: m.code, start: s, end: e))
+        }
+        selectedMarks = dups
     }
 
     /// Delete the timeline selection (anchors handled by the view).

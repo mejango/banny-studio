@@ -63,6 +63,14 @@ struct KeyCaptureView: NSViewRepresentable {
                     model.pasteMarks()
                     return true
                 }
+                if event.keyCode == 6 {                                     // ⌘Z / ⇧⌘Z
+                    if event.modifierFlags.contains(.shift) {
+                        model.undoManager?.redo()
+                    } else {
+                        model.undoManager?.undo()
+                    }
+                    return true
+                }
                 return false
             }
             if event.isARepeat { return codeMap[event.keyCode] != nil } // swallow OS repeats
