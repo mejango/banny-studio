@@ -44,12 +44,9 @@ public enum ShowExporter {
     }
 
     public static func resolveSegments(document: ShowDocument) -> [ResolvedSegment] {
-        if !document.show.isEmpty {
-            return document.show.compactMap { seg in
-                seg.to > seg.from ? ResolvedSegment(from: seg.from, to: seg.to) : nil
-            }
-        }
-        return [ResolvedSegment(from: 0, to: contentDuration(of: document.stage))]
+        // The timeline IS the show (the v3 UI removed the segment playlist);
+        // legacy `show` entries are ignored so stale segments can't crop a ship.
+        [ResolvedSegment(from: 0, to: contentDuration(of: document.stage))]
     }
 
     /// Renders and writes the mp4. Blocking; call off the main thread.
