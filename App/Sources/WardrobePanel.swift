@@ -77,6 +77,8 @@ struct WardrobePanel: View {
     }
 
     private func apply(slot: Int, name: String?) {
+        // Already wearing it — a change to the same thing is a no-op.
+        guard currentOutfit[slot] != name else { return }
         if let t = eventTime {
             model.setOutfitEvent(characterIndex: characterIndex, slot: slot, name: name, at: t)
         } else if baseOnly {
