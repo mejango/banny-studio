@@ -86,7 +86,9 @@ struct WideEditor: View {
                 .resizable()
                 .interpolation(.none)
                 .scaledToFit()
-                .frame(height: 18)
+                // Dark variant carries a 7px outline outside the glyphs; scale
+                // so the BLACK eyes render at the same size in both themes.
+                .frame(height: lightMode ? 18 : 20.1)
             Text("BANNY STUDIO")
                 .font(.system(size: 22, weight: .heavy, design: .rounded))
                 .kerning(2)
