@@ -258,15 +258,21 @@ struct StudioTimelineView: View {
                 gutterCanvas
                 // Every track's card: face + popover inspector (the old right panel).
                 ForEach(Array(rows.enumerated()), id: \.offset) { _, row in
-                    let available = height(of: row) - presenceStripH - 16
                     let isCharacter: Bool = { if case .character = row { return true }; return false }()
+                    let mismatch: Bool = {
+                        if case .character(let ci) = row {
+                            return model.startPoseMismatch(characterIndex: ci)
+                        }
+                        return false
+                    }()
+                    // The button's reserved strip doesn't feed the card's size.
+                    let available = height(of: row) - presenceStripH - 16 - (mismatch ? 26 : 0)
+                    let cardH = isCharacter ? min(available, 160) : min(26, available)
                     if isCharacter ? available >= 26 : available >= 14 {
-                        TrackCardButton(model: model, file: file, row: row,
-                                        cardHeight: isCharacter ? min(available, 160)
-                                                                : min(26, available))
+                        TrackCardButton(model: model, file: file, row: row, cardHeight: cardH)
                             .offset(x: 10, y: laneTop(of: row) + presenceStripH + 4 - scrollOffset.y)
                     }
-                    if case .character(let ci) = row, model.startPoseMismatch(characterIndex: ci) {
+                    if case .character(let ci) = row, mismatch {
                         Button("Set start position") { model.commitStartPose(characterIndex: ci) }
                             .buttonStyle(.plain)
                             .font(.system(size: 9, weight: .semibold))
@@ -275,8 +281,8 @@ struct StudioTimelineView: View {
                             .background(Color.orange.opacity(0.12), in: Capsule())
                             .overlay(Capsule().stroke(Color.orange.opacity(0.55), lineWidth: 1))
                             .help("The character isn't at its saved start — save where it stands now")
-                            .offset(x: 10,
-                                    y: laneTop(of: row) + height(of: row) - wardrobeStripH - 2
+                            .offset(x: 12 + (cardH * 30 / 54).rounded() + 10,
+                                    y: laneTop(of: row) + height(of: row) - wardrobeStripH - 24
                                         - scrollOffset.y)
                     }
                 }
@@ -836,6 +842,7 @@ struct StudioTimelineView: View {
                 var readoutX: CGFloat = 12
                 if case .character(let ci) = row, let c = model.scene.characters[safe: ci] {
                     let available = h - presenceStripH - 16
+                        - (model.startPoseMismatch(characterIndex: ci) ? 26 : 0)
                     if available >= 26, size.width >= 120 {
                         readoutX = 12 + (min(available, 160) * 30 / 54).rounded() + 10
                         let sizeName = abs(c.size - 1) < 0.01 ? "Normal"
