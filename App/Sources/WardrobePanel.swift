@@ -9,7 +9,7 @@ struct WardrobePanel: View {
     let characterIndex: Int
 
     private static let outfitSlots = [2, 3, 4, 6, 8, 9, 10, 11, 12, 13]
-    private let columns = [GridItem(.adaptive(minimum: 56), spacing: 6)]
+    private let columns = [GridItem(.adaptive(minimum: 64), spacing: 0)]
 
     var body: some View {
         let outfit = currentOutfit
@@ -60,7 +60,7 @@ struct WardrobePanel: View {
                           choose: @escaping (String) -> Void) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(title).font(.caption2.bold()).foregroundStyle(.secondary)
-            LazyVGrid(columns: columns, spacing: 6) {
+            LazyVGrid(columns: columns, spacing: 0) {
                 if allowNone {
                     thumbCell(name: "", label: "none", image: nil,
                               selected: selected.isEmpty, choose: choose)
@@ -75,39 +75,64 @@ struct WardrobePanel: View {
 
     private func thumbCell(name: String, label: String, image: CGImage?,
                            selected: Bool, choose: @escaping (String) -> Void) -> some View {
-        Button {
+        let body_ = model.scene.characters[safe: characterIndex]?.body ?? .orange
+        return Button {
             choose(name)
         } label: {
-            VStack(spacing: 2) {
+            VStack(spacing: 3) {
                 Group {
                     if let image {
-                        // Crop-ish framing: the 400-box art shown zoomed on the torso.
-                        Image(decorative: image, scale: 1)
-                            .resizable()
-                            .interpolation(.none)
-                            .scaledToFill()
-                            .scaleEffect(2.1, anchor: UnitPoint(x: 0.47, y: 0.42))
+                        MannequinThumb(part: image,
+                                       body: SharedAssets.catalog.bodyImage(body_))
                     } else {
                         Image(systemName: "slash.circle")
-                            .font(.system(size: 14))
+                            .font(.system(size: 16))
                             .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
                     }
                 }
-                .frame(width: 52, height: 44)
-                .clipped()
-                .background(Color.primary.opacity(0.05))
-                .clipShape(RoundedRectangle(cornerRadius: 4))
-                .overlay(RoundedRectangle(cornerRadius: 4)
-                    .stroke(selected ? Color.orange : Color.primary.opacity(0.15),
-                            lineWidth: selected ? 2 : 1))
+                .frame(maxWidth: .infinity)
+                .aspectRatio(170.0 / 250.0, contentMode: .fit)
                 Text(label)
                     .font(.system(size: 8))
                     .lineLimit(1)
                     .foregroundStyle(selected ? Color.orange : .secondary)
             }
-            .frame(width: 56)
+            .padding(5)
+            .background(Color.primary.opacity(selected ? 0.09 : 0.04))
+            .overlay(Rectangle()
+                .stroke(selected ? Color.orange : Color.primary.opacity(0.12),
+                        lineWidth: selected ? 2 : 0.5))
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+    }
+}
+
+/// The webapp's picker framing: a ghosted banny mannequin wearing the part
+/// (thumb viewBox 115 34 170 306, body at 16% opacity).
+struct MannequinThumb: View {
+    let part: CGImage
+    let body_: CGImage?
+
+    init(part: CGImage, body: CGImage?) {
+        self.part = part
+        self.body_ = body
+    }
+
+    var body: some View {
+        Canvas(rendersAsynchronously: false) { ctx, size in
+            let s = size.width / 170.0
+            let box = CGRect(x: -115 * s, y: -44 * s, width: 400 * s, height: 400 * s)
+            var ghost = ctx
+            ghost.opacity = 0.16
+            if let body_ {
+                ghost.draw(Image(decorative: body_, scale: 1)
+                    .interpolation(.none), in: box)
+            }
+            ctx.draw(Image(decorative: part, scale: 1)
+                .interpolation(.none), in: box)
+        }
+        .clipped()
     }
 }
