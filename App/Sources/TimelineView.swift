@@ -1432,6 +1432,14 @@ struct TransportBar: View {
         .background(theme.ruler)
     }
 
+    private func chipTitle(_ group: EventGroup) -> String {
+        switch group {
+        case .move: return "Move L/R"
+        case .depth: return "Move F/B"
+        default: return group.rawValue
+        }
+    }
+
     /// Labeled arm toggle: colored + filled when it records, hollow when it plays back.
     @ViewBuilder
     private func armChip(_ group: EventGroup) -> some View {
@@ -1443,7 +1451,7 @@ struct TransportBar: View {
                 if armed { c.armedGroups.remove(group) } else { c.armedGroups.insert(group) }
                 model.scene.characters[i] = c
             } label: {
-                Text(group.rawValue)
+                Text(chipTitle(group))
                     .font(.system(size: 9, weight: .bold))
                     // Dark theme uses bright chip colors → black text; light theme
                     // uses deep chip colors → white text.
