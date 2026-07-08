@@ -197,7 +197,7 @@ struct StudioTimelineView: View {
                                                    value: geo.frame(in: .named("tlScroll")).origin)
                         }
                         timelineCanvas
-                        if let editing = editingLabel {
+                        if let editing = editingLabel, editing.kind != .caption {
                             TextField("", text: $editingText)
                                 .textFieldStyle(.plain)
                                 .font(.system(size: 9, weight: .medium))
@@ -486,7 +486,7 @@ struct StudioTimelineView: View {
                     #if os(macOS)
                     .onExitCommand { editingLabel = nil }
                     #endif
-                    .offset(x: editing.origin.x - scrollOffset.x, y: captionsTop + 3)
+                    .offset(x: max(4, editing.origin.x - scrollOffset.x), y: captionsTop + 3)
                     .onAppear { labelFocused = true }
                     .onChange(of: labelFocused) { _, focused in
                         if !focused { commitLabelEdit() }
