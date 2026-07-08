@@ -230,6 +230,17 @@ final class StudioModel {
     func record() {
         if recording || playing { pause(); return }
         guard !selection.isEmpty else { return }
+        // Freeform placement at the start becomes the take's start pose.
+        for i in selection where startPoseMismatch(characterIndex: i) {
+            if let pose = displayedPose(characterIndex: i) {
+                var c = scene.characters[i]
+                c.x = pose.x
+                c.depth = pose.depth
+                c.face = pose.face
+                c.recStart = StartPose(x: pose.x, depth: pose.depth, face: pose.face)
+                scene.characters[i] = c
+            }
+        }
         clearFreeform()
         recTargets = selection
         recStartTime = time
@@ -350,25 +361,12 @@ final class StudioModel {
     }
 
     /// Advances the freeform clock at 60 Hz (driven by the stage render loop).
-    /// Near t=0 the resulting pose also commits as the start pose, so freeform
-    /// doubles as "place your character before the take" (web parked behavior).
+    /// Freeform is a PREVIEW: the "Set start position" button (or hitting REC)
+    /// commits where the character stands as its start pose.
     func freeformNudge(dt: Double) {
         guard !playing, !recording, freeformActive,
               !heldCodes.isEmpty || freeformSettling else { return }
         freeformClock += dt
-        guard time < 0.1 else { return }
-        for (i, evs) in freeformEvents where scene.characters.indices.contains(i) {
-            guard let start = freeformStarts[i] else { continue }
-            let sp = simulatePosition(events: evs, recStart: start,
-                                      speed: scene.characters[i].speed,
-                                      gScale: scene.gScale, at: freeformClock)
-            var c = scene.characters[i]
-            c.x = sp.x
-            c.depth = sp.depth
-            c.face = sp.face
-            c.recStart = StartPose(x: sp.x, depth: sp.depth, face: sp.face)
-            scene.characters[i] = c
-        }
     }
 
     /// Freeform preview pose: synthetic live events simulated on top of the pose
