@@ -155,9 +155,23 @@ struct ImageCueInspector: View {
 /// Position/intensity controls for the selected light cue.
 struct LightCueInspector: View {
     @Bindable var model: StudioModel
+    /// When set, edits this track's cue even if none is selected on the timeline.
+    var trackIndex: Int? = nil
+
+    private var path: (track: Int, cue: Int)? {
+        if let sel = model.selectedLightCuePath,
+           trackIndex == nil || sel.track == trackIndex {
+            return sel
+        }
+        if let ti = trackIndex, model.scene.lightTracks.indices.contains(ti),
+           !model.scene.lightTracks[ti].cues.isEmpty {
+            return (ti, 0)
+        }
+        return nil
+    }
 
     var body: some View {
-        if let path = model.selectedLightCuePath {
+        if let path {
             let binding = Binding(
                 get: { model.scene.lightTracks[path.track].cues[path.cue] },
                 set: { model.scene.lightTracks[path.track].cues[path.cue] = $0 })

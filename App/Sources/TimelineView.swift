@@ -259,9 +259,11 @@ struct StudioTimelineView: View {
                 // Every track's card: face + popover inspector (the old right panel).
                 ForEach(Array(rows.enumerated()), id: \.offset) { _, row in
                     let available = height(of: row) - presenceStripH - 16
-                    if available >= 26 {
+                    let isCharacter: Bool = { if case .character = row { return true }; return false }()
+                    if isCharacter ? available >= 26 : available >= 14 {
                         TrackCardButton(model: model, file: file, row: row,
-                                        cardHeight: min(available, 160))
+                                        cardHeight: isCharacter ? min(available, 160)
+                                                                : min(26, available))
                             .offset(x: 10, y: laneTop(of: row) + presenceStripH + 4 - scrollOffset.y)
                     }
                     if case .character(let ci) = row, model.startPoseMismatch(characterIndex: ci) {

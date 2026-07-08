@@ -199,8 +199,8 @@ struct TrackInspector: View {
                 if let file {
                     AssetBankSection(model: model, file: file)
                 }
-            case .light:
-                LightCueInspector(model: model)
+            case .light(let i):
+                LightCueInspector(model: model, trackIndex: i)
             case .background:
                 if let file {
                     BackgroundPreview(model: model, file: file)
@@ -379,10 +379,11 @@ struct TrackCardButton: View {
             }
         default:
             let style = faceStyle
+            let side = max(16, min(28, cardHeight))
             Image(systemName: style.symbol)
-                .font(.system(size: 12, weight: .semibold))
+                .font(.system(size: max(9, side * 0.45), weight: .semibold))
                 .foregroundStyle(style.tint)
-                .frame(width: 28, height: 28)
+                .frame(width: side, height: side)
                 .background(style.tint.opacity(0.12), in: RoundedRectangle(cornerRadius: 4))
                 .overlay(RoundedRectangle(cornerRadius: 4)
                     .stroke(style.tint.opacity(0.45), lineWidth: 1))
