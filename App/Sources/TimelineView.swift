@@ -113,6 +113,8 @@ struct StudioTimelineView: View {
     @Bindable var model: StudioModel
     var file: ShowDocumentFile? = nil
     var showShip = true
+    @AppStorage("studioLightMode") private var lightMode = false
+    private var theme: Theme { lightMode ? .light : .dark }
     @State private var zoom: Double = 1
     @State private var dragStartMarks: [Int: [PerfEvent]]?
     @State private var resizing: (mark: PerfMark, leading: Bool, baseEvents: [PerfEvent])?
@@ -183,7 +185,7 @@ struct StudioTimelineView: View {
                 newTrackRow
                 }
             }
-            .background(Color(red: 0.078, green: 0.078, blue: 0.11))
+            .background(theme.surface)
             .simultaneousGesture(
                 MagnifyGesture()
                     .onChanged { g in
@@ -285,7 +287,7 @@ struct StudioTimelineView: View {
             .menuStyle(.borderlessButton)
             .padding(.leading, 12)
             .frame(width: laneLabelWidth, height: 30, alignment: .leading)
-            .background(Color(red: 0.09, green: 0.11, blue: 0.09))
+            .background(theme.newTrack)
             Spacer()
         }
         .frame(height: 30)
@@ -295,7 +297,7 @@ struct StudioTimelineView: View {
     private var gutterCanvas: some View {
         Canvas { ctx, size in
             ctx.fill(Path(CGRect(origin: .zero, size: size)),
-                     with: .color(Color(red: 0.1, green: 0.1, blue: 0.135)))
+                     with: .color(theme.gutterBase))
             ctx.draw(Text("CC").font(.system(size: 9, weight: .bold))
                         .foregroundStyle(Color(red: 0.85, green: 0.8, blue: 0.6)),
                      at: CGPoint(x: 12, y: headerHeight + captionsRowH / 2), anchor: .leading)
@@ -306,14 +308,14 @@ struct StudioTimelineView: View {
             ctx.stroke(Path { p in
                 p.move(to: CGPoint(x: size.width - 0.5, y: 0))
                 p.addLine(to: CGPoint(x: size.width - 0.5, y: size.height))
-            }, with: .color(Color(red: 0.24, green: 0.24, blue: 0.33)), lineWidth: 1)
+            }, with: .color(theme.gutterDivider), lineWidth: 1)
             for row in rows {
                 let y = laneTop(of: row)
                 let h = height(of: row)
                 let hidden = isHidden(row)
                 // Lighter cell over the base, bounded by strong dark separators.
                 ctx.fill(Path(CGRect(x: 0, y: y, width: size.width, height: h - 2)),
-                         with: .color(Color(red: 0.115, green: 0.115, blue: 0.155)))
+                         with: .color(theme.gutterCell))
                 if draggingRow?.row == row {
                     ctx.fill(Path(CGRect(x: 0, y: y, width: size.width, height: h)),
                              with: .color(Color.white.opacity(0.08)))
@@ -487,7 +489,7 @@ struct StudioTimelineView: View {
 
     private func drawRuler(ctx: GraphicsContext, size: CGSize) {
         ctx.fill(Path(CGRect(x: 0, y: 0, width: size.width, height: rulerHeight)),
-                 with: .color(Color(red: 0.055, green: 0.055, blue: 0.086)))
+                 with: .color(theme.ruler))
         let step: Double = zoom >= 8 ? 1 : zoom >= 3 ? 5 : 10
         var t: Double = 0
         while t <= model.duration {
@@ -499,7 +501,7 @@ struct StudioTimelineView: View {
             t += step
         }
         ctx.fill(Path(CGRect(x: 0, y: rulerHeight, width: size.width, height: scrubHeight)),
-                 with: .color(Color(red: 0.09, green: 0.09, blue: 0.15)))
+                 with: .color(theme.scrub))
     }
 
     private func drawLane(_ row: TrackRow, ctx: GraphicsContext, size: CGSize) {
@@ -576,7 +578,7 @@ struct StudioTimelineView: View {
         guard to > from else { return }
         let rect = CGRect(x: x(forTime: from), y: y + presenceStripH,
                           width: CGFloat(to - from) * pxPerSecond, height: h - presenceStripH)
-        ctx.fill(Path(rect), with: .color(Color.black.opacity(0.55)))
+        ctx.fill(Path(rect), with: .color(theme.shade))
     }
 
     private let captionStripH: CGFloat = 13
@@ -598,7 +600,7 @@ struct StudioTimelineView: View {
     private func drawCaptionsRow(ctx: GraphicsContext, size: CGSize) {
         let y = headerHeight
         ctx.fill(Path(CGRect(x: 0, y: y, width: size.width, height: captionsRowH)),
-                 with: .color(Color(red: 0.09, green: 0.085, blue: 0.06)))
+                 with: .color(theme.ccRow))
         ctx.stroke(Path { p in
             p.move(to: CGPoint(x: 0, y: y + captionsRowH))
             p.addLine(to: CGPoint(x: size.width, y: y + captionsRowH))
@@ -645,7 +647,7 @@ struct StudioTimelineView: View {
     private func drawPresenceStrip(_ row: TrackRow, y: CGFloat, ctx: GraphicsContext) {
         let events = presence(of: row).sorted { $0.t < $1.t }
         let stripRect = CGRect(x: 0, y: y, width: contentWidth + 40, height: presenceStripH)
-        ctx.fill(Path(stripRect), with: .color(Color.white.opacity(0.025)))
+        ctx.fill(Path(stripRect), with: .color(theme.stripTint))
         let rowKey = row.key(in: model.scene)
         for (i, ev) in events.enumerated() {
             let px = x(forTime: ev.t)
@@ -774,7 +776,7 @@ struct StudioTimelineView: View {
     private func labelColor(for row: TrackRow) -> Color {
         switch row {
         case .character(let i):
-            return model.selection.contains(i) ? .orange : Color(white: 0.7)
+            return model.selection.contains(i) ? .orange : theme.labelText
         case .audio: return Color(red: 0.45, green: 0.9, blue: 0.75)
         case .image: return Color(red: 0.9, green: 0.7, blue: 0.4)
         case .light: return Color(red: 1, green: 0.85, blue: 0.35)
@@ -1317,6 +1319,7 @@ struct TransportBar: View {
         .padding(.horizontal, 10)
         .padding(.vertical, 5)
         .background(Color(red: 0.055, green: 0.055, blue: 0.086))
+        // Transport stays dark in both themes: its colored dots/labels are tuned for it.
     }
 
     @ViewBuilder

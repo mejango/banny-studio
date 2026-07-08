@@ -37,6 +37,8 @@ struct WideEditor: View {
     let showDeck: Bool
 
     @AppStorage("timelineHeight") private var timelineHeight: Double = 230
+    @AppStorage("studioLightMode") private var lightMode = false
+    private var theme: Theme { lightMode ? .light : .dark }
     @State private var dividerDragBase: Double?
 
     private let headerH = 36.0
@@ -79,12 +81,14 @@ struct WideEditor: View {
                 .font(.system(size: 13, weight: .heavy, design: .rounded))
                 .kerning(2)
                 .foregroundStyle(Color(red: 1, green: 0.54, blue: 0))
+            ThemeToggle()
+                .padding(.leading, 6)
             Spacer()
             ShipButton(model: model, file: file)
         }
         .padding(.horizontal, 14)
         .frame(height: CGFloat(headerH))
-        .background(Color(red: 0.04, green: 0.04, blue: 0.065))
+        .background(theme.header)
     }
 
     /// Drag up to grow the timeline (shrinking the stage), down to shrink it.
@@ -92,7 +96,7 @@ struct WideEditor: View {
     /// translation would feed back and oscillate.
     private func divider(maxHeight: Double) -> some View {
         Rectangle()
-            .fill(Color(red: 0.16, green: 0.16, blue: 0.22))
+            .fill(theme.dividerBar)
             .frame(height: 6)
             .overlay(Capsule().fill(Color(white: 0.4)).frame(width: 48, height: 3))
             #if os(macOS)
