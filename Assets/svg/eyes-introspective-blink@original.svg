@@ -1,0 +1,49 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1600" viewBox="0 0 400 400"><style>.o{fill:#050505;}.w{fill:#f9f9f9;}.b1{fill:#ffe900;}.b2{fill:#ffc700;}.b3{fill:#f3a603;}.b4{fill:#965a1a;}.a1{fill:#ffe900;}.a2{fill:#ffc700;}.a3{fill:#f3a603;}</style>
+
+
+
+
+
+
+
+
+<rect x="160" y="130" width="10" height="3" fill="black"/>
+<rect x="147" y="133" width="13" height="3" fill="black"/>
+<rect x="177" y="130" width="10" height="3" fill="black"/>
+<rect x="187" y="133" width="10" height="4" fill="black"/>
+<rect x="193" y="127" width="4" height="6" fill="black"/>
+<rect x="197" y="124" width="6" height="3" fill="black"/>
+<rect x="203" y="127" width="4" height="23" fill="black"/>
+<rect x="207" y="150" width="3" height="23" fill="black"/>
+<rect x="203" y="173" width="4" height="3" fill="black"/>
+<rect x="200" y="170" width="3" height="3" fill="black"/>
+<rect x="197" y="137" width="3" height="33" fill="black"/>
+<rect x="140" y="127" width="3" height="10" fill="black"/>
+<rect x="137" y="137" width="3" height="20" fill="black"/>
+<rect x="133" y="157" width="4" height="16" fill="black"/>
+<rect x="130" y="173" width="3" height="3" fill="black"/>
+<rect x="127" y="167" width="3" height="6" fill="black"/>
+<rect x="123" y="150" width="4" height="17" fill="black"/>
+<rect x="127" y="147" width="3" height="3" fill="black"/>
+<rect x="130" y="133" width="3" height="14" fill="black"/>
+<rect x="127" y="123" width="3" height="10" fill="black"/>
+<rect x="130" y="120" width="7" height="3" fill="black"/>
+<rect x="137" y="123" width="3" height="4" fill="black"/>
+<rect x="170" y="114" width="3" height="3" fill="black"/>
+<rect x="170" y="120" width="3" height="3" fill="black"/>
+<rect x="173" y="117" width="3" height="3" fill="black"/>
+<rect x="167" y="117" width="3" height="3" fill="black"/>
+<rect x="170" y="117" width="3" height="3" fill="#CD2B2B"/>
+<g class="b3">
+<path d="M133 157H130V167H127V150H130V147H133V157ZM137 137H133V133H130V123H137V137Z"/>
+<rect x="200" y="137" width="3" height="33"/>
+</g>
+<g class="b2">
+<rect x="200" y="127" width="3" height="10"/>
+<path d="M207 173H203V150H207V173Z"/>
+<rect x="133" y="137" width="4" height="20"/>
+<rect x="137" y="127" width="3" height="10"/>
+<rect x="130" y="157" width="3" height="16"/>
+</g>
+<rect x="197" y="127" width="3" height="10" class="b1"/>
+<g class="o"><path d="M177 140v3h6v11h10v-11h4v-3h-20z"/><path d="M153 140v3h7v8 3h7 3v-11h3v-3h-20z"/></g><g class="w"><path d="M153 143h7v4h-7z"/><path d="M157 147h3v3h-3zm20-4h6v4h-6z"/><path d="M180 147h3v3h-3z"/></g></svg>
