@@ -181,6 +181,8 @@ struct StudioTimelineView: View {
     @State private var dragStartClips: [String: Double]?
     /// Pointer position over the lanes (content coords) for context menus.
     @State private var hoverLanePoint: CGPoint?
+    /// Click/double-click on an empty audio-track spot → import a file there.
+    @State private var audioImportAt: (trackIndex: Int, t: Double)?
     /// Wardrobe-strip click: add a timed outfit change here.
     @State private var outfitPopover: (char: Int, t: Double, x: CGFloat, y: CGFloat)?
     @State private var renamingText = ""
@@ -364,6 +366,15 @@ struct StudioTimelineView: View {
                         pinchZoomBase = nil
                         pinchAnchor = nil
                     })
+        .fileImporter(isPresented: Binding(get: { audioImportAt != nil },
+                                           set: { if !$0 { audioImportAt = nil } }),
+                      allowedContentTypes: [.audio, .mp3, .mpeg4Audio, .wav]) { result in
+            if case .success(let url) = result, let target = audioImportAt {
+                model.addAudioClip(from: url, characterIndex: nil,
+                                   audioTrackIndex: target.trackIndex, at: target.t)
+            }
+            audioImportAt = nil
+        }
         .onChange(of: model.timelineDeleteRequest) { _, _ in deleteSelection() }
         #if os(macOS)
         .onDeleteCommand { deleteSelection() }
@@ -491,9 +502,9 @@ struct StudioTimelineView: View {
         if ["mp3", "m4a", "wav", "aac", "aif", "aiff", "caf"].contains(url.pathExtension.lowercased()) {
             switch row(at: location.y) {
             case .audio(let i):
-                model.addAudioClip(from: url, characterIndex: nil, audioTrackIndex: i)
+                model.addAudioClip(from: url, characterIndex: nil, audioTrackIndex: i, at: t)
             case .character(let i):
-                model.addAudioClip(from: url, characterIndex: i, audioTrackIndex: nil)
+                model.addAudioClip(from: url, characterIndex: i, audioTrackIndex: nil, at: t)
             default:
                 return false
             }
@@ -2133,6 +2144,9 @@ struct StudioTimelineView: View {
             } else {
                 selectCue(row: row, id: cue.id)
             }
+        } else if case .audio(let ai) = row(at: y), !model.hasTimelineSelection {
+            // Empty audio-lane click: bring in a file right here.
+            audioImportAt = (ai, max(0, (time(forX: point.x) * 10).rounded() / 10))
         } else {
             model.selectedMarks = []
             model.selectedClips = []

@@ -9,7 +9,9 @@ extension StudioModel {
 
     /// Imports an audio file as a clip at the playhead on a character's track,
     /// a specific audio track, or the first audio track.
-    func addAudioClip(from url: URL, characterIndex: Int?, audioTrackIndex: Int? = nil) {
+    func addAudioClip(from url: URL, characterIndex: Int?, audioTrackIndex: Int? = nil,
+                      at startTime: Double? = nil) {
+        let time = startTime ?? self.time
         let scoped = url.startAccessingSecurityScopedResource()
         defer { if scoped { url.stopAccessingSecurityScopedResource() } }
         guard let data = try? Data(contentsOf: url),
