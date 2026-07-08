@@ -18,6 +18,19 @@ extension EventGroup {
     }
 
     var laneIndex: Int { Self.allCases.firstIndex(of: self) ?? 0 }
+
+    /// Deeper variants that stay visible on the light theme's surfaces.
+    func color(light: Bool) -> Color {
+        guard light else { return color }
+        switch self {
+        case .move: return Color(red: 0.13, green: 0.4, blue: 0.85)
+        case .depth: return Color(red: 0.8, green: 0.2, blue: 0.2)
+        case .tilt: return Color(red: 0.1, green: 0.58, blue: 0.22)
+        case .talk: return Color(red: 0.72, green: 0.58, blue: 0.02)
+        case .blink: return Color(red: 0.82, green: 0.45, blue: 0.08)
+        case .jump: return Color(red: 0.5, green: 0.3, blue: 0.85)
+        }
+    }
 }
 
 /// A held segment of one code on the timeline, derived from down/up event pairs.
@@ -674,10 +687,11 @@ struct StudioTimelineView: View {
             let rect = CGRect(x: x(forTime: mark.start), y: my,
                               width: max(2, CGFloat(mark.end - mark.start) * pxPerSecond),
                               height: max(2, zones.subH - 1))
-            ctx.fill(Path(rect), with: .color(mark.code.group.color.opacity(
-                model.selectedMarks.contains(mark) ? 1 : 0.75)))
+            ctx.fill(Path(rect), with: .color(mark.code.group.color(light: lightMode).opacity(
+                model.selectedMarks.contains(mark) ? 1 : 0.85)))
             if model.selectedMarks.contains(mark) {
-                ctx.stroke(Path(rect.insetBy(dx: -1, dy: -1)), with: .color(.white), lineWidth: 1)
+                ctx.stroke(Path(rect.insetBy(dx: -1, dy: -1)),
+                           with: .color(lightMode ? .black : .white), lineWidth: 1)
             }
         }
         for ev in character.events {
@@ -685,7 +699,7 @@ struct StudioTimelineView: View {
             let cx = x(forTime: t)
             let cy = y + zones.eventTop + 6 * zones.subH + zones.subH / 2
             ctx.fill(Path(ellipseIn: CGRect(x: cx - 3, y: cy - 3, width: 6, height: 6)),
-                     with: .color(.white))
+                     with: .color(lightMode ? .black : .white))
         }
         for clip in character.clips {
             drawClip(clip, top: y + zones.clipTop, height: zones.clipH, ctx: ctx)
@@ -1334,7 +1348,7 @@ struct TransportBar: View {
                 if armed { c.armedGroups.remove(group) } else { c.armedGroups.insert(group) }
                 model.scene.characters[i] = c
             } label: {
-                Circle().fill(group.color.opacity(armed ? 1 : 0.2))
+                Circle().fill(group.color(light: lightMode).opacity(armed ? 1 : 0.25))
                     .frame(width: 10, height: 10)
             }
             .help("\(group.rawValue): \(armed ? "armed (records)" : "disarmed (plays back)")")
