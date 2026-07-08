@@ -406,10 +406,11 @@ struct StudioTimelineView: View {
     private var headerHeight: CGFloat { rulerHeight + scrubHeight }
     /// Export range row: bracket markers bound what ships.
     private let exportRowH: CGFloat = 18
-    private var captionsTop: CGFloat { headerHeight + exportRowH }
-    /// Global closed-caption strip: one row above all tracks.
+    private var captionsTop: CGFloat { exportRowH }
+    /// Global closed-caption strip: right under the export row.
     private let captionsRowH: CGFloat = 22
-    private var lanesTop: CGFloat { captionsTop + captionsRowH }
+    private var rulerTop: CGFloat { exportRowH + captionsRowH }
+    private var lanesTop: CGFloat { rulerTop + rulerHeight }
 
     private func minHeight(of row: TrackRow) -> CGFloat {
         if case .character = row { return 64 }   // presence + audio + 7 event rows
@@ -550,14 +551,14 @@ struct StudioTimelineView: View {
             // reads from color continuity, not a drawn line.
             ctx.fill(Path(CGRect(x: 0, y: 0, width: size.width, height: exportRowH)),
                      with: .color(theme.ccRow.opacity(0.6)))
-            ctx.fill(Path(CGRect(x: 0, y: exportRowH, width: size.width, height: rulerHeight)),
+            ctx.fill(Path(CGRect(x: 0, y: rulerTop, width: size.width, height: rulerHeight)),
                      with: .color(theme.ruler))
             ctx.fill(Path(CGRect(x: 0, y: captionsTop, width: size.width, height: captionsRowH)),
                      with: .color(theme.ccRow))
             ctx.draw(Text(String(format: "%.1f / %.0fs", model.time, model.duration))
                         .font(.system(size: 10, weight: .medium, design: .monospaced))
                         .foregroundStyle(lightMode ? Color(red: 0, green: 0.45, blue: 0.1) : .green),
-                     at: CGPoint(x: size.width - 10, y: exportRowH + rulerHeight / 2 + 2),
+                     at: CGPoint(x: size.width - 10, y: rulerTop + rulerHeight / 2 + 2),
                      anchor: .trailing)
             ctx.draw(Text("Captions").font(.system(size: 10, weight: .semibold))
                         .foregroundStyle(theme.mutedText),
@@ -644,7 +645,7 @@ struct StudioTimelineView: View {
                     if let de = draggingExport { applyExportDrag(de, value: value) }
                     return
                 }
-                if value.startLocation.y >= captionsTop {
+                if value.startLocation.y < captionsTop + captionsRowH {
                     let sx = value.startLocation.x + scrollOffset.x
                     if let st = subtitleAt(contentX: sx) {
                         let edge = 4.0
@@ -687,7 +688,7 @@ struct StudioTimelineView: View {
                     return
                 }
                 if value.translation.width.magnitude < 3, value.translation.height.magnitude < 3,
-                   value.location.y >= captionsTop {
+                   value.location.y >= captionsTop, value.location.y < captionsTop + captionsRowH {
                     let cx = value.location.x + scrollOffset.x
                     if let st = subtitleAt(contentX: cx) {
                         // Click a caption → edit its text in place.
@@ -1064,17 +1065,31 @@ struct StudioTimelineView: View {
     // MARK: - Drawing
 
     private func drawRuler(ctx: GraphicsContext, size: CGSize) {
-        let top = exportRowH  // export row sits above the time row
+        let top = rulerTop  // export + captions sit above the time row
         ctx.fill(Path(CGRect(x: 0, y: top, width: size.width, height: rulerHeight)),
                  with: .color(theme.ruler))
-        let step: Double = zoom >= 8 ? 1 : zoom >= 3 ? 5 : 10
+        // Labeled ticks every ~60px at any zoom, minor ticks between.
+        let step = [0.5, 1.0, 2.0, 5.0, 10.0, 15.0, 30.0, 60.0]
+            .first { CGFloat($0) * pxPerSecond >= 55 } ?? 60
+        let minor = step / 5
+        if CGFloat(minor) * pxPerSecond >= 7 {
+            var m: Double = 0
+            while m <= model.duration {
+                let px = x(forTime: m)
+                ctx.stroke(Path { $0.move(to: CGPoint(x: px, y: top + rulerHeight - 6))
+                                  $0.addLine(to: CGPoint(x: px, y: top + rulerHeight)) },
+                           with: .color(Color.gray.opacity(0.5)), lineWidth: 1)
+                m += minor
+            }
+        }
         var t: Double = 0
         while t <= model.duration {
             let px = x(forTime: t)
             ctx.stroke(Path { $0.move(to: CGPoint(x: px, y: top + 16))
                               $0.addLine(to: CGPoint(x: px, y: top + rulerHeight)) },
                        with: .color(.gray), lineWidth: 1)
-            ctx.draw(Text("\(Int(t))s").font(.system(size: 9)).foregroundStyle(theme.mutedText),
+            let label = step < 1 ? String(format: "%.1fs", t) : "\(Int(t))s"
+            ctx.draw(Text(label).font(.system(size: 9)).foregroundStyle(theme.mutedText),
                      at: CGPoint(x: px + 12, y: top + 10))
             t += step
         }
@@ -1163,13 +1178,17 @@ struct StudioTimelineView: View {
                            animated: cue.to != nil, ctx: content)
             }
         case .background(let i):
-            for cue in model.scene.backgroundTracks[i].cues {
+            let cues = model.scene.backgroundTracks[i].cues
+            for cue in cues {
+                let leadButt = cues.contains { abs(($0.start + $0.dur) - cue.start) < 0.02 }
+                let trailButt = cues.contains { abs($0.start - (cue.start + cue.dur)) < 0.02 }
                 drawCueBar(start: cue.start, dur: cue.dur, y: y, h: h,
                            color: Color(red: 0.45, green: 0.4, blue: 0.85),
                            label: cue.label ?? assetName(cue.assetID),
                            assetID: cue.assetID,
                            selected: model.selectedBackgroundCue == cue.id,
-                           animated: false, ctx: content)
+                           animated: false,
+                           squareLeading: leadButt, squareTrailing: trailButt, ctx: content)
             }
         }
 
@@ -1374,14 +1393,22 @@ struct StudioTimelineView: View {
 
     private func drawCueBar(start: Double, dur: Double, y: CGFloat, h: CGFloat, color: Color,
                             label: String, assetID: String, selected: Bool, animated: Bool,
+                            squareLeading: Bool = false, squareTrailing: Bool = false,
                             ctx: GraphicsContext) {
         let rect = CGRect(x: x(forTime: start), y: y + presenceStripH + 2,
                           width: max(6, CGFloat(dur) * pxPerSecond), height: h - presenceStripH - 6)
-        ctx.fill(Path(roundedRect: rect, cornerRadius: 4), with: .color(color.opacity(0.55)))
+        // Corners square off where the cue butts a neighbor, so adjacent
+        // scenes read as one continuous strip.
+        let radii = RectangleCornerRadii(topLeading: squareLeading ? 0 : 4,
+                                         bottomLeading: squareLeading ? 0 : 4,
+                                         bottomTrailing: squareTrailing ? 0 : 4,
+                                         topTrailing: squareTrailing ? 0 : 4)
+        let barPath = Path(roundedRect: rect, cornerRadii: radii)
+        ctx.fill(barPath, with: .color(color.opacity(0.55)))
         // Tile the asset's image across the band.
         if let thumb = cueThumbs.thumb(assetID: assetID, file: file) {
             var tiled = ctx
-            tiled.clip(to: Path(roundedRect: rect, cornerRadius: 4))
+            tiled.clip(to: barPath)
             tiled.opacity = 0.85
             let tileH = rect.height
             let tileW = tileH * CGFloat(thumb.width) / CGFloat(max(1, thumb.height))
@@ -1392,8 +1419,7 @@ struct StudioTimelineView: View {
                 tx += tileW
             }
         }
-        ctx.stroke(Path(roundedRect: rect, cornerRadius: 4),
-                   with: .color(selected ? .white : color), lineWidth: selected ? 1.5 : 1)
+        ctx.stroke(barPath, with: .color(selected ? .white : color), lineWidth: selected ? 1.5 : 1)
         // Label chip stays readable over the artwork.
         let text = Text(label + (animated ? " →" : "")).font(.system(size: 9, weight: .medium))
             .foregroundStyle(.white)
@@ -1689,7 +1715,7 @@ struct StudioTimelineView: View {
 
     /// Snaps t to the nearest anchor within ~7px at the current zoom.
     private func snapped(_ t: Double, excluding cueID: String? = nil) -> Double {
-        let tol = Double(7 / pxPerSecond)
+        let tol = Double(10 / pxPerSecond)
         var best = t
         var bestD = tol
         for a in snapAnchors(excluding: cueID) {
@@ -1715,12 +1741,16 @@ struct StudioTimelineView: View {
                 let end = snapped(dc.baseStart + dc.baseDur + dt, excluding: dc.cueID)
                 dur = max(0.2, end - dc.baseStart)
             default:
-                // Whole-cue move: snap whichever edge is closest to an anchor.
+                // Whole-cue move: snap whichever edge actually found an anchor
+                // (zero delta means "no anchor", not "perfect snap").
                 let s = dc.baseStart + dt
-                let snapS = snapped(s, excluding: dc.cueID)
-                let snapE = snapped(s + dc.baseDur, excluding: dc.cueID) - dc.baseDur
-                let s2 = abs(snapS - s) <= abs(snapE - s) ? snapS : snapE
-                start = max(0, s2)
+                let dS = snapped(s, excluding: dc.cueID) - s
+                let dE = snapped(s + dc.baseDur, excluding: dc.cueID) - (s + dc.baseDur)
+                let shift: Double
+                if dS != 0, dE != 0 { shift = abs(dS) <= abs(dE) ? dS : dE }
+                else if dS != 0 { shift = dS }
+                else { shift = dE }
+                start = max(0, s + shift)
             }
         }
         switch dc.row {
