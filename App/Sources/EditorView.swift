@@ -86,7 +86,7 @@ struct WideEditor: View {
                 .scaledToFit()
                 .frame(height: 18)
             Text("BANNY STUDIO")
-                .font(.system(size: 17, weight: .heavy, design: .rounded))
+                .font(.system(size: 22, weight: .heavy, design: .rounded))
                 .kerning(2)
                 // Match the logo art: black in light mode, off-white in dark.
                 .foregroundStyle(lightMode ? Color.black
