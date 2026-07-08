@@ -843,10 +843,12 @@ struct StudioTimelineView: View {
                 labelCtx.draw(Text(label(for: row)).font(.system(size: 10, weight: .semibold))
                                 .foregroundStyle(labelColor(for: row)),
                               at: CGPoint(x: 12, y: y + presenceStripH / 2), anchor: .leading)
-                ctx.draw(Text(Image(systemName: hidden ? "eye.slash" : "eye"))
-                            .font(.system(size: 10))
-                            .foregroundStyle(hidden ? Color.gray : theme.mutedText),
-                         at: CGPoint(x: size.width - 18, y: y + presenceStripH / 2))
+                if case .background = row {} else {
+                    ctx.draw(Text(Image(systemName: hidden ? "eye.slash" : "eye"))
+                                .font(.system(size: 10))
+                                .foregroundStyle(hidden ? Color.gray : theme.mutedText),
+                             at: CGPoint(x: size.width - 18, y: y + presenceStripH / 2))
+                }
                 if case .character = row {
                     ctx.draw(Text(Image(systemName: "tshirt"))
                                 .font(.system(size: 9))
@@ -968,7 +970,8 @@ struct StudioTimelineView: View {
                 }
                 if value.translation.width.magnitude < 3, value.translation.height.magnitude < 3,
                    let row = row(at: value.location.y + scrollOffset.y) {
-                    if value.location.x > laneLabelWidth - 24 {
+                    if value.location.x > laneLabelWidth - 24,
+                       !{ if case .background = row { return true }; return false }() {
                         toggleHidden(row)
                     } else if value.location.y + scrollOffset.y - laneTop(of: row) < presenceStripH,
                               value.location.x < min(110, CGFloat(label(for: row).count) * 6.5 + 16) {
@@ -1148,7 +1151,9 @@ struct StudioTimelineView: View {
             p.addLine(to: CGPoint(x: size.width, y: y + h - 1))
         }, with: .color(lightMode ? Color.black.opacity(0.22) : .black), lineWidth: lightMode ? 1 : 2)
 
-        drawPresenceStrip(row, y: y, ctx: ctx)
+        if case .background = row {} else {
+            drawPresenceStrip(row, y: y, ctx: ctx)
+        }
 
         var content = ctx
         if hidden { content.opacity = 0.3 }
@@ -1782,7 +1787,8 @@ struct StudioTimelineView: View {
 
     private func handleTap(at point: CGPoint) {
         let y = point.y
-        if let row = row(at: y), y - laneTop(of: row) < presenceStripH {
+        if let row = row(at: y), y - laneTop(of: row) < presenceStripH,
+           !{ if case .background = row { return true }; return false }() {
             var events = presence(of: row)
             let t = (time(forX: point.x) * 10).rounded() / 10
             let isDoubleClick = lastTap.map {
