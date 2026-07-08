@@ -2131,7 +2131,9 @@ struct PlayheadOverlay: View {
             .fill(color)
             .frame(width: 1.5)
             .frame(maxHeight: .infinity)
-            .offset(x: 4 + CGFloat(model.time) * pxPerSecond)
+            // Center on the time like the band's stroked line (else it sits
+            // half a linewidth right of the ruler playhead).
+            .offset(x: 4 + CGFloat(model.time) * pxPerSecond - 0.75)
             .allowsHitTesting(false)
     }
 }
