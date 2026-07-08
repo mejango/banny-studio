@@ -9,14 +9,32 @@ struct ProjectMenu: View {
     @State private var newName = ""
     @State private var importing = false
     @State private var importError: String?
+    @FocusState private var nameFocused: Bool
 
     var body: some View {
+        if renaming {
+            // Inline rename: the label itself becomes a text field.
+            TextField("Project name", text: $newName)
+                .textFieldStyle(.plain)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(Color(white: 0.75))
+                .frame(width: 160)
+                .focused($nameFocused)
+                .onSubmit { rename(); renaming = false }
+                .onExitCommand { renaming = false }
+                .onAppear { nameFocused = true }
+                .onChange(of: nameFocused) { _, focused in
+                    if !focused { renaming = false }
+                }
+        } else {
+            menu
+        }
+    }
+
+    private var menu: some View {
         Menu {
             Button("Rename project…") {
-                #if os(macOS)
-                newName = NSDocumentController.shared.currentDocument?
-                    .displayName ?? ""
-                #endif
+                newName = projectName
                 renaming = true
             }
             Button("New project") {
@@ -44,23 +62,16 @@ struct ProjectMenu: View {
         .onReceive(NotificationCenter.default.publisher(
             for: NSWindow.didBecomeKeyNotification)) { _ in refreshName() }
         #endif
-        #if os(macOS)
-        .focusEffectDisabled()
-        #endif
         .help("Rename, create, or import a project")
-        .alert("Rename project", isPresented: $renaming) {
-            TextField("Project name", text: $newName)
-            Button("Rename") { rename() }
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            Text("Renames the project file on disk.")
-        }
         .alert("Import failed", isPresented: .init(get: { importError != nil },
                                                    set: { if !$0 { importError = nil } })) {
             Button("OK") { importError = nil }
         } message: {
             Text(importError ?? "")
         }
+        #if os(macOS)
+        .focusEffectDisabled()
+        #endif
         .fileImporter(isPresented: $importing,
                       allowedContentTypes: [UTType(filenameExtension: "bs") ?? .data,
                                             .zip, .data]) { result in
