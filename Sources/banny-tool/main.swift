@@ -17,7 +17,9 @@ case "info":
     for s in contents.document.scenes {
         print("\(s.name): \(s.state.characters.count) characters, \(s.state.characters.map { $0.events.count }.reduce(0,+)) events")
     }
+case "ship":
+    try shipCommand(Array(args.dropFirst(2)))
 default:
-    print("usage: banny-tool import <v1.json> <out.bannyshow> | info <show.bannyshow>")
+    print("usage: banny-tool import <v1.json> <out.bannyshow> | info <show.bannyshow> | ship <show.bannyshow> <out.mp4> [--720|--1080|--4k]")
     exit(1)
 }

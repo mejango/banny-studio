@@ -7,17 +7,20 @@ let package = Package(
     products: [
         .library(name: "BannyCore", targets: ["BannyCore"]),
         .library(name: "BannyRender", targets: ["BannyRender"]),
+        .library(name: "BannyMedia", targets: ["BannyMedia"]),
         .executable(name: "banny-tool", targets: ["banny-tool"]),
     ],
     targets: [
         .target(name: "BannyCore"),
         .target(name: "BannyRender", dependencies: ["BannyCore"]),
-        .executableTarget(name: "banny-tool", dependencies: ["BannyCore", "BannyRender"]),
+        .target(name: "BannyMedia", dependencies: ["BannyCore", "BannyRender"]),
+        .executableTarget(name: "banny-tool", dependencies: ["BannyCore", "BannyRender", "BannyMedia"]),
         .testTarget(
             name: "BannyCoreTests",
             dependencies: ["BannyCore"],
             resources: [.copy("Fixtures")]
         ),
         .testTarget(name: "BannyRenderTests", dependencies: ["BannyRender"]),
+        .testTarget(name: "BannyMediaTests", dependencies: ["BannyMedia"]),
     ]
 )
