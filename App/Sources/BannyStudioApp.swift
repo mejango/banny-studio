@@ -27,11 +27,10 @@ struct BannyStudioApp: App {
 /// Shared baked-part catalog, loaded once from the app bundle.
 enum SharedAssets {
     static let catalog: AssetCatalog = {
-        guard let catalogURL = Bundle.main.url(forResource: "catalog", withExtension: "json"),
-              let pngDir = Bundle.main.url(forResource: "png", withExtension: nil) else {
+        guard let root = Bundle.main.url(forResource: "BannyAssets", withExtension: nil) else {
             fatalError("Baked assets missing from bundle")
         }
-        return try! AssetCatalog(catalogURL: catalogURL, pngDirectory: pngDir)
+        return try! AssetCatalog(assetsRoot: root)
     }()
 }
 

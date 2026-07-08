@@ -8,7 +8,7 @@ import BannyCore
 
 private let repoRoot = URL(fileURLWithPath: #filePath)
     .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
-private let assetsRoot = repoRoot.appendingPathComponent("Assets")
+private let assetsRoot = repoRoot.appendingPathComponent("App/Resources/BannyAssets")
 
 private func makeContext(_ size: CGSize) -> CGContext {
     CGContext(data: nil, width: Int(size.width), height: Int(size.height),

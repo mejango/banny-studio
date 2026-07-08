@@ -21,8 +21,8 @@ import { fileURLToPath } from 'node:url';
 
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 const SRC = process.argv[2] ?? '/Users/jango/Documents/banny/playground/index.html';
-const OUT_SVG = `${ROOT}/Assets/svg`;
-const OUT_CATALOG = `${ROOT}/Assets/catalog.json`;
+const OUT_SVG = `${ROOT}/App/Resources/BannyAssets/svg`;
+const OUT_CATALOG = `${ROOT}/App/Resources/BannyAssets/catalog.json`;
 
 // --- pull the constants out of the webapp source by evaluating its data lines ---
 const lines = readFileSync(SRC, 'utf8').split('\n');

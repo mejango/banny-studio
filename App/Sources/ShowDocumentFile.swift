@@ -9,31 +9,38 @@ final class ShowDocumentFile: ReferenceFileDocument {
 
     static let readableContentTypes: [UTType] = [.bannyShow]
 
-    @MainActor let model: StudioModel
+    /// The document as read from disk; the live model is created lazily on main.
+    private let initialDocument: ShowDocument
 
     /// Media bytes carried alongside the document JSON. Keyed by clip/scene id.
     var audio: [String: (data: Data, ext: String)]
     var backgrounds: [String: (data: Data, ext: String)]
 
-    @MainActor
+    @MainActor private var _model: StudioModel?
+
+    /// Live editor state — main-actor, created on first access.
+    @MainActor var model: StudioModel {
+        if let m = _model { return m }
+        let m = StudioModel(document: initialDocument)
+        m.file = self
+        _model = m
+        return m
+    }
+
     init() {
         var doc = ShowDocument()
         doc.scenes = [Scene(id: Self.newID(), name: "Scene 1", state: Self.defaultSceneState())]
+        self.initialDocument = doc
         self.audio = [:]
         self.backgrounds = [:]
-        self.model = StudioModel(document: doc)
-        model.file = self
     }
 
-    @MainActor
     init(imported: V1Importer.Result) {
+        self.initialDocument = imported.document
         self.audio = imported.audioFiles
         self.backgrounds = imported.backgroundFiles
-        self.model = StudioModel(document: imported.document)
-        model.file = self
     }
 
-    @MainActor
     required init(configuration: ReadConfiguration) throws {
         let wrapper = configuration.file
         guard let showData = wrapper.fileWrappers?["show.json"]?.regularFileContents else {
@@ -52,8 +59,7 @@ final class ShowDocumentFile: ReferenceFileDocument {
         }
         self.audio = media(in: "audio")
         self.backgrounds = media(in: "bg")
-        self.model = StudioModel(document: doc)
-        model.file = self
+        self.initialDocument = doc
     }
 
     @MainActor

@@ -25,10 +25,9 @@ targets:
     supportedDestinations: [macOS, iOS]
     sources:
       - path: Sources
-    resources:
-      - path: ../Assets/catalog.json
-      - path: ../Assets/png
+      - path: Resources/BannyAssets
         type: folder
+        buildPhase: resources
     dependencies:
       - package: BannyStudioKit
         product: BannyCore
@@ -60,9 +59,22 @@ targets:
             UTTypeConformsTo: [com.apple.package]
             UTTypeTagSpecification:
               public.filename-extension: [bannyshow]
+    scheme:
+      testTargets: [BannyStudioUITests]
     entitlements:
       path: BannyStudio.entitlements
       properties:
         com.apple.security.app-sandbox: true
         com.apple.security.files.user-selected.read-write: true
         com.apple.security.device.audio-input: true
+
+  BannyStudioUITests:
+    type: bundle.ui-testing
+    platform: macOS
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+    sources:
+      - path: UITests
+    dependencies:
+      - target: BannyStudio
