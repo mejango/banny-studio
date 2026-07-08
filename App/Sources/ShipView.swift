@@ -13,13 +13,16 @@ struct ShipButton: View {
     @State private var shipping = false
     @State private var progress: Double = 0
     @State private var exportedURL: URL?
+    @State private var exportedProjectURL: URL?
     @State private var exportError: String?
 
     var body: some View {
         HStack(spacing: 8) {
             let hasRange = model.exportRange != nil
-            Button {
-                ship()
+            Menu {
+                Button("Export media (mp4)…") { ship() }
+                    .disabled(compact && !hasRange)
+                Button("Export project (.bs)…") { exportProject() }
             } label: {
                 Text(shipping ? "Exporting… \(Int(progress * 100))%" : "Export")
                     .font(.system(size: compact ? 10 : 12, weight: compact ? .semibold : .bold))
@@ -29,12 +32,14 @@ struct ShipButton: View {
                     .overlay(Capsule().stroke(Color.primary.opacity(compact && !hasRange ? 0.1 : 0.3),
                                               lineWidth: 1))
             }
+            .menuStyle(.button)
             .buttonStyle(.plain)
-            .disabled(shipping || (compact && !hasRange))
-            .keyboardShortcut("e", modifiers: .command)
+            .menuIndicator(.hidden)
+            .fixedSize()
+            .disabled(shipping)
             .help(compact
-                  ? "Export the marked range to an mp4 (⌘E). Drag on this row to set the range."
-                  : "Render the show to an mp4 (⌘E).")
+                  ? "Media exports the marked range (drag on this row to set it); .bs shares the whole project."
+                  : "Export media or a shareable project file.")
         }
         .alert("Export failed", isPresented: .init(get: { exportError != nil },
                                                    set: { if !$0 { exportError = nil } })) {
@@ -47,7 +52,37 @@ struct ShipButton: View {
                                          set: { if !$0 { exportedURL = nil } }),
                       item: exportedURL.map(ShippedVideo.init),
                       defaultFilename: "banny-show.mp4") { _ in exportedURL = nil }
+        .fileExporter(isPresented: .init(get: { exportedProjectURL != nil },
+                                         set: { if !$0 { exportedProjectURL = nil } }),
+                      item: exportedProjectURL.map(ShippedProject.init),
+                      defaultFilename: "banny-project.bs") { _ in exportedProjectURL = nil }
         #endif
+    }
+
+    /// Packages the whole document as a single shareable .bs file (a zip of
+    /// the .bannyshow package) that any Banny Studio can import.
+    private func exportProject() {
+        do {
+            let wrapper = try file.projectFileWrapper()
+            let dir = FileManager.default.temporaryDirectory
+                .appendingPathComponent("banny-bs-\(UUID().uuidString)", isDirectory: true)
+            try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            let pkg = dir.appendingPathComponent("show.bannyshow")
+            try wrapper.write(to: pkg, options: .atomic, originalContentsURL: nil)
+            let out = dir.appendingPathComponent("show.bs")
+            let ditto = Process()
+            ditto.executableURL = URL(fileURLWithPath: "/usr/bin/ditto")
+            ditto.arguments = ["-c", "-k", pkg.path, out.path]
+            try ditto.run()
+            ditto.waitUntilExit()
+            guard ditto.terminationStatus == 0 else {
+                exportError = "Could not package the project."
+                return
+            }
+            exportedProjectURL = out
+        } catch {
+            exportError = String(describing: error)
+        }
     }
 
     private func ship() {
@@ -97,6 +132,17 @@ struct ShipButton: View {
                     exportError = String(describing: error)
                 }
             }
+        }
+    }
+}
+
+/// Shareable project archive (.bs — a zipped .bannyshow package).
+struct ShippedProject: Transferable {
+    let url: URL
+
+    static var transferRepresentation: some TransferRepresentation {
+        FileRepresentation(exportedContentType: .data) { project in
+            SentTransferredFile(project.url)
         }
     }
 }

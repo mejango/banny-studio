@@ -89,6 +89,17 @@ final class ShowDocumentFile: ReferenceFileDocument {
     }
 
     func fileWrapper(snapshot: ShowDocument, configuration: WriteConfiguration) throws -> FileWrapper {
+        try packageWrapper(for: snapshot)
+    }
+
+    /// The full package for the CURRENT in-memory state — used by "Export
+    /// project (.bs)" so unsaved edits ship too.
+    @MainActor
+    func projectFileWrapper() throws -> FileWrapper {
+        try packageWrapper(for: model.document)
+    }
+
+    private func packageWrapper(for snapshot: ShowDocument) throws -> FileWrapper {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys, .prettyPrinted]
         let root = FileWrapper(directoryWithFileWrappers: [:])

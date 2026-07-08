@@ -97,6 +97,7 @@ struct WideEditor: View {
                                            : Color(red: 0.92, green: 0.92, blue: 0.92))
             Spacer()
             SaveBadge(indicator: file.saveIndicator, lightMode: lightMode)
+            ProjectMenu()
             ThemeToggle()
         }
         .padding(.horizontal, 14)
