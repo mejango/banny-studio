@@ -1753,7 +1753,7 @@ struct TransportBar: View {
         switch group {
         case .move: return ["←", "→"]
         case .depth: return ["↑", "↓"]
-        case .tilt: return ["T", "B"]
+        case .tilt: return ["N", "B"]
         case .talk: return ["M"]
         case .blink: return [",", ".", "/"]
         case .jump: return ["J"]
