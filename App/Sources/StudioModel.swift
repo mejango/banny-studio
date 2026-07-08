@@ -224,9 +224,12 @@ final class StudioModel {
         }
         var pickedLight: [(String, LightCue)] = []
         if let p = selectedLightCuePath {
-            let cue = scene.lightTracks[p.track].cues[p.cue]
-            pickedLight.append((scene.lightTracks[p.track].id, cue))
-            t0 = min(t0, cue.start)
+            let track = scene.lightTracks[p.track]
+            let run = Self.lightRun(in: track.cues, containing: track.cues[p.cue].id)
+            for cue in run {
+                pickedLight.append((track.id, cue))
+                t0 = min(t0, cue.start)
+            }
         }
         var pickedBG: [BackgroundCue] = []
         if let id = selectedBackgroundCue,
@@ -1126,6 +1129,41 @@ final class StudioModel {
         scene.imageTracks.append(ImageTrack(id: ShowDocumentFile.newID(),
                                             name: assetName, cues: [cue]))
         selectedImageCue = cue.id
+    }
+
+    /// The contiguous chain (recorded take) containing a cue.
+    static func lightRun(in cues: [LightCue], containing id: String) -> [LightCue] {
+        let sorted = cues.sorted { $0.start < $1.start }
+        guard let idx = sorted.firstIndex(where: { $0.id == id }) else { return [] }
+        var lo = idx
+        var hi = idx
+        while lo > 0, abs(sorted[lo - 1].start + sorted[lo - 1].dur - sorted[lo].start) < 0.02 { lo -= 1 }
+        while hi < sorted.count - 1,
+              abs(sorted[hi].start + sorted[hi].dur - sorted[hi + 1].start) < 0.02 { hi += 1 }
+        return Array(sorted[lo...hi])
+    }
+
+    func setLightCueStart(track: Int, id: String, start: Double) {
+        guard scene.lightTracks.indices.contains(track),
+              let ci = scene.lightTracks[track].cues.firstIndex(where: { $0.id == id }) else { return }
+        scene.lightTracks[track].cues[ci].start = start
+    }
+
+    /// ⌘-drag on a chain: clone the whole run in place; returns the copies' ids.
+    func duplicateLightRun(track: Int, containing id: String) -> [String]? {
+        guard scene.lightTracks.indices.contains(track) else { return nil }
+        let run = Self.lightRun(in: scene.lightTracks[track].cues, containing: id)
+        guard !run.isEmpty else { return nil }
+        registerUndoSnapshot(label: "Duplicate Light Take")
+        var ids: [String] = []
+        for cue in run {
+            var copy = cue
+            copy.id = ShowDocumentFile.newID()
+            ids.append(copy.id)
+            scene.lightTracks[track].cues.append(copy)
+        }
+        scene.lightTracks[track].cues.sort { $0.start < $1.start }
+        return ids
     }
 
     /// ⌘-click on a light cue: split at t; animated cues keep their ramp by
