@@ -307,6 +307,22 @@ struct StudioTimelineView: View {
             }
         }
         .gesture(gutterInteraction)
+        #if os(macOS)
+        .onContinuousHover { phase in
+            switch phase {
+            case .active(let p):
+                if abs(p.x - laneLabelWidth) < 6 {
+                    NSCursor.resizeLeftRight.set()
+                } else if rowNearBottomEdge(of: p.y) != nil {
+                    NSCursor.resizeUpDown.set()
+                } else {
+                    NSCursor.arrow.set()
+                }
+            case .ended:
+                NSCursor.arrow.set()
+            }
+        }
+        #endif
     }
 
     /// Rows of the same group as `row` (reordering stays within a type group).
