@@ -274,15 +274,17 @@ struct StudioTimelineView: View {
                 ctx.fill(Path(roundedRect: CGRect(x: size.width / 2 - 16, y: y + h - 4.5,
                                                   width: 32, height: 3), cornerRadius: 1.5),
                          with: .color(Color(white: pillActive ? 0.8 : 0.4)))
+                // Name + whole-track eye sit on the presence-strip line, so the
+                // eye reads as the label of that show/hide row.
                 var labelCtx = ctx
                 if hidden { labelCtx.opacity = 0.35 }
                 labelCtx.draw(Text(label(for: row)).font(.system(size: 10, weight: .semibold))
                                 .foregroundStyle(labelColor(for: row)),
-                              at: CGPoint(x: 8, y: y + 6), anchor: .topLeading)
+                              at: CGPoint(x: 8, y: y + presenceStripH / 2), anchor: .leading)
                 ctx.draw(Text(Image(systemName: hidden ? "eye.slash" : "eye"))
                             .font(.system(size: 9))
                             .foregroundStyle(hidden ? Color.gray : Color(white: 0.55)),
-                         at: CGPoint(x: size.width - 14, y: y + 12))
+                         at: CGPoint(x: size.width - 14, y: y + presenceStripH / 2))
             }
             if let dragging = draggingRow,
                let targetY = insertionLineY(for: dragging) {
