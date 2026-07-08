@@ -840,9 +840,11 @@ struct StudioTimelineView: View {
                 // Motion + mix readouts beside the card / type icon.
                 var readouts: [String] = []
                 var readoutX: CGFloat = 12
+                var readoutBottomPad: CGFloat = 6
                 if case .character(let ci) = row, let c = model.scene.characters[safe: ci] {
-                    let available = h - presenceStripH - 16
-                        - (model.startPoseMismatch(characterIndex: ci) ? 26 : 0)
+                    let mismatch = model.startPoseMismatch(characterIndex: ci)
+                    if mismatch { readoutBottomPad = 32 } // the button's strip
+                    let available = h - presenceStripH - 16 - (mismatch ? 26 : 0)
                     if available >= 26, size.width >= 120 {
                         readoutX = 12 + (min(available, 160) * 30 / 54).rounded() + 10
                         let sizeName = abs(c.size - 1) < 0.01 ? "Normal"
@@ -861,7 +863,7 @@ struct StudioTimelineView: View {
                 }
                 for (li, line) in readouts.enumerated() {
                     let ly = y + presenceStripH + 13 + CGFloat(li) * 13
-                    if ly < y + h - wardrobeStripH - 6 {
+                    if ly < y + h - wardrobeStripH - readoutBottomPad {
                         ctx.draw(Text(line).font(.system(size: 8.5, weight: .medium))
                                     .foregroundStyle(theme.mutedText),
                                  at: CGPoint(x: readoutX, y: ly), anchor: .leading)
