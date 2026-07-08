@@ -445,12 +445,6 @@ struct StudioTimelineView: View {
         let events = presence(of: row).sorted { $0.t < $1.t }
         let stripRect = CGRect(x: 0, y: y, width: contentWidth + 40, height: presenceStripH)
         ctx.fill(Path(stripRect), with: .color(Color.white.opacity(0.025)))
-        let segments = visibleSegments(events)
-        for (a, b) in segments {
-            ctx.fill(Path(CGRect(x: x(forTime: a), y: y + 2,
-                                 width: max(2, CGFloat(b - a) * pxPerSecond), height: presenceStripH - 4)),
-                     with: .color(Color(red: 0.35, green: 0.75, blue: 0.5).opacity(0.35)))
-        }
         let rowKey = row.key(in: model.scene)
         for (i, ev) in events.enumerated() {
             let px = x(forTime: ev.t)
@@ -621,7 +615,6 @@ struct StudioTimelineView: View {
         case .image(let i): model.scene.imageTracks[i].presence = sorted
         case .background(let i): model.scene.backgroundTracks[i].presence = sorted
         }
-        model.backgroundRevision += 1
     }
 
     private func isHidden(_ row: TrackRow) -> Bool {
@@ -641,7 +634,6 @@ struct StudioTimelineView: View {
         case .image(let i): model.scene.imageTracks[i].hidden.toggle()
         case .background(let i): model.scene.backgroundTracks[i].hidden.toggle()
         }
-        model.backgroundRevision += 1
     }
 
     private func assetName(_ id: String) -> String {
@@ -824,7 +816,6 @@ struct StudioTimelineView: View {
             guard let ci = model.scene.backgroundTracks[i].cues.firstIndex(where: { $0.id == dc.cueID }) else { return }
             update(start: &model.scene.backgroundTracks[i].cues[ci].start,
                    dur: &model.scene.backgroundTracks[i].cues[ci].dur)
-            model.backgroundRevision += 1
         default: break
         }
     }

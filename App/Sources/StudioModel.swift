@@ -86,7 +86,6 @@ final class StudioModel {
                 scene.backgroundTracks[i].cues.removeAll { $0.id == id }
             }
             selectedBackgroundCue = nil
-            backgroundRevision += 1
         }
     }
 
@@ -330,7 +329,6 @@ final class StudioModel {
         cues.append(BackgroundCue(id: ShowDocumentFile.newID(), assetID: assetID,
                                   start: time, dur: end - time))
         scene.backgroundTracks[0].cues = cues.sorted { $0.start < $1.start }
-        backgroundRevision += 1
     }
 
     // MARK: - Show playlist
