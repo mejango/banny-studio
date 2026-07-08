@@ -388,6 +388,38 @@ final class StudioModel {
         return pose
     }
 
+    /// The pose currently on the stage (freeform preview wins over the timeline).
+    func displayedPose(characterIndex i: Int) -> CharacterPose? {
+        guard scene.characters.indices.contains(i) else { return nil }
+        let base = simulator.pose(characterIndex: i, at: time)
+        return freeformPose(characterIndex: i, basePose: base) ?? base
+    }
+
+    /// True when the playhead is at the start but the character on stage isn't
+    /// where the saved start position says (freeform moved it, uncommitted).
+    func startPoseMismatch(characterIndex i: Int) -> Bool {
+        guard time < 0.1, scene.characters.indices.contains(i),
+              let pose = displayedPose(characterIndex: i) else { return false }
+        let c = scene.characters[i]
+        let start = c.recStart ?? StartPose(x: c.x, depth: c.depth, face: c.face)
+        return abs(pose.x - start.x) > 0.005 || abs(pose.depth - start.depth) > 0.02
+            || pose.face != start.face
+    }
+
+    /// Saves what's on stage as the character's start position.
+    func commitStartPose(characterIndex i: Int) {
+        guard scene.characters.indices.contains(i),
+              let pose = displayedPose(characterIndex: i) else { return }
+        registerUndoSnapshot(label: "Set Start Position")
+        var c = scene.characters[i]
+        c.x = pose.x
+        c.depth = pose.depth
+        c.face = pose.face
+        c.recStart = StartPose(x: pose.x, depth: pose.depth, face: pose.face)
+        scene.characters[i] = c
+        clearFreeform()
+    }
+
     // MARK: - Characters
 
     // UI-facing 1–10 motion scale; documents keep the web simulation units

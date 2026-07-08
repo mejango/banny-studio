@@ -264,6 +264,19 @@ struct StudioTimelineView: View {
                                         cardHeight: min(available, 160))
                             .offset(x: 10, y: laneTop(of: row) + presenceStripH + 4 - scrollOffset.y)
                     }
+                    if case .character(let ci) = row, model.startPoseMismatch(characterIndex: ci) {
+                        Button("Set start position") { model.commitStartPose(characterIndex: ci) }
+                            .buttonStyle(.plain)
+                            .font(.system(size: 9, weight: .semibold))
+                            .foregroundStyle(.orange)
+                            .padding(.horizontal, 6).padding(.vertical, 2)
+                            .background(Color.orange.opacity(0.12), in: Capsule())
+                            .overlay(Capsule().stroke(Color.orange.opacity(0.55), lineWidth: 1))
+                            .help("The character isn't at its saved start — save where it stands now")
+                            .offset(x: 10,
+                                    y: laneTop(of: row) + height(of: row) - wardrobeStripH - 24
+                                        - scrollOffset.y)
+                    }
                 }
                 if let row = renamingRow {
                     TextField("name", text: $renamingText)
