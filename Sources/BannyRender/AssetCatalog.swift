@@ -140,6 +140,14 @@ public final class AssetCatalog: @unchecked Sendable {
         catalog.sun.file.flatMap(image(named:))
     }
 
+    /// Human-readable slot name (web CATNAMES).
+    public func slotName(_ slot: Int) -> String? {
+        catalog.catNames[String(slot)]
+    }
+
+    /// Total outfit count (test/diagnostic).
+    public var outfitCount: Int { catalog.outfits.count }
+
     /// All outfit names for a slot, for pickers.
     public func outfits(inSlot slot: Int) -> [(name: String, label: String)] {
         catalog.outfits.filter { $0.value.slot == slot }
