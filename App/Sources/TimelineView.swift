@@ -26,9 +26,9 @@ extension EventGroup {
         case .move: return Color(red: 0.13, green: 0.4, blue: 0.85)
         case .depth: return Color(red: 0.8, green: 0.2, blue: 0.2)
         case .tilt: return Color(red: 0.1, green: 0.58, blue: 0.22)
-        case .talk: return Color(red: 0.93, green: 0.74, blue: 0.13)
+        case .talk: return Color(red: 0.85, green: 0.64, blue: 0.07)
         case .blink: return Color(red: 0.82, green: 0.45, blue: 0.08)
-        case .jump: return Color(red: 0.5, green: 0.3, blue: 0.85)
+        case .jump: return Color(red: 0.63, green: 0.47, blue: 0.93)
         }
     }
 }

@@ -11,6 +11,20 @@ struct WardrobePanel: View {
     private static let outfitSlots = [2, 3, 4, 6, 8, 9, 10, 11, 12, 13]
     private let columns = [GridItem(.adaptive(minimum: 64), spacing: 0)]
 
+    /// Mannequin crop per slot, in the 400-box (webapp full thumb = 115,34,170,306).
+    static func cropRegion(forSlot slot: Int) -> CGRect {
+        switch slot {
+        case 4, 5, 6, 7:      // Head, Eyes, Glasses, Mouth → head only
+            return CGRect(x: 122, y: 60, width: 160, height: 130)
+        case 8, 10:           // Legs, Suit bottom → bottom only
+            return CGRect(x: 115, y: 190, width: 170, height: 150)
+        case 3, 11, 12:       // Necklace, Suit top, Head top → torso up
+            return CGRect(x: 115, y: 34, width: 170, height: 190)
+        default:              // Backside, Suit, Hand → full body
+            return CGRect(x: 115, y: 34, width: 170, height: 306)
+        }
+    }
+
     var body: some View {
         let outfit = currentOutfit
         let body_ = model.scene.characters[safe: characterIndex]?.body ?? .orange
@@ -18,6 +32,7 @@ struct WardrobePanel: View {
             Text("WARDROBE").font(.caption.bold()).foregroundStyle(.secondary)
 
             slotGrid(title: "Eyes", selected: outfit[5] ?? "default", allowNone: false,
+                     crop: Self.cropRegion(forSlot: 5),
                      items: ["default", "eyeliner", "fierce", "glassy", "surprised", "introspective"].map {
                          ($0, $0, SharedAssets.catalog.eyesImage(option: $0, expression: .open, body: body_))
                      }) { name in
@@ -25,6 +40,7 @@ struct WardrobePanel: View {
                                 name: name == "default" ? nil : name)
             }
             slotGrid(title: "Mouth", selected: outfit[7] ?? "default", allowNone: false,
+                     crop: Self.cropRegion(forSlot: 7),
                      items: ["default", "lipstick", "gapteeth", "open"].map {
                          ($0, $0, SharedAssets.catalog.mouthImage(option: $0, state: .closed, body: body_))
                      }) { name in
@@ -35,7 +51,7 @@ struct WardrobePanel: View {
                 let items = SharedAssets.catalog.outfits(inSlot: slot)
                 if !items.isEmpty {
                     slotGrid(title: slotName(slot), selected: outfit[slot] ?? "",
-                             allowNone: true,
+                             allowNone: true, crop: Self.cropRegion(forSlot: slot),
                              items: items.map {
                                  ($0.name, $0.label, SharedAssets.catalog.outfitImage($0.name, body: body_))
                              }) { name in
@@ -55,25 +71,25 @@ struct WardrobePanel: View {
         SharedAssets.catalog.slotName(slot) ?? "Slot \(slot)"
     }
 
-    private func slotGrid(title: String, selected: String, allowNone: Bool,
+    private func slotGrid(title: String, selected: String, allowNone: Bool, crop: CGRect,
                           items: [(name: String, label: String, image: CGImage?)],
                           choose: @escaping (String) -> Void) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(title).font(.caption2.bold()).foregroundStyle(.secondary)
             LazyVGrid(columns: columns, spacing: 0) {
                 if allowNone {
-                    thumbCell(name: "", label: "none", image: nil,
+                    thumbCell(name: "", label: "none", image: nil, crop: crop,
                               selected: selected.isEmpty, choose: choose)
                 }
                 ForEach(items, id: \.name) { item in
-                    thumbCell(name: item.name, label: item.label, image: item.image,
+                    thumbCell(name: item.name, label: item.label, image: item.image, crop: crop,
                               selected: item.name == selected, choose: choose)
                 }
             }
         }
     }
 
-    private func thumbCell(name: String, label: String, image: CGImage?,
+    private func thumbCell(name: String, label: String, image: CGImage?, crop: CGRect,
                            selected: Bool, choose: @escaping (String) -> Void) -> some View {
         let body_ = model.scene.characters[safe: characterIndex]?.body ?? .orange
         return Button {
@@ -83,7 +99,8 @@ struct WardrobePanel: View {
                 Group {
                     if let image {
                         MannequinThumb(part: image,
-                                       body: SharedAssets.catalog.bodyImage(body_))
+                                       body: SharedAssets.catalog.bodyImage(body_),
+                                       crop: crop)
                     } else {
                         Image(systemName: "slash.circle")
                             .font(.system(size: 16))
@@ -92,7 +109,7 @@ struct WardrobePanel: View {
                     }
                 }
                 .frame(maxWidth: .infinity)
-                .aspectRatio(170.0 / 250.0, contentMode: .fit)
+                .aspectRatio(crop.width / crop.height, contentMode: .fit)
                 Text(label)
                     .font(.system(size: 8))
                     .lineLimit(1)
@@ -114,16 +131,19 @@ struct WardrobePanel: View {
 struct MannequinThumb: View {
     let part: CGImage
     let body_: CGImage?
+    let crop: CGRect
 
-    init(part: CGImage, body: CGImage?) {
+    init(part: CGImage, body: CGImage?, crop: CGRect) {
         self.part = part
         self.body_ = body
+        self.crop = crop
     }
 
     var body: some View {
         Canvas(rendersAsynchronously: false) { ctx, size in
-            let s = size.width / 170.0
-            let box = CGRect(x: -115 * s, y: -44 * s, width: 400 * s, height: 400 * s)
+            let s = size.width / crop.width
+            let box = CGRect(x: -crop.minX * s, y: -crop.minY * s,
+                             width: 400 * s, height: 400 * s)
             var ghost = ctx
             ghost.opacity = 0.16
             if let body_ {
