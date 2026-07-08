@@ -169,6 +169,7 @@ struct SidePanel: View {
     private var theme: Theme { lightMode ? .light : .dark }
 
     @State private var confirmDelete = false
+    @FocusState private var nameFocused: Bool
 
     private enum Target {
         case character(Int), audio(Int), image(Int), light(Int), background(Int), none
@@ -254,6 +255,8 @@ struct SidePanel: View {
         }
         .background(lightMode ? Color(red: 1, green: 0.99, blue: 0.95)
                               : Color(red: 0.1, green: 0.1, blue: 0.13))
+        .contentShape(Rectangle())
+        .onTapGesture { nameFocused = false }
         .environment(\.colorScheme, lightMode ? .light : .dark)
     }
 
@@ -277,6 +280,7 @@ struct SidePanel: View {
         TextField("name", text: nameBinding(kind))
             .textFieldStyle(.plain)
             .font(.headline)
+            .focused($nameFocused)
     }
 
     private func nameBinding(_ kind: TrackRowKind) -> Binding<String> {

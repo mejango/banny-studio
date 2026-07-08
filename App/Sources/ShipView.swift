@@ -17,17 +17,24 @@ struct ShipButton: View {
 
     var body: some View {
         HStack(spacing: 8) {
+            let hasRange = model.exportRange != nil
             Button {
                 ship()
             } label: {
                 Text(shipping ? "Exporting… \(Int(progress * 100))%" : "Export")
                     .font(.system(size: compact ? 10 : 12, weight: compact ? .semibold : .bold))
-                    .foregroundStyle(Color.orange)
+                    .foregroundStyle(compact && !hasRange ? Color.secondary.opacity(0.55) : Color.primary)
+                    .padding(.horizontal, compact ? 7 : 10).padding(.vertical, compact ? 1 : 3)
+                    .background(Color.primary.opacity(compact && !hasRange ? 0.04 : 0.09), in: Capsule())
+                    .overlay(Capsule().stroke(Color.primary.opacity(compact && !hasRange ? 0.1 : 0.3),
+                                              lineWidth: 1))
             }
             .buttonStyle(.plain)
-            .disabled(shipping)
+            .disabled(shipping || (compact && !hasRange))
             .keyboardShortcut("e", modifiers: .command)
-            .help("Render the show to an mp4 (⌘E). Markers on this row bound what ships; empty = the whole show.")
+            .help(compact
+                  ? "Export the marked range to an mp4 (⌘E). Drag on this row to set the range."
+                  : "Render the show to an mp4 (⌘E).")
         }
         .alert("Export failed", isPresented: .init(get: { exportError != nil },
                                                    set: { if !$0 { exportError = nil } })) {

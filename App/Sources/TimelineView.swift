@@ -136,6 +136,7 @@ struct StudioTimelineView: View {
     @State private var draggingSub: (char: Int, index: Int, baseStart: Double, baseDur: Double, edge: Int)?
     /// Export-range drag: edge -1/1 = a marker, 0 = slide the range, 2 = drag out a new one.
     @State private var draggingExport: (edge: Int, baseFrom: Double, baseTo: Double)?
+    @State private var exportRangeSelected = false
     @State private var draggingPresence: (row: TrackRow, index: Int)?
     @State private var selectedPresence: (rowKey: String, index: Int)?
     @State private var lastTap: (location: CGPoint, at: Date)?
@@ -165,6 +166,8 @@ struct StudioTimelineView: View {
     /// scrolling re-renders ONLY the pinned overlays that read it — the heavy
     /// lanes canvas is untouched by scroll ticks.
     @State private var offsets = TLOffsets()
+    @State private var tlProxy: ScrollViewProxy?
+    @State private var tlViewport: CGSize = .zero
     private var scrollOffset: CGPoint { CGPoint(x: offsets.x, y: offsets.y) }
     private let rulerHeight: CGFloat = 22
     private let scrubHeight: CGFloat = 0
@@ -179,6 +182,7 @@ struct StudioTimelineView: View {
             }
             .frame(height: lanesTop)
             ZStack(alignment: .topLeading) {
+            ScrollViewReader { proxy in
             ScrollView([.horizontal, .vertical]) {
                 ZStack(alignment: .topLeading) {
                     ZStack(alignment: .topLeading) {
@@ -211,6 +215,7 @@ struct StudioTimelineView: View {
                 }
                 .frame(width: laneLabelWidth + max(600, contentWidth + 40),
                        height: totalLaneHeight + 34, alignment: .topLeading)
+                .id("tlContent")
             }
             .contentMargins(.leading, laneLabelWidth, for: .scrollIndicators)
             .coordinateSpace(name: "tlScroll")
@@ -218,6 +223,12 @@ struct StudioTimelineView: View {
                 // origin.x includes the leading gutter padding at rest.
                 offsets.x = laneLabelWidth - origin.x
                 offsets.y = -origin.y
+            }
+            .background(GeometryReader { g in
+                Color.clear
+                    .onAppear { tlViewport = g.size; tlProxy = proxy }
+                    .onChange(of: g.size) { _, s in tlViewport = s }
+            })
             }
             // Pinned gutter: never moves horizontally; tracks vertical scroll.
             ZStack(alignment: .topLeading) {
@@ -237,7 +248,11 @@ struct StudioTimelineView: View {
                     .onChanged { g in
                         let base = pinchZoomBase ?? zoom
                         pinchZoomBase = base
+                        // The time under the pointer stays put while zooming.
+                        let anchorX = g.startLocation.x
+                        let tKeep = time(forX: anchorX - laneLabelWidth + scrollOffset.x)
                         zoom = min(16, max(1, base * g.magnification))
+                        keepTime(tKeep, atViewX: anchorX)
                     }
                     .onEnded { _ in pinchZoomBase = nil })
         #if os(macOS)
@@ -334,6 +349,20 @@ struct StudioTimelineView: View {
     private var contentWidth: CGFloat { CGFloat(model.duration) * pxPerSecond }
     private func x(forTime t: Double) -> CGFloat { 4 + CGFloat(t) * pxPerSecond }
     private func time(forX x: CGFloat) -> Double { max(0, Double((x - 4) / pxPerSecond)) }
+
+    /// Programmatic scroll so `t` lands at view-x `vx` (zoom anchoring). Goes
+    /// through ScrollViewProxy — writing the NSScrollView's bounds directly
+    /// desyncs SwiftUI's own scroll bookkeeping (band/gutter stop tracking).
+    private func keepTime(_ t: Double, atViewX vx: CGFloat) {
+        guard let proxy = tlProxy, tlViewport.width > 0 else { return }
+        let contentW = laneLabelWidth + max(600, contentWidth + 40)
+        let contentH = totalLaneHeight + 34
+        let target = max(0, x(forTime: t) - (vx - laneLabelWidth))
+        let fx = min(1, max(0, target / max(1, contentW - tlViewport.width)))
+        let fy = min(1, max(0, offsets.y / max(1, contentH - tlViewport.height)))
+        proxy.scrollTo("tlContent", anchor: UnitPoint(x: fx, y: fy))
+        offsets.x = target
+    }
 
     /// Fixed top-left corner of the pinned band.
     private var cornerCell: some View {
@@ -449,9 +478,10 @@ struct StudioTimelineView: View {
             }
             .onEnded { value in
                 if let de = draggingExport {
-                    if de.edge == 2, value.translation.width.magnitude < 3 {
-                        // A plain click on the empty row clears the range.
-                        model.exportRange = nil
+                    if value.translation.width.magnitude < 3 {
+                        // A plain click: on the range selects it (Delete removes),
+                        // on the empty row deselects.
+                        exportRangeSelected = de.edge != 2
                     }
                     model.registerUndoSnapshot(label: "Export Range")
                     draggingExport = nil
@@ -536,8 +566,9 @@ struct StudioTimelineView: View {
 
     /// Always the last row: create any track type in place.
     private var newTrackRow: some View {
-        HStack {
-            Menu {
+        // No wrapper HStack/Spacer: their implicit widths overflow laneLabelWidth
+        // and the outer frame centers the overflow, shifting the gutter left.
+        Menu {
                 Menu("Character") {
                     ForEach(BannyCore.Body.allCases, id: \.self) { body in
                         Button(body.rawValue) { model.addCharacter(body: body) }
@@ -566,14 +597,12 @@ struct StudioTimelineView: View {
                 .frame(width: laneLabelWidth, height: 34, alignment: .leading)
                 .contentShape(Rectangle())
             }
-            .menuStyle(.button)
-            .buttonStyle(.plain)
-            .menuIndicator(.hidden)
-            .background(theme.gutterCell)
-            .overlay(alignment: .trailing) {
-                Rectangle().fill(theme.gutterDivider).frame(width: 1)
-            }
-            Spacer()
+        .menuStyle(.button)
+        .buttonStyle(.plain)
+        .menuIndicator(.hidden)
+        .background(theme.gutterCell)
+        .overlay(alignment: .trailing) {
+            Rectangle().fill(theme.gutterDivider).frame(width: 1)
         }
         .frame(height: 34)
     }
@@ -775,7 +804,11 @@ struct StudioTimelineView: View {
             let x1 = x(forTime: r.to)
             let green = Color(red: 0.25, green: 0.72, blue: 0.35)
             ctx.fill(Path(CGRect(x: x0, y: y + 2, width: max(2, x1 - x0), height: exportRowH - 4)),
-                     with: .color(green.opacity(0.28)))
+                     with: .color(green.opacity(exportRangeSelected ? 0.5 : 0.28)))
+            if exportRangeSelected {
+                ctx.stroke(Path(CGRect(x: x0, y: y + 2, width: max(2, x1 - x0), height: exportRowH - 4)),
+                           with: .color(green), lineWidth: 1)
+            }
             for (mx, dir) in [(x0, 1.0), (x1, -1.0)] {
                 var p = Path()
                 p.move(to: CGPoint(x: mx + CGFloat(dir) * 4, y: y + 2))
@@ -1560,6 +1593,12 @@ struct StudioTimelineView: View {
             selectedPresence = nil
             return
         }
+        if exportRangeSelected {
+            model.registerUndoSnapshot(label: "Delete Export Range")
+            model.exportRange = nil
+            exportRangeSelected = false
+            return
+        }
         model.deleteTimelineSelection()
     }
 }
@@ -1581,14 +1620,18 @@ struct TransportBar: View {
             // Record cluster: REC + what it records (armed event groups).
             HStack(spacing: 6) {
                 Button(action: model.record) {
-                    Text("● REC")
-                        .font(.system(size: 11, weight: .bold))
-                        .foregroundStyle(model.recording ? .white : .red)
-                        .padding(.horizontal, 6).padding(.vertical, 3)
-                        .background(model.recording ? Color.red : Color.red.opacity(0.12),
-                                    in: RoundedRectangle(cornerRadius: 4))
-                        .overlay(RoundedRectangle(cornerRadius: 4)
-                            .stroke(Color.red.opacity(model.recording ? 0 : 0.6), lineWidth: 1))
+                    HStack(spacing: 4) {
+                        Circle().fill(model.recording ? Color.white : Color.red.opacity(0.8))
+                            .frame(width: 7, height: 7)
+                        Text("REC")
+                            .font(.system(size: 11, weight: .bold))
+                            .foregroundStyle(model.recording ? Color.white : theme.mutedText)
+                    }
+                    .padding(.horizontal, 7).padding(.vertical, 3)
+                    .background(model.recording ? Color.red : Color.primary.opacity(0.07),
+                                in: RoundedRectangle(cornerRadius: 4))
+                    .overlay(RoundedRectangle(cornerRadius: 4)
+                        .stroke(model.recording ? Color.clear : Color.primary.opacity(0.22), lineWidth: 1))
                 }
                 .help("Record the selected characters (⇧Space)")
                 Text(recTargetNames)
@@ -1627,6 +1670,18 @@ struct TransportBar: View {
         return names.isEmpty ? "—" : names.joined(separator: ", ")
     }
 
+    /// The physical keys that drive each group (web key map).
+    private func chipKeys(_ group: EventGroup) -> String {
+        switch group {
+        case .move: return "←→"
+        case .depth: return "↑↓"
+        case .tilt: return "T·B"
+        case .talk: return "M"
+        case .blink: return ",·/"
+        case .jump: return "J"
+        }
+    }
+
     private func chipTitle(_ group: EventGroup) -> String {
         switch group {
         case .move: return "Move L/R"
@@ -1647,14 +1702,19 @@ struct TransportBar: View {
                 if armed { c.armedGroups.remove(group) } else { c.armedGroups.insert(group) }
                 model.scene.characters[i] = c
             } label: {
-                Text(chipTitle(group))
-                    .font(.system(size: 9, weight: .bold))
-                    .foregroundStyle(armed ? Color.black.opacity(0.85) : tint.opacity(0.9))
-                    .padding(.horizontal, 6).padding(.vertical, 3)
-                    .background(armed ? tint : tint.opacity(0.12),
-                                in: RoundedRectangle(cornerRadius: 4))
-                    .overlay(RoundedRectangle(cornerRadius: 4)
-                        .stroke(tint.opacity(armed ? 0 : 0.6), lineWidth: 1))
+                HStack(spacing: 4) {
+                    Text(chipTitle(group))
+                        .font(.system(size: 9, weight: .bold))
+                    Text(chipKeys(group))
+                        .font(.system(size: 8, weight: .semibold, design: .monospaced))
+                        .opacity(0.6)
+                }
+                .foregroundStyle(armed ? Color.black.opacity(0.85) : tint.opacity(0.9))
+                .padding(.horizontal, 6).padding(.vertical, 3)
+                .background(armed ? tint : tint.opacity(0.12),
+                            in: RoundedRectangle(cornerRadius: 4))
+                .overlay(RoundedRectangle(cornerRadius: 4)
+                    .stroke(tint.opacity(armed ? 0 : 0.6), lineWidth: 1))
             }
             .help("\(group.rawValue): \(armed ? "armed (records)" : "disarmed (plays back)")")
         }

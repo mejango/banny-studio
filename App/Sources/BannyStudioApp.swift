@@ -12,6 +12,9 @@ struct BannyStudioApp: App {
     var body: some SwiftUI.Scene {
         DocumentGroup(newDocument: { ShowDocumentFile() }) { config in
             EditorView(file: config.document)
+                #if os(macOS)
+                .background(SnapshotOnLaunch())
+                #endif
         }
         #if os(macOS)
         .defaultSize(width: 1280, height: 860)
@@ -37,6 +40,26 @@ enum SharedAssets {
 }
 
 #if os(macOS)
+/// Debug aid: BANNY_SNAPSHOT=/path.png makes the app write a self-capture of its
+/// window shortly after launch (no screen-recording permission involved).
+struct SnapshotOnLaunch: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSView {
+        let v = NSView()
+        guard UserDefaults.standard.bool(forKey: "debugSnapshot") else { return v }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak v] in
+            guard let content = v?.window?.contentView,
+                  let rep = content.bitmapImageRepForCachingDisplay(in: content.bounds) else { return }
+            content.cacheDisplay(in: content.bounds, to: rep)
+            let out = FileManager.default.temporaryDirectory
+                .appendingPathComponent("banny-snap.png")
+            try? rep.representation(using: .png, properties: [:])?.write(to: out)
+            NSLog("snapshot written to %@", out.path)
+        }
+        return v
+    }
+    func updateNSView(_ nsView: NSView, context: Context) {}
+}
+
 /// File > Import Web Studio JSON… converts a v1 export into a new document.
 /// (iOS gets legacy import by opening the JSON via the Files app in a later pass.)
 struct ImportLegacyCommand: View {

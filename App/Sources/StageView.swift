@@ -1,6 +1,7 @@
 import SwiftUI
 import ImageIO
 import AVFoundation
+import VideoToolbox
 import BannyCore
 import BannyRender
 
@@ -29,7 +30,7 @@ struct StageView: View {
                 file.audioEngine?.tick(model: model)
                 let scene = model.scene
                 let bg = scene.activeBackgroundCue(at: model.time).flatMap {
-                    media.background(cue: $0, at: model.time,
+                    media.background(cue: $0, at: model.time, playing: model.playing,
                                      revision: model.backgroundRevision,
                                      assets: model.document.assets, file: file)
                 }
@@ -153,8 +154,11 @@ struct StageView: View {
     }
 }
 
-/// Decodes bank assets for the stage: still images cached, background videos
-/// previewed at ~14 fps via throttled async frame generation (export is exact).
+/// Decodes bank assets for the stage. Stills are cached. Background videos use
+/// two paths: while PLAYING, a muted AVPlayer + AVPlayerItemVideoOutput streams
+/// hardware-decoded frames at full rate (kept within 0.3s of the show clock);
+/// while paused/scrubbing, an AVAssetImageGenerator seeks the exact frame.
+/// Export never uses either — it samples deterministically.
 @Observable
 final class StageMediaCache {
     private var stills: [String: CGImage] = [:]
@@ -163,6 +167,8 @@ final class StageMediaCache {
     private var videoGen: [String: (gen: AVAssetImageGenerator, duration: Double)] = [:]
     private var videoFrame: [String: (image: CGImage, t: Double)] = [:]
     private var videoBusy: Set<String> = []
+    @ObservationIgnored private var players: [String: (player: AVPlayer, output: AVPlayerItemVideoOutput, duration: Double)] = [:]
+    @ObservationIgnored private var playbackFrame: [String: CGImage] = [:]
 
     func still(assetID: String, file: ShowDocumentFile) -> CGImage? {
         if let hit = stills[assetID] { return hit }
@@ -176,13 +182,16 @@ final class StageMediaCache {
         return img
     }
 
-    func background(cue: BackgroundCue, at t: Double, revision: Int,
+    func background(cue: BackgroundCue, at t: Double, playing: Bool, revision: Int,
                     assets: [Asset], file: ShowDocumentFile) -> (image: CGImage, crop: Crop)? {
         if revision != self.revision {
             stills = [:]
             failed = []
             videoGen = [:]
             videoFrame = [:]
+            for entry in players.values { entry.player.pause() }
+            players = [:]
+            playbackFrame = [:]
             self.revision = revision
         }
         guard let asset = assets.first(where: { $0.id == cue.assetID }) else { return nil }
@@ -190,9 +199,63 @@ final class StageMediaCache {
         case .image:
             return still(assetID: asset.id, file: file).map { ($0, cue.crop) }
         case .video:
+            if playing, let img = playerFrame(assetID: asset.id, at: t - cue.start, file: file) {
+                return (img, cue.crop)
+            }
+            if !playing {
+                for entry in players.values where entry.player.rate != 0 { entry.player.pause() }
+            }
             return videoPreviewFrame(assetID: asset.id, at: t - cue.start, file: file)
                 .map { ($0, cue.crop) }
         }
+    }
+
+    /// Streaming path while the transport runs: a muted AVPlayer decodes in
+    /// hardware and we pull whatever frame is current each render tick.
+    private func playerFrame(assetID: String, at t: Double, file: ShowDocumentFile) -> CGImage? {
+        if players[assetID] == nil {
+            guard !failed.contains(assetID), let url = mediaURL(assetID: assetID, file: file) else { return nil }
+            let asset = AVURLAsset(url: url)
+            let dur = CMTimeGetSeconds(asset.duration)
+            guard dur > 0 else { return nil }
+            let item = AVPlayerItem(asset: asset)
+            let output = AVPlayerItemVideoOutput(pixelBufferAttributes: [
+                kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
+            ])
+            item.add(output)
+            let player = AVPlayer(playerItem: item)
+            player.isMuted = true
+            player.actionAtItemEnd = .none // looping = the drift check seeks back
+            players[assetID] = (player, output, dur)
+        }
+        guard let p = players[assetID] else { return nil }
+        let vt = max(0, t).truncatingRemainder(dividingBy: p.duration)
+        if p.player.rate == 0 { p.player.play() }
+        // Keep the player within 0.3s of the show clock (also handles the loop wrap).
+        if abs(p.player.currentTime().seconds - vt) > 0.3 {
+            p.player.seek(to: CMTime(seconds: vt, preferredTimescale: 600),
+                          toleranceBefore: CMTime(value: 1, timescale: 10),
+                          toleranceAfter: CMTime(value: 1, timescale: 10))
+        }
+        let itemTime = p.output.itemTime(forHostTime: CACurrentMediaTime())
+        if p.output.hasNewPixelBuffer(forItemTime: itemTime),
+           let buf = p.output.copyPixelBuffer(forItemTime: itemTime, itemTimeForDisplay: nil) {
+            var img: CGImage?
+            VTCreateCGImageFromCVPixelBuffer(buf, options: nil, imageOut: &img)
+            if let img { playbackFrame[assetID] = img }
+        }
+        // Until the first buffer lands, fall through to the generator's frame.
+        return playbackFrame[assetID] ?? videoFrame[assetID]?.image
+    }
+
+    private func mediaURL(assetID: String, file: ShowDocumentFile) -> URL? {
+        guard let media = file.assetsMedia[assetID] else { return nil }
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("bgvid-\(assetID).\(media.ext)")
+        if !FileManager.default.fileExists(atPath: url.path) {
+            try? media.data.write(to: url)
+        }
+        return url
     }
 
     private func videoPreviewFrame(assetID: String, at t: Double, file: ShowDocumentFile) -> CGImage? {
