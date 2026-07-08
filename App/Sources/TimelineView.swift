@@ -178,6 +178,8 @@ struct StudioTimelineView: View {
     @State private var autoScrollTimer: Timer?
     /// Group-drag base positions for selected clips.
     @State private var dragStartClips: [String: Double]?
+    /// Pointer position over the lanes (content coords) for context menus.
+    @State private var hoverLanePoint: CGPoint?
     /// Wardrobe-strip click: add a timed outfit change here.
     @State private var outfitPopover: (char: Int, t: Double, x: CGFloat, y: CGFloat)?
     @State private var renamingText = ""
@@ -1077,6 +1079,26 @@ struct StudioTimelineView: View {
             }
         }
         .gesture(interaction)
+        #if os(macOS)
+        .onContinuousHover { phase in
+            if case .active(let p) = phase { hoverLanePoint = p }
+        }
+        #endif
+        .contextMenu {
+            if let p = hoverLanePoint, case .background = row(at: p.y) {
+                let t = (time(forX: p.x) * 10).rounded() / 10
+                if model.document.assets.isEmpty {
+                    Text("Add images/videos to the Asset Bank first")
+                } else {
+                    Text(String(format: "Background from %.1fs:", t))
+                    ForEach(model.document.assets) { asset in
+                        Button(asset.name) {
+                            model.addBackgroundCue(assetID: asset.id, assetName: asset.name, at: t)
+                        }
+                    }
+                }
+            }
+        }
     }
 
     // MARK: - Drawing
