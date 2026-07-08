@@ -191,8 +191,6 @@ struct StudioTimelineView: View {
     @State private var mediaAddAt: (trackIndex: Int, t: Double, x: CGFloat, y: CGFloat)?
     /// Collapsed scene sections (background cue ids) — folded to thin strips.
     @State private var collapsedSections: Set<String> = []
-    /// Left-click options popover for a background (scene) cue.
-    @State private var bgOptions: (cueID: String, x: CGFloat, y: CGFloat)?
     @State private var imageImportAt: (trackIndex: Int, t: Double)?
     /// Wardrobe-strip click: add a timed outfit change here.
     @State private var outfitPopover: (char: Int, t: Double, x: CGFloat, y: CGFloat)?
@@ -1200,39 +1198,6 @@ struct StudioTimelineView: View {
                                     .frame(width: 240)
                                 }
                         }
-                        if let bo = bgOptions {
-                            let isCollapsed = collapsedSections.contains(bo.cueID)
-                            let allIDs = Set(model.scene.backgroundTracks
-                                .flatMap { $0.cues.map(\.id) })
-                            Color.clear
-                                .frame(width: 1, height: 1)
-                                .offset(x: bo.x, y: bo.y)
-                                .popover(isPresented: Binding(
-                                    get: { bgOptions != nil },
-                                    set: { if !$0 { bgOptions = nil } })) {
-                                    VStack(alignment: .leading, spacing: 8) {
-                                        Button(isCollapsed ? "Expand scene" : "Collapse scene") {
-                                            if isCollapsed { collapsedSections.remove(bo.cueID) }
-                                            else { collapsedSections.insert(bo.cueID) }
-                                            bgOptions = nil
-                                        }
-                                        if allIDs.count > 1 {
-                                            Button("Collapse other scenes") {
-                                                collapsedSections = allIDs.subtracting([bo.cueID])
-                                                bgOptions = nil
-                                            }
-                                        }
-                                        if !collapsedSections.isEmpty {
-                                            Button("Expand all") {
-                                                collapsedSections = []
-                                                bgOptions = nil
-                                            }
-                                        }
-                                    }
-                                    .padding(12)
-                                    .frame(width: 200)
-                                }
-                        }
                         if let cm = clipMix {
                             Color.clear
                                 .frame(width: 1, height: 1)
@@ -1300,13 +1265,6 @@ struct StudioTimelineView: View {
                     Button(isCollapsed ? "Expand scene" : "Collapse scene") {
                         if isCollapsed { collapsedSections.remove(cue.id) }
                         else { collapsedSections.insert(cue.id) }
-                    }
-                    let allIDs = Set(model.scene.backgroundTracks
-                        .flatMap { $0.cues.map(\.id) })
-                    if allIDs.count > 1 {
-                        Button("Collapse other scenes") {
-                            collapsedSections = allIDs.subtracting([cue.id])
-                        }
                     }
                     if !collapsedSections.isEmpty {
                         Button("Expand all") { collapsedSections = [] }
@@ -2521,9 +2479,6 @@ struct StudioTimelineView: View {
                 }
             } else {
                 selectCue(row: row, id: cue.id)
-                if case .background = row {
-                    bgOptions = (cue.id, point.x, point.y)
-                }
             }
         } else if case .audio(let ai) = row(at: y), !model.hasTimelineSelection {
             // Empty media-lane click: choose what to add right here.
