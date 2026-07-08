@@ -1125,12 +1125,15 @@ struct StudioTimelineView: View {
             if selectedPresence?.rowKey == rowKey, selectedPresence?.index == i {
                 ctx.stroke(Path(ellipseIn: CGRect(x: px - 7, y: y + presenceStripH / 2 - 7,
                                                   width: 14, height: 14)),
-                           with: .color(.white), lineWidth: 1)
+                           with: .color(lightMode ? .black : .white), lineWidth: 1)
             }
+            let show = lightMode ? Color(red: 0.05, green: 0.5, blue: 0.22)
+                                 : Color(red: 0.5, green: 0.95, blue: 0.65)
+            let hide = lightMode ? Color(red: 0.72, green: 0.15, blue: 0.1)
+                                 : Color(red: 0.95, green: 0.5, blue: 0.45)
             ctx.draw(Text(Image(systemName: ev.visible ? "eye.fill" : "eye.slash.fill"))
                         .font(.system(size: 8))
-                        .foregroundStyle(ev.visible ? Color(red: 0.5, green: 0.95, blue: 0.65)
-                                                    : Color(red: 0.95, green: 0.5, blue: 0.45)),
+                        .foregroundStyle(ev.visible ? show : hide),
                      at: CGPoint(x: px, y: y + presenceStripH / 2))
         }
     }
