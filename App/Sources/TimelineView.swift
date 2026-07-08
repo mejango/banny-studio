@@ -1775,7 +1775,7 @@ struct TransportBar: View {
                         ForEach(chipKeys(group), id: \.self) { key in
                             Text(key)
                                 .font(.system(size: 7.5, weight: .bold, design: .monospaced))
-                                .padding(.horizontal, 3).padding(.vertical, 1)
+                                .frame(width: 11, height: 11)
                                 .background((armed ? Color.black : tint).opacity(0.14),
                                             in: RoundedRectangle(cornerRadius: 3))
                                 .overlay(RoundedRectangle(cornerRadius: 3)
