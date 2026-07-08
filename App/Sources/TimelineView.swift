@@ -490,8 +490,8 @@ struct StudioTimelineView: View {
 
     private var pxPerSecond: CGFloat { 30 * zoom }
     private var contentWidth: CGFloat { CGFloat(model.duration) * pxPerSecond }
-    private func x(forTime t: Double) -> CGFloat { 4 + CGFloat(t) * pxPerSecond }
-    private func time(forX x: CGFloat) -> Double { max(0, Double((x - 4) / pxPerSecond)) }
+    private func x(forTime t: Double) -> CGFloat { 1 + CGFloat(t) * pxPerSecond }
+    private func time(forX x: CGFloat) -> Double { max(0, Double((x - 1) / pxPerSecond)) }
 
     /// Programmatic scroll so `t` lands at view-x `vx` (zoom anchoring). Goes
     /// through ScrollViewProxy — writing the NSScrollView's bounds directly
@@ -2241,7 +2241,7 @@ struct PlayheadOverlay: View {
             .frame(maxHeight: .infinity)
             // Center on the time like the band's stroked line (else it sits
             // half a linewidth right of the ruler playhead).
-            .offset(x: 4 + CGFloat(model.time) * pxPerSecond - 0.75)
+            .offset(x: 1 + CGFloat(model.time) * pxPerSecond - 0.75)
             .allowsHitTesting(false)
     }
 }
