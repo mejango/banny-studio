@@ -166,6 +166,7 @@ struct StudioTimelineView: View {
     /// scroll fraction. Recomputing these per tick from lagging preference
     /// values fed an oscillation (the "shake" while zooming).
     @State private var pinchAnchor: (t: Double, vx: CGFloat, fy: CGFloat)?
+    @State private var lastGutterTap: (key: String, at: Date)?
     /// Lanes viewport scroll offset. An observable holder (not view @State) so
     /// scrolling re-renders ONLY the pinned overlays that read it — the heavy
     /// lanes canvas is untouched by scroll ticks.
@@ -250,7 +251,7 @@ struct StudioTimelineView: View {
                     let available = height(of: row) - presenceStripH - 16
                     if available >= 26 {
                         TrackCardButton(model: model, file: file, row: row,
-                                        cardHeight: min(54, available))
+                                        cardHeight: min(available, (laneLabelWidth - 56) * 54 / 30))
                             .offset(x: 10, y: laneTop(of: row) + presenceStripH + 4 - scrollOffset.y)
                     }
                 }
@@ -800,7 +801,16 @@ struct StudioTimelineView: View {
                     if value.location.x > laneLabelWidth - 24 {
                         toggleHidden(row)
                     } else {
-                        model.selectedTrackKey = row.key(in: model.scene)
+                        let key = row.key(in: model.scene)
+                        if let last = lastGutterTap, Date().timeIntervalSince(last.at) < 0.45,
+                           last.key == key {
+                            // Double-click anywhere in the cell → its inspector.
+                            model.inspectorRequest = key
+                            lastGutterTap = nil
+                        } else {
+                            lastGutterTap = (key, Date())
+                        }
+                        model.selectedTrackKey = key
                         if case .character(let i) = row {
                             model.selection = [i]
                         }

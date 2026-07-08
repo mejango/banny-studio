@@ -41,6 +41,8 @@ final class StudioModel {
     var selectedBackgroundCue: String?
     /// A clicked outfit-change dot: (character, index into its events).
     var selectedOutfitEvent: (char: Int, index: Int)?
+    /// Track key whose gutter-card popover should open (double-click on the cell).
+    var inspectorRequest: String?
     var selectedLightCue: String?
     private var markClipboard: [(character: Int, code: EventCode, start: Double, end: Double)] = []
 

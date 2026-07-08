@@ -293,6 +293,9 @@ struct MotionSection: View {
                     set: { if model.scene.characters.indices.contains(characterIndex) {
                         model.scene.characters[characterIndex].speed = $0 } }),
                     in: 40...600)
+                Text("\(Int(model.scene.characters[safe: characterIndex]?.speed ?? 320))")
+                    .font(.system(size: 9, design: .monospaced)).foregroundStyle(.secondary)
+                    .frame(width: 28, alignment: .trailing)
             }
             HStack {
                 Text("wobble").font(.caption2).frame(width: 80, alignment: .leading)
@@ -301,6 +304,9 @@ struct MotionSection: View {
                     set: { if model.scene.characters.indices.contains(characterIndex) {
                         model.scene.characters[characterIndex].wobble = $0 } }),
                     in: 0...16)
+                Text(String(format: "%.1f", model.scene.characters[safe: characterIndex]?.wobble ?? 7))
+                    .font(.system(size: 9, design: .monospaced)).foregroundStyle(.secondary)
+                    .frame(width: 28, alignment: .trailing)
             }
             HStack {
                 Text("size").font(.caption2).frame(width: 80, alignment: .leading)

@@ -174,9 +174,6 @@ struct TrackInspector: View {
             switch kind {
             case .character(let i):
                 MotionSection(model: model, characterIndex: i)
-                if let file {
-                    AudioSection(model: model, file: file)
-                }
                 WardrobePanel(model: model, characterIndex: i)
             case .audio(let i):
                 if let file {
@@ -316,12 +313,22 @@ struct TrackCardButton: View {
         }
         .buttonStyle(.plain)
         .help("Track settings")
+        .onChange(of: model.inspectorRequest) { _, req in
+            if req == row.key(in: model.scene) {
+                open = true
+                model.inspectorRequest = nil
+            }
+        }
         .popover(isPresented: $open) {
             ScrollView {
                 TrackInspector(model: model, file: file, kind: kind)
                     .padding(12)
             }
             .frame(width: 320, height: popoverHeight)
+            .background(lightMode ? Color(red: 1, green: 0.99, blue: 0.95)
+                                  : Color(red: 0.13, green: 0.13, blue: 0.16))
+            .presentationBackground(lightMode ? Color(red: 1, green: 0.99, blue: 0.95)
+                                              : Color(red: 0.13, green: 0.13, blue: 0.16))
             .environment(\.colorScheme, lightMode ? .light : .dark)
         }
     }

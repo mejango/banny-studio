@@ -25,6 +25,25 @@ struct KeyCaptureView: NSViewRepresentable {
 
         func install(model: StudioModel) {
             guard monitor == nil else { return }
+            if UserDefaults.standard.bool(forKey: "debugDeleteTest") {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 5) {
+                    guard let ci = model.scene.characters.indices.first(where: { i in
+                        model.scene.characters[i].events.contains { if case .outfit = $0 { return true }; return false }
+                    }), let ei = model.scene.characters[ci].events.firstIndex(where: {
+                        if case .outfit = $0 { return true }; return false
+                    }) else { Self.dbg("no outfit events"); return }
+                    model.selectedOutfitEvent = (ci, ei)
+                    Self.dbg("before: char \(ci) events \(model.scene.characters[ci].events.count) idx \(ei)")
+                    let ev = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [],
+                                              timestamp: 0, windowNumber: 0, context: nil,
+                                              characters: "\u{7f}", charactersIgnoringModifiers: "\u{7f}",
+                                              isARepeat: false, keyCode: 51)!
+                    NSApp.postEvent(ev, atStart: false)
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
+                        Self.dbg("after: events \(model.scene.characters[ci].events.count) stillSelected \(model.selectedOutfitEvent != nil)")
+                    }
+                }
+            }
             monitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .keyUp]) { event in
                 MainActor.assumeIsolated {
                     Self.handle(event: event, model: model) ? nil : event
@@ -34,6 +53,16 @@ struct KeyCaptureView: NSViewRepresentable {
 
         deinit {
             if let monitor { NSEvent.removeMonitor(monitor) }
+        }
+
+        static func dbg(_ msg: String) {
+            let url = FileManager.default.temporaryDirectory.appendingPathComponent("deltest.log")
+            let line = msg + "\n"
+            if let h = try? FileHandle(forWritingTo: url) {
+                h.seekToEndOfFile(); h.write(line.data(using: .utf8)!); try? h.close()
+            } else {
+                try? line.write(to: url, atomically: true, encoding: .utf8)
+            }
         }
 
         /// macOS keyCode → web KeyboardEvent.code vocabulary.
@@ -49,9 +78,11 @@ struct KeyCaptureView: NSViewRepresentable {
         ]
 
         private static func handle(event: NSEvent, model: StudioModel) -> Bool {
-            // Don't steal keys from text fields.
-            if let responder = NSApp.keyWindow?.firstResponder,
-               responder is NSTextView || responder is NSText { return false }
+            // Don't steal keys from text fields — but only while one is really
+            // editing. A dismissed field editor can linger as first responder
+            // and would otherwise swallow every key.
+            if let responder = NSApp.keyWindow?.firstResponder as? NSText,
+               responder.superview != nil, !responder.isHidden { return false }
 
             let down = event.type == .keyDown
             if down, event.modifierFlags.contains(.command) {
