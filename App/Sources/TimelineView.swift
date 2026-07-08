@@ -173,6 +173,9 @@ struct StudioTimelineView: View {
     @State private var clipMix: (kind: TrackRowKind, clipID: String, x: CGFloat, y: CGFloat)?
     /// Rubber-band selection over empty lane space.
     @State private var marquee: (start: CGPoint, current: CGPoint)?
+    /// Edge auto-scroll while dragging: px past the viewport edge (sign = side).
+    @State private var dragOvershootX: CGFloat = 0
+    @State private var autoScrollTimer: Timer?
     /// Group-drag base positions for selected clips.
     @State private var dragStartClips: [String: Double]?
     /// Wardrobe-strip click: add a timed outfit change here.
@@ -1599,6 +1602,7 @@ struct StudioTimelineView: View {
                     || draggingCue != nil || draggingSub != nil || draggingPresence != nil {
                     model.registerUndoSnapshot(label: "Edit Timeline")
                 }
+                stopAutoScroll()
                 if let m = marquee {
                     applyMarquee(m.start, m.current)
                     marquee = nil
@@ -1639,6 +1643,7 @@ struct StudioTimelineView: View {
                 TimelineMath.resizeMark(r.mark, leading: r.leading, to: t, in: r.baseEvents)
             return
         }
+        updateAutoScroll(pointerContentX: value.location.x)
         if marquee != nil {
             marquee = (marquee!.start, value.location)
             return
@@ -1748,6 +1753,47 @@ struct StudioTimelineView: View {
                 model.moveClip(id: id, toStart: max(0, s + dt))
             }
         }
+    }
+
+    /// Dragging past the viewport edge scoots the timeline — the further out,
+    /// the faster (30Hz timer; drags self-correct because gesture coordinates
+    /// live in content space).
+    private func updateAutoScroll(pointerContentX px: CGFloat) {
+        let visW = tlViewport.width - laneLabelWidth
+        guard visW > 0 else { return }
+        let left = offsets.x + 8
+        let right = offsets.x + visW - 8
+        if px > right { dragOvershootX = px - right }
+        else if px < left { dragOvershootX = px - left }
+        else { dragOvershootX = 0 }
+        if dragOvershootX != 0, autoScrollTimer == nil {
+            autoScrollTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 30.0, repeats: true) { _ in
+                MainActor.assumeIsolated { autoScrollTick() }
+            }
+        }
+    }
+
+    private func stopAutoScroll() {
+        autoScrollTimer?.invalidate()
+        autoScrollTimer = nil
+        dragOvershootX = 0
+    }
+
+    private func autoScrollTick() {
+        guard let proxy = tlProxy, dragOvershootX != 0 else { return }
+        let contentW = laneLabelWidth + max(600, contentWidth + 40)
+        let maxScroll = max(0, contentW - tlViewport.width)
+        guard maxScroll > 0 else { return }
+        let step = max(-60, min(60, dragOvershootX * 0.25))
+        let target = min(maxScroll, max(0, offsets.x + step))
+        let contentH = totalLaneHeight + 34
+        let fy = min(1, max(0, offsets.y / max(1, contentH - tlViewport.height)))
+        var tr = Transaction()
+        tr.disablesAnimations = true
+        withTransaction(tr) {
+            proxy.scrollTo("tlContent", anchor: UnitPoint(x: target / maxScroll, y: fy))
+        }
+        offsets.x = target
     }
 
     private func clipStart(id: String) -> Double? {
