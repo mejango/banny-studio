@@ -404,10 +404,56 @@ final class StudioModel {
         selection = [scene.characters.count - 1]
     }
 
+    /// Right-click duplicate: copies the track, its clips/cues, and media refs.
+    func duplicateTrack(_ kind: TrackRowKind) {
+        registerUndoSnapshot(label: "Duplicate Track")
+        func cloneClips(_ clips: [AudioClip]) -> [AudioClip] {
+            clips.map { clip in
+                var c = clip
+                c.id = ShowDocumentFile.newID()
+                if let media = file?.audio[clip.id] { file?.audio[c.id] = media }
+                return c
+            }
+        }
+        switch kind {
+        case .character(let i):
+            guard scene.characters.count < 10, var c = scene.characters[safe: i] else { return }
+            c.name = (c.name.isEmpty ? "banny" : c.name) + " copy"
+            c.clips = cloneClips(c.clips)
+            scene.characters.append(c)
+        case .audio(let i):
+            guard var t = scene.audioTracks[safe: i] else { return }
+            t.id = ShowDocumentFile.newID()
+            t.name += " copy"
+            t.clips = cloneClips(t.clips)
+            scene.audioTracks.append(t)
+        case .image(let i):
+            guard var t = scene.imageTracks[safe: i] else { return }
+            t.id = ShowDocumentFile.newID()
+            t.name += " copy"
+            for ci in t.cues.indices { t.cues[ci].id = ShowDocumentFile.newID() }
+            scene.imageTracks.append(t)
+        case .light(let i):
+            guard var t = scene.lightTracks[safe: i] else { return }
+            t.id = ShowDocumentFile.newID()
+            t.name += " copy"
+            for ci in t.cues.indices { t.cues[ci].id = ShowDocumentFile.newID() }
+            scene.lightTracks.append(t)
+        case .background:
+            return // exactly one background track
+        }
+    }
+
     func removeCharacter(at index: Int) {
         guard scene.characters.indices.contains(index) else { return }
         registerUndoSnapshot(label: "Remove Character")
         scene.characters.remove(at: index)
+        // Character row keys are index-based; keep the display order aligned.
+        scene.rowOrder = scene.rowOrder.compactMap { key in
+            guard key.hasPrefix("c-"), let j = Int(key.dropFirst(2)) else { return key }
+            if j == index { return nil }
+            return j > index ? "c-\(j - 1)" : key
+        }
         selection = scene.characters.isEmpty ? [] : [min(index, scene.characters.count - 1)]
     }
 

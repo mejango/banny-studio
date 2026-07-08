@@ -341,13 +341,15 @@ public struct SceneState: Equatable, Sendable {
     public var gSize: Double
     /// v2 per-scene background (decode-only; migration turns it into a cue).
     public var background: BackgroundSpec?
+    /// Display order of timeline rows (track keys); empty = type order.
+    public var rowOrder: [String]
 
     public init(characters: [Character] = [], audioTracks: [AudioTrack] = [],
                 imageTracks: [ImageTrack] = [], backgroundTracks: [BackgroundTrack] = [],
                 lightTracks: [LightTrack] = [],
                 lights: [Light] = [], cropAnchors: [Double] = [],
                 gScale: Double = 0.6, gravity: Double = 1, gSize: Double = 1,
-                background: BackgroundSpec? = nil) {
+                background: BackgroundSpec? = nil, rowOrder: [String] = []) {
         self.characters = characters
         self.audioTracks = audioTracks
         self.imageTracks = imageTracks
@@ -359,6 +361,7 @@ public struct SceneState: Equatable, Sendable {
         self.gravity = gravity
         self.gSize = gSize
         self.background = background
+        self.rowOrder = rowOrder
     }
 
     /// End of the last event/clip/caption/cue (web tlDurNeeded's content part).
@@ -415,7 +418,7 @@ public struct SceneState: Equatable, Sendable {
 extension SceneState: Codable {
     private enum CodingKeys: String, CodingKey {
         case characters, audioTracks, imageTracks, backgroundTracks, lightTracks, lights,
-             cropAnchors, gScale, gravity, gSize, background
+             cropAnchors, gScale, gravity, gSize, background, rowOrder
     }
 
     public init(from decoder: Decoder) throws {
@@ -431,6 +434,7 @@ extension SceneState: Codable {
         gravity = try c.decodeIfPresent(Double.self, forKey: .gravity) ?? 1
         gSize = try c.decodeIfPresent(Double.self, forKey: .gSize) ?? 1
         background = try c.decodeIfPresent(BackgroundSpec.self, forKey: .background)
+        rowOrder = try c.decodeIfPresent([String].self, forKey: .rowOrder) ?? []
     }
 }
 
@@ -643,9 +647,12 @@ public struct AudioClip: Codable, Equatable, Sendable {
     /// Full source file duration (sec).
     public var srcDur: Double
     public var fx: Fx
+    /// True when this clip's fx intentionally diverge from the track mix
+    /// (track-level mix edits then leave it alone).
+    public var fxOverride: Bool?
 
     public init(id: String, name: String, start: Double, dur: Double, offset: Double = 0,
-                srcDur: Double, fx: Fx = .defaultClip) {
+                srcDur: Double, fx: Fx = .defaultClip, fxOverride: Bool? = nil) {
         self.id = id
         self.name = name
         self.start = start
@@ -653,6 +660,7 @@ public struct AudioClip: Codable, Equatable, Sendable {
         self.offset = offset
         self.srcDur = srcDur
         self.fx = fx
+        self.fxOverride = fxOverride
     }
 }
 

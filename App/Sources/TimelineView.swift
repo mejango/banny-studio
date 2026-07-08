@@ -168,6 +168,9 @@ struct StudioTimelineView: View {
     @State private var pinchAnchor: (t: Double, vx: CGFloat, fy: CGFloat)?
     @State private var lastGutterTap: (key: String, at: Date)?
     @State private var renamingRow: TrackRow?
+    @State private var hoverGutterRow: TrackRow?
+    /// Double-clicked audio clip: per-clip mix override editor.
+    @State private var clipMix: (kind: TrackRowKind, clipID: String, x: CGFloat, y: CGFloat)?
     /// Wardrobe-strip click: add a timed outfit change here.
     @State private var outfitPopover: (char: Int, t: Double, x: CGFloat, y: CGFloat)?
     @State private var renamingText = ""
@@ -202,30 +205,7 @@ struct StudioTimelineView: View {
                                                    value: geo.frame(in: .named("tlScroll")).origin)
                         }
                         timelineCanvas
-                        if let op = outfitPopover {
-                            Color.clear
-                                .frame(width: 1, height: 1)
-                                .offset(x: op.x + laneLabelWidth, y: op.y)
-                                .popover(isPresented: Binding(
-                                    get: { outfitPopover != nil },
-                                    set: { if !$0 { outfitPopover = nil } })) {
-                                    ScrollView {
-                                        VStack(alignment: .leading, spacing: 8) {
-                                            Text(String(format: "Outfit change at %.1fs", op.t))
-                                                .font(.caption.bold())
-                                            WardrobePanel(model: model, characterIndex: op.char,
-                                                          eventTime: op.t)
-                                        }
-                                        .padding(12)
-                                    }
-                                    .frame(width: 300, height: 430)
-                                    .background(lightMode ? Color(red: 1, green: 0.99, blue: 0.95)
-                                                          : Color(red: 0.13, green: 0.13, blue: 0.16))
-                                    .presentationBackground(lightMode ? Color(red: 1, green: 0.99, blue: 0.95)
-                                                                      : Color(red: 0.13, green: 0.13, blue: 0.16))
-                                    .environment(\.colorScheme, lightMode ? .light : .dark)
-                                }
-                        }
+                        popoverAnchors
                         if let editing = editingLabel, editing.kind != .caption {
                             TextField("", text: $editingText)
                                 .textFieldStyle(.plain)
@@ -329,7 +309,7 @@ struct StudioTimelineView: View {
                         var tr = Transaction()
                         tr.disablesAnimations = true
                         withTransaction(tr) {
-                            zoom = min(16, max(1, base * g.magnification))
+                            zoom = min(16, max(0.25, base * g.magnification))
                             if let p = pinchAnchor { keepTime(p.t, atViewX: p.vx, fy: p.fy) }
                         }
                     }
@@ -352,11 +332,17 @@ struct StudioTimelineView: View {
     // MARK: - Layout
 
     private var baseRows: [TrackRow] {
-        model.scene.characters.indices.map(TrackRow.character)
+        let typed = model.scene.characters.indices.map(TrackRow.character)
             + model.scene.imageTracks.indices.map(TrackRow.image)
             + model.scene.audioTracks.indices.map(TrackRow.audio)
             + model.scene.lightTracks.indices.map(TrackRow.light)
             + model.scene.backgroundTracks.indices.map(TrackRow.background)
+        guard !model.scene.rowOrder.isEmpty else { return typed }
+        let keyed = Dictionary(typed.map { ($0.key(in: model.scene), $0) },
+                               uniquingKeysWith: { a, _ in a })
+        var out = model.scene.rowOrder.compactMap { keyed[$0] }
+        for r in typed where !out.contains(r) { out.append(r) }
+        return out
     }
 
     /// Rows in display order; while dragging, the dragged row previews at its slot.
@@ -364,26 +350,20 @@ struct StudioTimelineView: View {
         guard let dragging = draggingRow, let preview = dragPreviewIndex else { return baseRows }
         var out = baseRows
         guard let from = out.firstIndex(of: dragging.row) else { return out }
-        let group = groupRows(of: dragging.row)
-        guard let groupStart = out.firstIndex(of: group[0]) else { return out }
         out.remove(at: from)
-        out.insert(dragging.row, at: min(max(groupStart + preview, 0), out.count))
+        out.insert(dragging.row, at: min(max(preview, 0), out.count))
         return out
     }
 
-    /// The preview slot (within the group) under the cursor's content y.
+    /// The preview slot (across ALL rows) under the cursor's content y.
     private func previewSlot(for dragging: (row: TrackRow, currentY: CGFloat)) -> Int {
-        let group = groupRows(of: dragging.row)
-        guard group.count > 1, let first = group.first else { return 0 }
-        // Group span in the current preview layout.
-        let orderedGroup = rows.filter { groupRows(of: dragging.row).contains($0) }
-        var yCursor = laneTop(of: orderedGroup.first ?? first)
-        for (slot, r) in orderedGroup.enumerated() {
+        var yCursor: CGFloat = 0
+        for (slot, r) in rows.enumerated() {
             let h = height(of: r)
             if dragging.currentY < yCursor + h { return slot }
             yCursor += h
         }
-        return group.count - 1
+        return max(0, rows.count - 1)
     }
 
     private var headerHeight: CGFloat { rulerHeight + scrubHeight }
@@ -520,19 +500,24 @@ struct StudioTimelineView: View {
     private var cornerCell: some View {
         Canvas { ctx, size in
             ctx.fill(Path(CGRect(origin: .zero, size: size)), with: .color(theme.gutterBase))
+            ctx.draw(Text(String(format: "%.1f / %.0fs", model.time, model.duration))
+                        .font(.system(size: 10, weight: .medium, design: .monospaced))
+                        .foregroundStyle(lightMode ? Color(red: 0, green: 0.45, blue: 0.1) : .green),
+                     at: CGPoint(x: size.width - 10, y: rulerHeight / 2 + 2), anchor: .trailing)
             ctx.draw(Text("Captions").font(.system(size: 10, weight: .semibold))
                         .foregroundStyle(theme.mutedText),
-                     at: CGPoint(x: 12, y: captionsTop + captionsRowH / 2), anchor: .leading)
+                     at: CGPoint(x: size.width - 10, y: captionsTop + captionsRowH / 2),
+                     anchor: .trailing)
             ctx.stroke(Path { p in
                 p.move(to: CGPoint(x: size.width - 0.5, y: 0))
                 p.addLine(to: CGPoint(x: size.width - 0.5, y: size.height))
             }, with: .color(theme.gutterDivider), lineWidth: 1)
         }
-        .overlay(alignment: .topLeading) {
-            // The Export action lives on its row, like a gutter label that acts.
+        .overlay(alignment: .topTrailing) {
+            // The Export action lives on its row, sticky to the divider.
             if let file {
                 ShipButton(model: model, file: file, compact: true)
-                    .padding(.leading, 12)
+                    .padding(.trailing, 8)
                     .frame(height: exportRowH)
                     .offset(y: headerHeight)
             }
@@ -640,7 +625,7 @@ struct StudioTimelineView: View {
                     var tr = Transaction()
                     tr.disablesAnimations = true
                     withTransaction(tr) {
-                        zoom = min(16, max(1, base * pow(2, dy / 90)))
+                        zoom = min(16, max(0.25, base * pow(2, dy / 90)))
                         if let p = pinchAnchor { keepTime(p.t, atViewX: p.vx, fy: p.fy) }
                     }
                 }
@@ -794,6 +779,10 @@ struct StudioTimelineView: View {
                 // Lighter cell over the base, bounded by strong dark separators.
                 ctx.fill(Path(CGRect(x: 0, y: y, width: size.width, height: h - 2)),
                          with: .color(theme.gutterCell))
+                if isSelectedRow(row) {
+                    ctx.fill(Path(CGRect(x: 0, y: y, width: size.width, height: h - 2)),
+                             with: .color(Color.orange.opacity(lightMode ? 0.08 : 0.1)))
+                }
                 if draggingRow?.row == row {
                     ctx.fill(Path(CGRect(x: 0, y: y, width: size.width, height: h)),
                              with: .color(Color.white.opacity(0.08)))
@@ -823,36 +812,53 @@ struct StudioTimelineView: View {
                                 .foregroundStyle(theme.mutedText),
                              at: CGPoint(x: size.width - 18, y: y + h - wardrobeStripH / 2 - 1))
                 }
-                // Motion readouts beside the outfit card.
+                // Motion + mix readouts beside the card / type icon.
+                var readouts: [String] = []
+                var readoutX: CGFloat = 12
                 if case .character(let ci) = row, let c = model.scene.characters[safe: ci] {
                     let available = h - presenceStripH - 16
                     if available >= 26, size.width >= 120 {
-                        let cardH = min(available, 160)
-                        let tx = 12 + (cardH * 30 / 54).rounded() + 10
+                        readoutX = 12 + (min(available, 160) * 30 / 54).rounded() + 10
                         let sizeName = abs(c.size - 1) < 0.01 ? "Normal"
                             : abs(c.size - 0.62) < 0.01 ? "Small"
                             : abs(c.size - 0.38) < 0.01 ? "Baby"
                             : String(format: "%.2f", c.size)
-                        let lines = ["Speed: \(String(format: "%.1f", StudioModel.uiSpeed(c.speed)))",
-                                     "Wobble: \(String(format: "%.1f", StudioModel.uiWobble(c.wobble)))",
-                                     "Size: \(sizeName)"]
-                        for (li, line) in lines.enumerated() {
-                            let ly = y + presenceStripH + 13 + CGFloat(li) * 13
-                            if ly < y + h - 10 {
-                                ctx.draw(Text(line).font(.system(size: 8.5, weight: .medium))
-                                            .foregroundStyle(theme.mutedText),
-                                         at: CGPoint(x: tx, y: ly), anchor: .leading)
-                            }
-                        }
+                        readouts = ["Speed: \(String(format: "%.1f", StudioModel.uiSpeed(c.speed)))",
+                                    "Wobble: \(String(format: "%.1f", StudioModel.uiWobble(c.wobble)))",
+                                    "Size: \(sizeName)"]
+                        readouts += mixReadout(c.trackFx)
+                    }
+                } else if case .audio(let ai) = row, let track = model.scene.audioTracks[safe: ai],
+                          size.width >= 120 {
+                    readoutX = 12 + 28 + 10
+                    readouts = mixReadout(track.fx)
+                }
+                for (li, line) in readouts.enumerated() {
+                    let ly = y + presenceStripH + 13 + CGFloat(li) * 13
+                    if ly < y + h - 10 {
+                        ctx.draw(Text(line).font(.system(size: 8.5, weight: .medium))
+                                    .foregroundStyle(theme.mutedText),
+                                 at: CGPoint(x: readoutX, y: ly), anchor: .leading)
                     }
                 }
             }
         }
         .gesture(gutterInteraction)
+        .contextMenu {
+            if let row = hoverGutterRow {
+                Button("Duplicate \(label(for: row))") { model.duplicateTrack(kind(of: row)) }
+                Button("Rename") {
+                    renamingText = label(for: row)
+                    renamingRow = row
+                }
+                Button("Settings…") { model.inspectorRequest = row.key(in: model.scene) }
+            }
+        }
         #if os(macOS)
         .onContinuousHover { phase in
             switch phase {
             case .active(let p):
+                hoverGutterRow = row(at: p.y + scrollOffset.y)
                 if abs(p.x - laneLabelWidth) < 6 {
                     NSCursor.resizeLeftRight.set()
                 } else if rowNearBottomEdge(of: p.y + scrollOffset.y) != nil {
@@ -868,17 +874,6 @@ struct StudioTimelineView: View {
     }
 
     /// Rows of the same group as `row` (reordering stays within a type group).
-    private func groupRows(of row: TrackRow) -> [TrackRow] {
-        switch row {
-        case .character: return model.scene.characters.indices.map(TrackRow.character)
-        case .image: return model.scene.imageTracks.indices.map(TrackRow.image)
-        case .audio: return model.scene.audioTracks.indices.map(TrackRow.audio)
-        case .light: return model.scene.lightTracks.indices.map(TrackRow.light)
-        case .background: return model.scene.backgroundTracks.indices.map(TrackRow.background)
-        }
-    }
-
-
     private var gutterInteraction: some Gesture {
         DragGesture(minimumDistance: 0)
             .onChanged { value in
@@ -915,7 +910,7 @@ struct StudioTimelineView: View {
                 if abs(value.translation.height) > 8,
                    let row = row(at: value.startLocation.y + scrollOffset.y) {
                     draggingRow = (row, value.location.y + scrollOffset.y)
-                    dragPreviewIndex = groupRows(of: row).firstIndex(of: row)
+                    dragPreviewIndex = baseRows.firstIndex(of: row)
                 }
             }
             .onEnded { value in
@@ -960,26 +955,60 @@ struct StudioTimelineView: View {
     }
 
     private func commitRowMove(_ dragging: (row: TrackRow, currentY: CGFloat)) {
-        guard let slot = dragPreviewIndex else { return }
+        guard dragPreviewIndex != nil else { return }
         model.registerUndoSnapshot(label: "Reorder Tracks")
-        func move<T>(_ items: inout [T], from: Int, to: Int) {
-            let item = items.remove(at: from)
-            items.insert(item, at: min(max(0, to), items.count))
-        }
-        switch dragging.row {
-        case .character(let i):
-            move(&model.scene.characters, from: i, to: slot)
-            model.selection = [min(slot, model.scene.characters.count - 1)]
-            model.selectedMarks = []
-        case .image(let i):
-            move(&model.scene.imageTracks, from: i, to: slot)
-        case .audio(let i):
-            move(&model.scene.audioTracks, from: i, to: slot)
-        case .light(let i):
-            move(&model.scene.lightTracks, from: i, to: slot)
-        case .background(let i):
-            move(&model.scene.backgroundTracks, from: i, to: slot)
-        }
+        // `rows` already shows the preview arrangement — persist it as the
+        // display order. Storage arrays never move, so marks/selection and
+        // recorded events stay index-stable across any reorder.
+        model.scene.rowOrder = rows.map { $0.key(in: model.scene) }
+    }
+
+    /// Popover anchors living in the scroll content (outfit strip + clip mix),
+    /// split out of the ZStack so the type-checker copes.
+    @ViewBuilder private var popoverAnchors: some View {
+                        if let op = outfitPopover {
+                            Color.clear
+                                .frame(width: 1, height: 1)
+                                .offset(x: op.x + laneLabelWidth, y: op.y)
+                                .popover(isPresented: Binding(
+                                    get: { outfitPopover != nil },
+                                    set: { if !$0 { outfitPopover = nil } })) {
+                                    ScrollView {
+                                        VStack(alignment: .leading, spacing: 8) {
+                                            Text(String(format: "Outfit change at %.1fs", op.t))
+                                                .font(.caption.bold())
+                                            WardrobePanel(model: model, characterIndex: op.char,
+                                                          eventTime: op.t)
+                                        }
+                                        .padding(12)
+                                    }
+                                    .frame(width: 300, height: 430)
+                                    .background(lightMode ? Color(red: 1, green: 0.99, blue: 0.95)
+                                                          : Color(red: 0.13, green: 0.13, blue: 0.16))
+                                    .presentationBackground(lightMode ? Color(red: 1, green: 0.99, blue: 0.95)
+                                                                      : Color(red: 0.13, green: 0.13, blue: 0.16))
+                                    .environment(\.colorScheme, lightMode ? .light : .dark)
+                                }
+                        }
+                        if let cm = clipMix {
+                            Color.clear
+                                .frame(width: 1, height: 1)
+                                .offset(x: cm.x + laneLabelWidth, y: cm.y)
+                                .popover(isPresented: Binding(
+                                    get: { clipMix != nil },
+                                    set: { if !$0 { clipMix = nil } })) {
+                                    ScrollView {
+                                        MixSection(model: model, kind: cm.kind, clipID: cm.clipID)
+                                            .padding(12)
+                                    }
+                                    .frame(width: 300, height: 360)
+                                    .background(lightMode ? Color(red: 1, green: 0.99, blue: 0.95)
+                                                          : Color(red: 0.13, green: 0.13, blue: 0.16))
+                                    .presentationBackground(lightMode ? Color(red: 1, green: 0.99, blue: 0.95)
+                                                                      : Color(red: 0.13, green: 0.13, blue: 0.16))
+                                    .environment(\.colorScheme, lightMode ? .light : .dark)
+                                }
+                        }
     }
 
     private var timelineCanvas: some View {
@@ -1342,6 +1371,32 @@ struct StudioTimelineView: View {
 
     // MARK: - Row helpers
 
+    /// Non-neutral mix settings, compact (for the gutter readouts).
+    private func mixReadout(_ fx: Fx) -> [String] {
+        var out: [String] = []
+        if abs(fx.gain - 1) > 0.005 { out.append("Gain: \(String(format: "%.2f", fx.gain))") }
+        if abs(fx.low) > 0.5 || abs(fx.mid) > 0.5 || abs(fx.high) > 0.5 {
+            out.append(String(format: "EQ: %+.0f/%+.0f/%+.0f", fx.low, fx.mid, fx.high))
+        }
+        switch fx.pan {
+        case .follow: out.append("Pan: Follow")
+        case .wide: out.append("Pan: Wide")
+        case .narrow, .value: break
+        }
+        if fx.reverb > 0.005 { out.append("Reverb: \(Int(fx.reverb * 100))%") }
+        return out
+    }
+
+    private func kind(of row: TrackRow) -> TrackRowKind {
+        switch row {
+        case .character(let i): return .character(i)
+        case .image(let i): return .image(i)
+        case .audio(let i): return .audio(i)
+        case .light(let i): return .light(i)
+        case .background(let i): return .background(i)
+        }
+    }
+
     private func commitRename() {
         guard let row = renamingRow else { return }
         let name = renamingText.trimmingCharacters(in: .whitespaces)
@@ -1701,6 +1756,14 @@ struct StudioTimelineView: View {
                 model.selectedMarks.insert(hit)
             }
         } else if let c = clip(at: point) {
+            let isDoubleClick = lastTap.map {
+                Date().timeIntervalSince($0.at) < 0.45 && abs($0.location.x - point.x) < 6
+                    && abs($0.location.y - point.y) < 6
+            } ?? false
+            if isDoubleClick, let row = row(at: point.y) {
+                clipMix = (kind(of: row), c.id, point.x, point.y)
+                return
+            }
             if splitting {
                 model.splitClip(id: c.id, at: time(forX: point.x))
             } else if model.selectedClips.contains(c.id) {
@@ -1962,14 +2025,12 @@ struct TransportBar: View {
             .padding(.vertical, 3)
             .background(theme.scrub, in: RoundedRectangle(cornerRadius: 6))
             Spacer()
-            Text(String(format: "%.1f / %.0fs", model.time, model.duration))
-                .font(.system(.caption, design: .monospaced))
-                .foregroundStyle(lightMode ? Color(red: 0, green: 0.45, blue: 0.1) : .green)
             if let file {
                 ShipButton(model: model, file: file)
             }
         }
         .buttonStyle(.borderless)
+        .focusEffectDisabled()
         .padding(.horizontal, 10)
         .padding(.vertical, 5)
         .background(theme.ruler)

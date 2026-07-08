@@ -337,6 +337,8 @@ struct MotionSection: View {
 struct MixSection: View {
     @Bindable var model: StudioModel
     let kind: TrackRowKind
+    /// When set, edits ONE clip as an override (track mix then leaves it alone).
+    var clipID: String? = nil
 
     private enum PanChoice: String, CaseIterable {
         case centered = "Centered"
@@ -346,7 +348,11 @@ struct MixSection: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text("MIX").font(.caption.bold()).foregroundStyle(.secondary)
+            Text(clipID == nil ? "AUDIO MIX" : "CLIP MIX").font(.caption.bold()).foregroundStyle(.secondary)
+            if clipID != nil {
+                Text("Overrides the track mix for this clip only.")
+                    .font(.caption2).foregroundStyle(.secondary)
+            }
             slider("gain", get: { $0.gain }, set: { $0.gain = $1 }, in: 0...2, fmt: "%.2f",
                    trackOnly: true)
             slider("EQ low", get: { $0.low }, set: { $0.low = $1 }, in: -12...12, fmt: "%+.0fdB")
@@ -366,9 +372,24 @@ struct MixSection: View {
             }
             slider("reverb", get: { $0.reverb }, set: { $0.reverb = $1 }, in: 0...1, fmt: "%.0f%%",
                    display: { $0 * 100 })
+            if clipID != nil {
+                Button("Reset to track mix") { resetClipOverride() }
+                    .font(.caption)
+            }
             Text("Changes apply from the next play.")
                 .font(.caption2).foregroundStyle(.secondary)
         }
+    }
+
+    /// Clears the clip's override and re-syncs it to the track mix.
+    private func resetClipOverride() {
+        guard let id = clipID else { return }
+        let track = trackFxValue
+        updateClip(id) { f in
+            f.low = track.low; f.mid = track.mid; f.high = track.high
+            f.reverb = track.reverb; f.pan = track.pan; f.gain = 1
+        }
+        setClipOverride(id, false)
     }
 
     private var panChoices: [PanChoice] {
@@ -376,7 +397,7 @@ struct MixSection: View {
         return [.centered, .wide]
     }
 
-    private var fx: Fx {
+    private var trackFxValue: Fx {
         switch kind {
         case .character(let i): return model.scene.characters[safe: i]?.trackFx ?? .defaultTrack
         case .audio(let i): return model.scene.audioTracks[safe: i]?.fx ?? .defaultTrack
@@ -384,14 +405,60 @@ struct MixSection: View {
         }
     }
 
-    /// Writes the track fx; unless `trackOnly`, mirrors the change onto every clip.
+    private var fx: Fx {
+        guard let id = clipID else { return trackFxValue }
+        switch kind {
+        case .character(let i):
+            return model.scene.characters[safe: i]?.clips.first { $0.id == id }?.fx ?? .defaultClip
+        case .audio(let i):
+            return model.scene.audioTracks[safe: i]?.clips.first { $0.id == id }?.fx ?? .defaultClip
+        default: return .defaultClip
+        }
+    }
+
+    private func updateClip(_ id: String, _ transform: (inout Fx) -> Void) {
+        switch kind {
+        case .character(let i):
+            guard model.scene.characters.indices.contains(i),
+                  let ci = model.scene.characters[i].clips.firstIndex(where: { $0.id == id }) else { return }
+            transform(&model.scene.characters[i].clips[ci].fx)
+        case .audio(let i):
+            guard model.scene.audioTracks.indices.contains(i),
+                  let ci = model.scene.audioTracks[i].clips.firstIndex(where: { $0.id == id }) else { return }
+            transform(&model.scene.audioTracks[i].clips[ci].fx)
+        default: break
+        }
+    }
+
+    private func setClipOverride(_ id: String, _ on: Bool) {
+        switch kind {
+        case .character(let i):
+            guard model.scene.characters.indices.contains(i),
+                  let ci = model.scene.characters[i].clips.firstIndex(where: { $0.id == id }) else { return }
+            model.scene.characters[i].clips[ci].fxOverride = on ? true : nil
+        case .audio(let i):
+            guard model.scene.audioTracks.indices.contains(i),
+                  let ci = model.scene.audioTracks[i].clips.firstIndex(where: { $0.id == id }) else { return }
+            model.scene.audioTracks[i].clips[ci].fxOverride = on ? true : nil
+        default: break
+        }
+    }
+
+    /// Track mode: writes the track fx and mirrors onto every non-overridden
+    /// clip (unless `trackOnly`). Clip mode: writes just that clip + marks it.
     private func update(trackOnly: Bool = false, _ transform: @escaping (inout Fx) -> Void) {
+        if let id = clipID {
+            updateClip(id, transform)
+            setClipOverride(id, true)
+            return
+        }
         switch kind {
         case .character(let i):
             guard model.scene.characters.indices.contains(i) else { return }
             transform(&model.scene.characters[i].trackFx)
             if !trackOnly {
-                for ci in model.scene.characters[i].clips.indices {
+                for ci in model.scene.characters[i].clips.indices
+                    where model.scene.characters[i].clips[ci].fxOverride != true {
                     transform(&model.scene.characters[i].clips[ci].fx)
                 }
             }
@@ -399,7 +466,8 @@ struct MixSection: View {
             guard model.scene.audioTracks.indices.contains(i) else { return }
             transform(&model.scene.audioTracks[i].fx)
             if !trackOnly {
-                for ci in model.scene.audioTracks[i].clips.indices {
+                for ci in model.scene.audioTracks[i].clips.indices
+                    where model.scene.audioTracks[i].clips[ci].fxOverride != true {
                     transform(&model.scene.audioTracks[i].clips[ci].fx)
                 }
             }
