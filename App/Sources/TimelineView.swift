@@ -120,6 +120,7 @@ struct StudioTimelineView: View {
     @State private var selectedPresence: (rowKey: String, index: Int)?
     @State private var lastTap: (location: CGPoint, at: Date)?
     @State private var resizingTrack: (key: String, baseHeight: CGFloat, minHeight: CGFloat)?
+    @State private var draggingRow: (row: TrackRow, currentY: CGFloat)?
     @State private var peakCache = PeakCache()
     /// Per-track lane heights (session-scoped), keyed by TrackRow.key.
     @State private var trackHeights: [String: CGFloat] = [:]
@@ -261,6 +262,10 @@ struct StudioTimelineView: View {
                 let y = laneTop(of: row)
                 let h = height(of: row)
                 let hidden = isHidden(row)
+                if draggingRow?.row == row {
+                    ctx.fill(Path(CGRect(x: 0, y: y, width: size.width, height: h)),
+                             with: .color(Color.white.opacity(0.08)))
+                }
                 ctx.stroke(Path { p in
                     p.move(to: CGPoint(x: 0, y: y + h))
                     p.addLine(to: CGPoint(x: size.width, y: y + h))
@@ -279,8 +284,43 @@ struct StudioTimelineView: View {
                             .foregroundStyle(hidden ? Color.gray : Color(white: 0.55)),
                          at: CGPoint(x: size.width - 14, y: y + 12))
             }
+            if let dragging = draggingRow,
+               let targetY = insertionLineY(for: dragging) {
+                ctx.stroke(Path { p in
+                    p.move(to: CGPoint(x: 0, y: targetY))
+                    p.addLine(to: CGPoint(x: size.width, y: targetY))
+                }, with: .color(.orange), lineWidth: 2)
+            }
         }
         .gesture(gutterInteraction)
+    }
+
+    /// Rows of the same group as `row` (reordering stays within a type group).
+    private func groupRows(of row: TrackRow) -> [TrackRow] {
+        switch row {
+        case .character: return model.scene.characters.indices.map(TrackRow.character)
+        case .image: return model.scene.imageTracks.indices.map(TrackRow.image)
+        case .audio: return model.scene.audioTracks.indices.map(TrackRow.audio)
+        case .background: return model.scene.backgroundTracks.indices.map(TrackRow.background)
+        }
+    }
+
+    private func dropIndex(for dragging: (row: TrackRow, currentY: CGFloat)) -> Int? {
+        let group = groupRows(of: dragging.row)
+        guard group.count > 1 else { return nil }
+        var best = 0
+        for (i, r) in group.enumerated() {
+            if dragging.currentY > laneTop(of: r) + height(of: r) / 2 { best = i + 1 }
+        }
+        return min(best, group.count)
+    }
+
+    private func insertionLineY(for dragging: (row: TrackRow, currentY: CGFloat)) -> CGFloat? {
+        guard let idx = dropIndex(for: dragging) else { return nil }
+        let group = groupRows(of: dragging.row)
+        if idx < group.count { return laneTop(of: group[idx]) }
+        let last = group[group.count - 1]
+        return laneTop(of: last) + height(of: last)
     }
 
     private var gutterInteraction: some Gesture {
@@ -296,15 +336,33 @@ struct StudioTimelineView: View {
                     trackHeights[tr.key] = min(220, max(tr.minHeight, tr.baseHeight + delta))
                     return
                 }
+                if let dragging = draggingRow {
+                    draggingRow = (dragging.row, value.location.y)
+                    return
+                }
                 if abs(value.startLocation.x - laneLabelWidth) < 6 {
                     resizingGutter = true
                     return
                 }
                 if let row = rowNearBottomEdge(of: value.startLocation.y) {
                     resizingTrack = (row.key(in: model.scene), height(of: row), minHeight(of: row))
+                    return
+                }
+                // Vertical pull on a row label lifts the row for reordering.
+                if abs(value.translation.height) > 8,
+                   value.startLocation.y >= lanesTop,
+                   let row = row(at: value.startLocation.y) {
+                    draggingRow = (row, value.location.y)
                 }
             }
             .onEnded { value in
+                if let dragging = draggingRow {
+                    commitRowMove(dragging)
+                    draggingRow = nil
+                    resizingTrack = nil
+                    resizingGutter = false
+                    return
+                }
                 if value.translation.width.magnitude < 3, value.translation.height.magnitude < 3,
                    let row = row(at: value.location.y) {
                     if value.location.x > laneLabelWidth - 24 {
@@ -316,6 +374,30 @@ struct StudioTimelineView: View {
                 resizingTrack = nil
                 resizingGutter = false
             }
+    }
+
+    private func commitRowMove(_ dragging: (row: TrackRow, currentY: CGFloat)) {
+        guard let target = dropIndex(for: dragging) else { return }
+        model.registerUndoSnapshot(label: "Reorder Tracks")
+        func move<T>(_ items: inout [T], from: Int, to rawTo: Int) {
+            let item = items.remove(at: from)
+            let to = rawTo > from ? rawTo - 1 : rawTo
+            items.insert(item, at: min(max(0, to), items.count))
+        }
+        switch dragging.row {
+        case .character(let i):
+            move(&model.scene.characters, from: i, to: target)
+            // Indices shifted: selection follows the moved row; marks reset.
+            let newIndex = target > i ? target - 1 : target
+            model.selection = [newIndex]
+            model.selectedMarks = []
+        case .image(let i):
+            move(&model.scene.imageTracks, from: i, to: target)
+        case .audio(let i):
+            move(&model.scene.audioTracks, from: i, to: target)
+        case .background(let i):
+            move(&model.scene.backgroundTracks, from: i, to: target)
+        }
     }
 
     private var timelineCanvas: some View {
