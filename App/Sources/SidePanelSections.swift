@@ -177,7 +177,7 @@ struct LightCueInspector: View {
                 set: { model.scene.lightTracks[path.track].cues[path.cue] = $0 })
             VStack(alignment: .leading, spacing: 6) {
                 Text("LIGHT CUE").font(.caption.bold()).foregroundStyle(.secondary)
-                Text("lights never show on screen — drag the yellow point on the stage to aim the shadows")
+                Text("drag the yellow point on the stage to aim the shadows; hit REC on the track to draw its motion")
                     .font(.caption2).foregroundStyle(.secondary)
                 HStack {
                     Text("intensity").font(.caption2).frame(width: 60, alignment: .leading)
@@ -201,19 +201,6 @@ struct LightCueInspector: View {
                             }), in: 0...1)
                     }
                 }
-                Toggle(isOn: Binding(
-                    get: { binding.wrappedValue.to != nil },
-                    set: { on in
-                        var cue = binding.wrappedValue
-                        cue.to = on ? cue.from : nil
-                        binding.wrappedValue = cue
-                    })) {
-                    Text("animate over time (drag the stage point in the cue's second half to set the end position)")
-                        .font(.caption2)
-                }
-                #if os(macOS)
-                .toggleStyle(.checkbox)
-                #endif
             }
         }
     }

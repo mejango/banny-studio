@@ -79,12 +79,40 @@ struct StageView: View {
     private func drawLightHandle(context: GraphicsContext, size: CGSize) {
         // While drawing a light path, show the pen position.
         if model.isLightRecording {
-            if let s = model.lastLightSample {
-                let p = CGPoint(x: s.x * size.width, y: s.y * size.height)
+            if let pen = model.lightPenNow {
+                let p = CGPoint(x: pen.x * size.width, y: pen.y * size.height)
                 context.fill(Path(ellipseIn: CGRect(x: p.x - 4, y: p.y - 4, width: 8, height: 8)),
                              with: .color(.yellow))
                 context.stroke(Path(ellipseIn: CGRect(x: p.x - 8, y: p.y - 8, width: 16, height: 16)),
                                with: .color(.red), lineWidth: 1.5)
+                context.draw(Text(String(format: "☀ %.0f%%", pen.intensity * 100))
+                                .font(.system(size: 9, weight: .bold))
+                                .foregroundStyle(.yellow),
+                             at: CGPoint(x: p.x, y: p.y - 18))
+            }
+            return
+        }
+        // A selected light TRACK always shows where its light is right now.
+        if model.selectedLightCuePath == nil,
+           let key = model.selectedTrackKey,
+           let track = model.scene.lightTracks.first(where: { $0.id == key }) {
+            let state = track.cues.first { model.time >= $0.start && model.time < $0.start + $0.dur }?
+                .state(at: model.time)
+                ?? track.cues.filter { $0.start + $0.dur <= model.time }
+                    .max { ($0.start + $0.dur) < ($1.start + $1.dur) }
+                    .map { $0.state(at: $0.start + $0.dur) }
+                ?? track.cues.first?.from
+            if let state {
+                let p = CGPoint(x: state.x * size.width, y: state.y * size.height)
+                let r: CGFloat = 10
+                context.stroke(Path(ellipseIn: CGRect(x: p.x - r, y: p.y - r, width: r * 2, height: r * 2)),
+                               with: .color(.yellow), style: StrokeStyle(lineWidth: 1.5, dash: [4, 3]))
+                context.fill(Path(ellipseIn: CGRect(x: p.x - 2.5, y: p.y - 2.5, width: 5, height: 5)),
+                             with: .color(.yellow))
+                context.draw(Text(String(format: "☀ %.0f%%", state.intensity * 100))
+                                .font(.system(size: 9, weight: .bold))
+                                .foregroundStyle(.yellow),
+                             at: CGPoint(x: p.x, y: p.y - r - 8))
             }
             return
         }

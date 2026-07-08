@@ -465,6 +465,7 @@ final class StudioModel {
     private var lightSamples: [(t: Double, x: Double, y: Double, intensity: Double)] = []
     var isLightRecording: Bool { lightRecordTrack != nil }
     var lastLightSample: (t: Double, x: Double, y: Double, intensity: Double)? { lightSamples.last }
+    var lightPenNow: (x: Double, y: Double, intensity: Double)? { isLightRecording ? lightPen : nil }
 
     /// Keyboard light control: arrows move, +/- change intensity.
     enum LightKey: Hashable { case up, down, left, right, plus, minus }
