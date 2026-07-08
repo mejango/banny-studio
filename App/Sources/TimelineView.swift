@@ -191,6 +191,9 @@ struct StudioTimelineView: View {
                                                    value: geo.frame(in: .named("tlScroll")).origin)
                         }
                         timelineCanvas
+                            .dropDestination(for: URL.self) { urls, location in
+                                handleFileDrop(urls: urls, location: location)
+                            }
                         if let editing = editingLabel {
                             TextField("", text: $editingText)
                                 .textFieldStyle(.plain)
@@ -334,6 +337,24 @@ struct StudioTimelineView: View {
             y += height(of: r)
         }
         return y
+    }
+
+    /// Finder file dropped on the lanes: import to the bank, cue it where it
+    /// landed — image tracks get an image cue, the Background row (or a video
+    /// anywhere) gets a background cue, an image anywhere else gets a new track.
+    private func handleFileDrop(urls: [URL], location: CGPoint) -> Bool {
+        guard let url = urls.first else { return false }
+        let t = max(0, (time(forX: location.x) * 10).rounded() / 10)
+        guard let asset = model.addAsset(from: url) else { return false }
+        switch row(at: location.y) {
+        case .image(let i) where asset.kind == .image:
+            model.addImageCue(trackIndex: i, assetID: asset.id, at: t)
+        case .background, .some where asset.kind == .video, nil where asset.kind == .video:
+            model.addBackgroundCue(assetID: asset.id, assetName: asset.name, at: t)
+        default:
+            model.addImageTrack(assetID: asset.id, assetName: asset.name)
+        }
+        return true
     }
 
     private func row(at y: CGFloat) -> TrackRow? {
@@ -577,15 +598,7 @@ struct StudioTimelineView: View {
                 }
                 Button("Audio") { model.addAudioTrack() }
                 Button("Light") { model.addLightTrack() }
-                Menu("Image") {
-                    let imageAssets = model.document.assets.filter { $0.kind == .image }
-                    if imageAssets.isEmpty {
-                        Text("add an image to the Asset Bank first")
-                    }
-                    ForEach(imageAssets) { asset in
-                        Button(asset.name) { model.addImageTrack(assetID: asset.id, assetName: asset.name) }
-                    }
-                }
+                Button("Image") { model.addEmptyImageTrack() }
             } label: {
                 HStack(spacing: 5) {
                     Image(systemName: "plus")
@@ -1639,8 +1652,9 @@ struct TransportBar: View {
                     .font(.system(size: 10, weight: .bold))
                     .foregroundStyle(model.recording ? .red : .orange)
                     .lineLimit(1)
+                let pose = livePose
                 ForEach(EventGroup.allCases, id: \.self) { group in
-                    armChip(group)
+                    armChip(group, pose: pose)
                 }
             }
             .padding(.horizontal, 6)
@@ -1660,6 +1674,28 @@ struct TransportBar: View {
         .background(theme.ruler)
     }
 
+    /// The selected character's pose right now — drives the chip glow while
+    /// playing back or holding keys. Nil when idle so nothing simulates.
+    private var livePose: CharacterPose? {
+        guard model.playing || !model.heldCodes.isEmpty,
+              let i = model.selection.first,
+              model.scene.characters.indices.contains(i) else { return nil }
+        return model.simulator.pose(characterIndex: i, at: model.playing ? model.time : model.freeformClock)
+    }
+
+    /// Is this group's motion happening right now (held key or played-back event)?
+    private func groupActive(_ group: EventGroup, pose: CharacterPose?) -> Bool {
+        if model.heldCodes.contains(where: { $0.group == group }) { return true }
+        guard model.playing, let pose else { return false }
+        switch group {
+        case .talk: return pose.talking
+        case .blink: return pose.eye != .open
+        case .jump: return pose.jump != nil
+        case .tilt: return abs(pose.tilt) > 0.5
+        case .move, .depth: return pose.moving
+        }
+    }
+
     /// Who REC will capture: the locked targets while recording, else the selection.
     private var recTargetNames: String {
         let indices = model.recording ? Array(model.recTargets).sorted()
@@ -1671,15 +1707,15 @@ struct TransportBar: View {
         return names.isEmpty ? "—" : names.joined(separator: ", ")
     }
 
-    /// The physical keys that drive each group (web key map).
-    private func chipKeys(_ group: EventGroup) -> String {
+    /// The physical keys that drive each group (web key map), one keycap each.
+    private func chipKeys(_ group: EventGroup) -> [String] {
         switch group {
-        case .move: return "←→"
-        case .depth: return "↑↓"
-        case .tilt: return "T·B"
-        case .talk: return "M"
-        case .blink: return ",·/"
-        case .jump: return "J"
+        case .move: return ["←", "→"]
+        case .depth: return ["↑", "↓"]
+        case .tilt: return ["T", "B"]
+        case .talk: return ["M"]
+        case .blink: return [",", ".", "/"]
+        case .jump: return ["J"]
         }
     }
 
@@ -1694,9 +1730,10 @@ struct TransportBar: View {
 
     /// Labeled arm toggle: colored + filled when it records, hollow when it plays back.
     @ViewBuilder
-    private func armChip(_ group: EventGroup) -> some View {
+    private func armChip(_ group: EventGroup, pose: CharacterPose?) -> some View {
         if let i = model.selection.first, model.scene.characters.indices.contains(i) {
             let armed = model.scene.characters[i].armedGroups.contains(group)
+            let active = groupActive(group, pose: pose)
             let tint = group.color(light: lightMode)
             Button {
                 var c = model.scene.characters[i]
@@ -1706,16 +1743,27 @@ struct TransportBar: View {
                 HStack(spacing: 4) {
                     Text(chipTitle(group))
                         .font(.system(size: 9, weight: .bold))
-                    Text(chipKeys(group))
-                        .font(.system(size: 8, weight: .semibold, design: .monospaced))
-                        .opacity(0.6)
+                    HStack(spacing: 2) {
+                        ForEach(chipKeys(group), id: \.self) { key in
+                            Text(key)
+                                .font(.system(size: 7.5, weight: .bold, design: .monospaced))
+                                .padding(.horizontal, 3).padding(.vertical, 1)
+                                .background((armed ? Color.black : tint).opacity(0.14),
+                                            in: RoundedRectangle(cornerRadius: 3))
+                                .overlay(RoundedRectangle(cornerRadius: 3)
+                                    .stroke((armed ? Color.black : tint).opacity(0.4), lineWidth: 0.5))
+                        }
+                    }
                 }
                 .foregroundStyle(armed ? Color.black.opacity(0.85) : tint.opacity(0.9))
                 .padding(.horizontal, 6).padding(.vertical, 3)
-                .background(armed ? tint : tint.opacity(0.12),
+                .background(armed ? tint : tint.opacity(active ? 0.3 : 0.12),
                             in: RoundedRectangle(cornerRadius: 4))
                 .overlay(RoundedRectangle(cornerRadius: 4)
                     .stroke(tint.opacity(armed ? 0 : 0.6), lineWidth: 1))
+                .shadow(color: tint.opacity(active ? 0.85 : 0), radius: active ? 5 : 0)
+                .brightness(active ? 0.06 : 0)
+                .animation(.easeOut(duration: 0.12), value: active)
             }
             .help("\(group.rawValue): \(armed ? "armed (records)" : "disarmed (plays back)")")
         }

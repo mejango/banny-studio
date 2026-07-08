@@ -79,8 +79,6 @@ final class StudioModel {
             for i in scene.imageTracks.indices {
                 scene.imageTracks[i].cues.removeAll { $0.id == id }
             }
-            // Empty image tracks disappear.
-            scene.imageTracks.removeAll { $0.cues.isEmpty }
             selectedImageCue = nil
         }
         if let id = selectedBackgroundCue {
@@ -382,6 +380,24 @@ final class StudioModel {
 
     // MARK: - Tracks
 
+    /// A track with no content yet — fill it by dragging an image file onto it.
+    func addEmptyImageTrack() {
+        registerUndoSnapshot(label: "Add Image Track")
+        let track = ImageTrack(id: ShowDocumentFile.newID(), name: "Image", cues: [])
+        scene.imageTracks.append(track)
+        selectedTrackKey = track.id
+    }
+
+    func addImageCue(trackIndex: Int, assetID: String, at t: Double) {
+        guard scene.imageTracks.indices.contains(trackIndex) else { return }
+        registerUndoSnapshot(label: "Add Image Cue")
+        let cue = ImageCue(id: ShowDocumentFile.newID(), assetID: assetID,
+                           start: t, dur: 5, from: ImagePlacement())
+        scene.imageTracks[trackIndex].cues.append(cue)
+        scene.imageTracks[trackIndex].cues.sort { $0.start < $1.start }
+        selectedImageCue = cue.id
+    }
+
     func addImageTrack(assetID: String, assetName: String) {
         registerUndoSnapshot(label: "Add Image Track")
         let cue = ImageCue(id: ShowDocumentFile.newID(), assetID: assetID,
@@ -391,7 +407,8 @@ final class StudioModel {
         selectedImageCue = cue.id
     }
 
-    func addBackgroundCue(assetID: String, assetName: String) {
+    func addBackgroundCue(assetID: String, assetName: String, at startTime: Double? = nil) {
+        let time = startTime ?? self.time
         registerUndoSnapshot(label: "Set Background")
         if scene.backgroundTracks.isEmpty {
             scene.backgroundTracks = [BackgroundTrack(id: ShowDocumentFile.newID(), name: "Background")]
