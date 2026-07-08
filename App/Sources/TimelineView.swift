@@ -283,12 +283,12 @@ struct StudioTimelineView: View {
                     .font(.system(size: 11, weight: .semibold))
             }
             .menuStyle(.borderlessButton)
-            .frame(width: max(60, laneLabelWidth + 40), alignment: .leading)
-            .padding(.leading, 8)
+            .padding(.leading, 12)
+            .frame(width: laneLabelWidth, height: 30, alignment: .leading)
+            .background(Color(red: 0.09, green: 0.11, blue: 0.09))
             Spacer()
         }
         .frame(height: 30)
-        .background(Color(red: 0.05, green: 0.07, blue: 0.05))
     }
 
     /// Pinned label gutter: names, eye toggles, track-height pills, width handle.
