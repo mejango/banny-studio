@@ -396,7 +396,7 @@ final class StudioModel {
     /// True when the playhead is at the start but the character on stage isn't
     /// where the saved start position says (freeform moved it, uncommitted).
     func startPoseMismatch(characterIndex i: Int) -> Bool {
-        guard time < 0.1, scene.characters.indices.contains(i),
+        guard freeformActive, time < 0.1, scene.characters.indices.contains(i),
               let pose = displayedPose(characterIndex: i) else { return false }
         let c = scene.characters[i]
         let start = c.recStart ?? StartPose(x: c.x, depth: c.depth, face: c.face)

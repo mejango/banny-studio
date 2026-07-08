@@ -395,7 +395,12 @@ struct StudioTimelineView: View {
     }
 
     private func height(of row: TrackRow) -> CGFloat {
-        baseHeight(of: row) + rowStretch
+        var h = baseHeight(of: row) + rowStretch
+        // Room for the "Set start position" button when it's showing.
+        if case .character(let ci) = row, model.startPoseMismatch(characterIndex: ci) {
+            h += 26
+        }
+        return h
     }
 
     private func baseHeight(of row: TrackRow) -> CGFloat {
