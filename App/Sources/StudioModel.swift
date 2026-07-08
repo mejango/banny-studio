@@ -23,6 +23,8 @@ final class StudioModel {
 
     // Editor state.
     var selection: Set<Int> = [0]
+    /// The track whose inspector the right panel shows (TrackRow key).
+    var selectedTrackKey: String? = "c-0"
     var activeSceneIndex: Int
     /// Held live keys → the codes currently down, per character (drives live sim while recording).
     private(set) var heldCodes: Set<EventCode> = []

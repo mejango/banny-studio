@@ -6,10 +6,12 @@ import BannyCore
 struct AudioSection: View {
     @Bindable var model: StudioModel
     let file: ShowDocumentFile
+    /// When set, clips land on this standalone audio track instead of a character.
+    var audioTrackIndex: Int? = nil
     @State private var importing = false
     @State private var mic = MicRecorder()
 
-    private var target: Int? { model.selection.first }
+    private var target: Int? { audioTrackIndex == nil ? model.selection.first : nil }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -28,12 +30,12 @@ struct AudioSection: View {
             }
             Text(target.map { i in
                 "onto \(model.scene.characters[safe: i]?.name.isEmpty == false ? model.scene.characters[i].name : "banny \((i + 1) % 10)")'s track at the playhead"
-            } ?? "onto the audio track at the playhead")
+            } ?? "onto this audio track at the playhead")
                 .font(.caption2).foregroundStyle(.secondary)
         }
         .fileImporter(isPresented: $importing, allowedContentTypes: [.audio, .mp3, .mpeg4Audio, .wav]) { result in
             if case .success(let url) = result {
-                model.addAudioClip(from: url, characterIndex: target)
+                model.addAudioClip(from: url, characterIndex: target, audioTrackIndex: audioTrackIndex)
             }
         }
     }
@@ -77,7 +79,7 @@ struct AssetBankSection: View {
                         .buttonStyle(.plain).foregroundStyle(.red)
                 }
                 .padding(3)
-                .background(Color(red: 1, green: 0.97, blue: 0.9))
+                .background(Color.primary.opacity(0.06))
             }
         }
         .fileImporter(isPresented: $importing,

@@ -143,7 +143,6 @@ struct StudioTimelineView: View {
     @State private var dragPreviewIndex: Int?
     /// Which track's settings popover is open (row key).
     @State private var settingsRowKey: String?
-    @State private var settingsExpand: String?
     @State private var peakCache = PeakCache()
     /// Per-track lane heights (session-scoped), keyed by TrackRow.key.
     @State private var trackHeights: [String: CGFloat] = [:]
@@ -550,23 +549,6 @@ struct StudioTimelineView: View {
                 labelCtx.draw(Text(label(for: row)).font(.system(size: 10, weight: .semibold))
                                 .foregroundStyle(labelColor(for: row)),
                               at: CGPoint(x: 12, y: y + presenceStripH / 2), anchor: .leading)
-                if case .character(let ci) = row, h >= 58,
-                   let c = model.scene.characters[safe: ci] {
-                    let sizeName = abs(c.size - 1) < 0.01 ? "Normal"
-                        : abs(c.size - 0.62) < 0.01 ? "Small"
-                        : abs(c.size - 0.38) < 0.01 ? "Baby"
-                        : String(format: "%.2f", c.size)
-                    let selectedRow = model.selection.contains(ci)
-                    for (li, line) in [String(format: "spd %.0f", c.speed),
-                                       String(format: "wob %.1f", c.wobble),
-                                       sizeName].enumerated() {
-                        labelCtx.draw(Text(line)
-                                        .font(.system(size: 8.5))
-                                        .foregroundStyle(selectedRow ? theme.labelText : theme.mutedText),
-                                      at: CGPoint(x: 12, y: y + presenceStripH + 8 + CGFloat(li) * 12),
-                                      anchor: .leading)
-                    }
-                }
                 ctx.draw(Text(Image(systemName: hidden ? "eye.slash" : "eye"))
                             .font(.system(size: 10))
                             .foregroundStyle(hidden ? Color.gray : theme.mutedText),
@@ -609,34 +591,21 @@ struct StudioTimelineView: View {
         ZStack(alignment: .topLeading) {
             ForEach(Array(rows.enumerated()), id: \.offset) { _, row in
                 let key = row.key(in: model.scene)
-                let isCharacter: Bool = { if case .character = row { return true }; return false }()
-                Group {
-                    if isCharacter {
-                        // Characters edit values inline (canvas taps); this anchor
-                        // just positions the single-value popover.
-                        Color.clear
-                            .frame(width: 1, height: 1)
-                            .position(x: 70, y: laneTop(of: row) + presenceStripH + 20)
-                    } else {
-                        Button {
-                            settingsExpand = nil
-                            settingsRowKey = settingsRowKey == key ? nil : key
-                        } label: {
-                            Image(systemName: "gearshape.fill")
-                                .font(.system(size: 9))
-                                .foregroundStyle(theme.mutedText)
-                                .frame(width: 18, height: 18)
-                                .contentShape(Rectangle())
-                        }
-                        .buttonStyle(.plain)
-                        .position(x: laneLabelWidth - 36, y: laneTop(of: row) + presenceStripH / 2)
-                    }
+                Button {
+                    settingsRowKey = settingsRowKey == key ? nil : key
+                } label: {
+                    Image(systemName: "gearshape.fill")
+                        .font(.system(size: 9))
+                        .foregroundStyle(theme.mutedText)
+                        .frame(width: 18, height: 18)
+                        .contentShape(Rectangle())
                 }
+                .buttonStyle(.plain)
+                .position(x: laneLabelWidth - 36, y: laneTop(of: row) + presenceStripH / 2)
                 .popover(isPresented: Binding(
                     get: { settingsRowKey == key },
                     set: { if !$0 { settingsRowKey = nil } })) {
-                    TrackSettingsView(model: model, row: row, initialExpanded: settingsExpand,
-                                      only: isCharacter ? settingsExpand : nil)
+                    TrackSettingsView(model: model, row: row)
                         .environment(\.colorScheme, lightMode ? .light : .dark)
                 }
             }
@@ -690,17 +659,13 @@ struct StudioTimelineView: View {
                 }
                 if value.translation.width.magnitude < 3, value.translation.height.magnitude < 3,
                    let row = row(at: value.location.y + scrollOffset.y) {
-                    let localY = value.location.y + scrollOffset.y - laneTop(of: row)
                     if value.location.x > laneLabelWidth - 24 {
                         toggleHidden(row)
-                    } else if case .character(let i) = row, model.selection.contains(i),
-                              localY > presenceStripH + 2, localY < presenceStripH + 40 {
-                        // Value lines (row must already be selected): open just that editor.
-                        let line = Int((localY - presenceStripH - 2) / 12)
-                        settingsExpand = line == 0 ? "speed" : line == 1 ? "wobble" : "size"
-                        settingsRowKey = row.key(in: model.scene)
-                    } else if case .character(let i) = row {
-                        model.selection = [i]
+                    } else {
+                        model.selectedTrackKey = row.key(in: model.scene)
+                        if case .character(let i) = row {
+                            model.selection = [i]
+                        }
                     }
                 }
                 resizingTrack = nil
@@ -1044,8 +1009,7 @@ struct StudioTimelineView: View {
     }
 
     private func isSelectedRow(_ row: TrackRow) -> Bool {
-        if case .character(let i) = row { return model.selection.contains(i) }
-        return false
+        row.key(in: model.scene) == model.selectedTrackKey
     }
 
     private func presence(of row: TrackRow) -> [VisibilityEvent] {
@@ -1257,6 +1221,7 @@ struct StudioTimelineView: View {
     }
 
     private func selectCue(row: TrackRow, id: String) {
+        model.selectedTrackKey = row.key(in: model.scene)
         switch row {
         case .image: model.selectedImageCue = id
         case .light: model.selectedLightCue = id

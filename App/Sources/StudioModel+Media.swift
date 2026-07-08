@@ -7,9 +7,9 @@ extension StudioModel {
 
     // MARK: - Audio clips
 
-    /// Imports an audio file as a clip at the playhead on a character's track
-    /// (or a standalone audio track when characterIndex is nil).
-    func addAudioClip(from url: URL, characterIndex: Int?) {
+    /// Imports an audio file as a clip at the playhead on a character's track,
+    /// a specific audio track, or the first audio track.
+    func addAudioClip(from url: URL, characterIndex: Int?, audioTrackIndex: Int? = nil) {
         let scoped = url.startAccessingSecurityScopedResource()
         defer { if scoped { url.stopAccessingSecurityScopedResource() } }
         guard let data = try? Data(contentsOf: url),
@@ -24,6 +24,8 @@ extension StudioModel {
                              start: time, dur: dur, srcDur: dur)
         if let i = characterIndex, scene.characters.indices.contains(i) {
             scene.characters[i].clips.append(clip)
+        } else if let ti = audioTrackIndex, scene.audioTracks.indices.contains(ti) {
+            scene.audioTracks[ti].clips.append(clip)
         } else {
             if scene.audioTracks.isEmpty {
                 scene.audioTracks.append(AudioTrack(id: ShowDocumentFile.newID(), name: "Audio"))

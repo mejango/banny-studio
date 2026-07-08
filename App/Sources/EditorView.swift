@@ -162,40 +162,100 @@ struct CompactEditor: View {
     }
 }
 
-/// Right panel: tracks, wardrobe, asset bank, script, physics, show playlist.
+/// Right panel: the expanded inspector for the selected track.
 struct SidePanel: View {
     @Bindable var model: StudioModel
     var file: ShowDocumentFile? = nil
+    @AppStorage("studioLightMode") private var lightMode = false
+    private var theme: Theme { lightMode ? .light : .dark }
+
+    private enum Target {
+        case character(Int), audio(Int), image(Int), light(Int), background(Int), none
+    }
+
+    private var target: Target {
+        guard let key = model.selectedTrackKey else { return .none }
+        for i in model.scene.characters.indices where "c-\(i)" == key { return .character(i) }
+        for (i, t) in model.scene.audioTracks.enumerated() where t.id == key { return .audio(i) }
+        for (i, t) in model.scene.imageTracks.enumerated() where t.id == key { return .image(i) }
+        for (i, t) in model.scene.lightTracks.enumerated() where t.id == key { return .light(i) }
+        for (i, t) in model.scene.backgroundTracks.enumerated() where t.id == key { return .background(i) }
+        return .none
+    }
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
-                if let i = model.selection.first, model.scene.characters.indices.contains(i) {
-                    Text(model.scene.characters[i].name.isEmpty ? "banny \((i + 1) % 10)"
-                                                                : model.scene.characters[i].name)
-                        .font(.caption.bold())
+                switch target {
+                case .character(let i):
+                    header(model.scene.characters[safe: i]?.name.isEmpty == false
+                           ? model.scene.characters[i].name : "banny \((i + 1) % 10)")
+                    MotionSection(model: model, characterIndex: i)
+                    if let file {
+                        AudioSection(model: model, file: file)
+                    }
                     WardrobePanel(model: model, characterIndex: i)
-                }
-                if model.selectedImageCuePath != nil {
+                case .audio(let i):
+                    header(model.scene.audioTracks[safe: i]?.name ?? "Audio")
+                    if let file {
+                        AudioSection(model: model, file: file, audioTrackIndex: i)
+                    }
+                case .image(let i):
+                    header(model.scene.imageTracks[safe: i]?.name ?? "Image")
                     ImageCueInspector(model: model)
-                }
-                if model.selectedLightCuePath != nil {
+                    if let file {
+                        AssetBankSection(model: model, file: file)
+                    }
+                case .light(let i):
+                    header(model.scene.lightTracks[safe: i]?.name ?? "Light")
                     LightCueInspector(model: model)
-                }
-                if let file {
-                    AssetBankSection(model: model, file: file)
-                    AudioSection(model: model, file: file)
+                case .background:
+                    header("Background")
+                    stageSection
+                    if let file {
+                        AssetBankSection(model: model, file: file)
+                    }
+                case .none:
+                    Text("Select a track to edit it here.")
+                        .font(.caption).foregroundStyle(.secondary)
                 }
             }
             .padding(10)
         }
-        .background(Color(red: 1, green: 0.99, blue: 0.95))
-        // The panel is a light surface by design (webapp cream); pin it so
-        // system dark mode doesn't render white-on-white chips.
-        .environment(\.colorScheme, .light)
+        .background(lightMode ? Color(red: 1, green: 0.99, blue: 0.95)
+                              : Color(red: 0.1, green: 0.1, blue: 0.13))
+        .environment(\.colorScheme, lightMode ? .light : .dark)
     }
 
+    private func header(_ name: String) -> some View {
+        Text(name).font(.headline)
+    }
 
+    private var stageSection: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("STAGE").font(.caption.bold()).foregroundStyle(.secondary)
+            valueSlider("size", value: Binding(get: { model.scene.gSize },
+                                               set: { model.scene.gSize = $0 }),
+                        range: 0.3...2.5)
+            valueSlider("scale (depth)", value: Binding(get: { model.scene.gScale },
+                                                        set: { model.scene.gScale = $0 }),
+                        range: 0...1.2)
+            valueSlider("gravity", value: Binding(get: { model.scene.gravity },
+                                                  set: { model.scene.gravity = $0 }),
+                        range: 0.3...2.5)
+        }
+    }
+
+    private func valueSlider(_ label: String, value: Binding<Double>,
+                             range: ClosedRange<Double>) -> some View {
+        HStack {
+            Text(label).font(.caption2).frame(width: 78, alignment: .leading)
+            Slider(value: value, in: range)
+            Text(String(format: "%.2f", value.wrappedValue))
+                .font(.system(size: 9, design: .monospaced)).foregroundStyle(.secondary)
+                .frame(width: 30, alignment: .trailing)
+        }
+    }
 }
 
 extension Array {
