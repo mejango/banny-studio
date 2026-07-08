@@ -288,11 +288,16 @@ struct StudioTimelineView: View {
                     // The button's reserved strip doesn't feed the card's size.
                     let available = height(of: row) - presenceStripH - 16 - (mismatch ? 26 : 0)
                     let cardH = isCharacter ? min(available, 160) : min(26, available)
-                    if isCharacter ? available >= 26 : available >= 14 {
+                    // .clipped() hides but does NOT stop hit-testing: cards
+                    // scrolled out of the gutter would float invisibly over
+                    // the transport and steal clicks. Render visible ones only.
+                    let cardY = laneTop(of: row) + presenceStripH + 4 - scrollOffset.y
+                    let onScreen = cardY > -4 && cardY < tlViewport.height
+                    if onScreen, isCharacter ? available >= 26 : available >= 14 {
                         TrackCardButton(model: model, file: file, row: row, cardHeight: cardH)
-                            .offset(x: 10, y: laneTop(of: row) + presenceStripH + 4 - scrollOffset.y)
+                            .offset(x: 10, y: cardY)
                     }
-                    if case .character(let ci) = row, mismatch,
+                    if onScreen, case .character(let ci) = row, mismatch,
                        let c = model.scene.characters[safe: ci] {
                         let lines = CGFloat(3 + mixReadout(c.trackFx).count)
                         Button("Set start position") { model.commitStartPose(characterIndex: ci) }
