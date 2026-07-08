@@ -323,7 +323,7 @@ struct StudioTimelineView: View {
                     p.addLine(to: CGPoint(x: size.width, y: y + h - 1))
                 }, with: .color(.black), lineWidth: 2)
                 let pillActive = resizingTrack?.key == row.key(in: model.scene)
-                ctx.fill(Path(roundedRect: CGRect(x: size.width / 2 - 16, y: y + h - 4.5,
+                ctx.fill(Path(roundedRect: CGRect(x: size.width / 2 - 16, y: y + h - 9,
                                                   width: 32, height: 3), cornerRadius: 1.5),
                          with: .color(Color(white: pillActive ? 0.8 : 0.4)))
                 // Name + whole-track eye sit on the presence-strip line, so the
