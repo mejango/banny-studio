@@ -523,6 +523,94 @@ final class StudioModel {
 
     // MARK: - Recording (web tlRec / recEvent / punch-in)
 
+    // MARK: - Image path recording (drag an image cue around over time)
+
+    private(set) var imageRecordCueID: String?
+    private var imageRecordOwnerIsMedia = false
+    private var imageRecordTrack = 0
+    private var imageRecordAssetID = ""
+    private var imageSamples: [(t: Double, x: Double, y: Double, scale: Double)] = []
+    private var imagePen: (x: Double, y: Double, scale: Double) = (0.5, 0.5, 0.3)
+    var isImageRecording: Bool { imageRecordCueID != nil }
+    var imagePenNow: (x: Double, y: Double, scale: Double)? { isImageRecording ? imagePen : nil }
+    var imageRecordAsset: String? { isImageRecording ? imageRecordAssetID : nil }
+
+    func imageRecordSample(x: Double, y: Double) {
+        guard isImageRecording else { return }
+        imagePen.x = min(1.2, max(-0.2, x))
+        imagePen.y = min(1.2, max(-0.2, y))
+        if let last = imageSamples.last, time - last.t < 0.15 { return }
+        imageSamples.append((time, imagePen.x, imagePen.y, imagePen.scale))
+    }
+
+    private func commitImageRecording() {
+        defer {
+            imageRecordCueID = nil
+            imageSamples = []
+        }
+        guard imageSamples.count >= 2 else { return }
+        registerUndoSnapshot(label: "Record Image Motion")
+        let t0 = imageSamples[0].t
+        let tEnd = imageSamples[imageSamples.count - 1].t
+        var pts = imageSamples
+        var i = 1
+        while i < pts.count - 1 {
+            let a = pts[i - 1], b = pts[i], c = pts[i + 1]
+            let span = max(0.001, c.t - a.t)
+            let f = (b.t - a.t) / span
+            if abs(a.x + (c.x - a.x) * f - b.x) < 0.008,
+               abs(a.y + (c.y - a.y) * f - b.y) < 0.008,
+               abs(a.scale + (c.scale - a.scale) * f - b.scale) < 0.01 {
+                pts.remove(at: i)
+            } else {
+                i += 1
+            }
+        }
+        let assetID = imageRecordAssetID
+        func rebuilt(_ cues: [ImageCue]) -> [ImageCue] {
+            var out: [ImageCue] = []
+            for var cue in cues {
+                let end = cue.start + cue.dur
+                if cue.assetID != assetID || end <= t0 + 0.01 || cue.start >= tEnd - 0.01 {
+                    out.append(cue)
+                } else if cue.start < t0, end > tEnd {
+                    var tail = cue
+                    tail.id = ShowDocumentFile.newID()
+                    tail.from = cue.placement(at: tEnd)
+                    tail.start = tEnd
+                    tail.dur = end - tEnd
+                    if cue.to != nil { cue.to = cue.placement(at: t0) }
+                    cue.dur = t0 - cue.start
+                    out.append(cue)
+                    out.append(tail)
+                } else if cue.start < t0 {
+                    if cue.to != nil { cue.to = cue.placement(at: t0) }
+                    cue.dur = t0 - cue.start
+                    out.append(cue)
+                } else if end > tEnd {
+                    cue.from = cue.placement(at: tEnd)
+                    cue.dur = end - tEnd
+                    cue.start = tEnd
+                    out.append(cue)
+                }
+            }
+            for k in 0..<(pts.count - 1) {
+                let a = pts[k], b = pts[k + 1]
+                guard b.t - a.t > 0.02 else { continue }
+                out.append(ImageCue(id: ShowDocumentFile.newID(), assetID: assetID,
+                                    start: a.t, dur: b.t - a.t,
+                                    from: ImagePlacement(x: a.x, y: a.y, scale: a.scale),
+                                    to: ImagePlacement(x: b.x, y: b.y, scale: b.scale)))
+            }
+            return out.sorted { $0.start < $1.start }
+        }
+        if imageRecordOwnerIsMedia, scene.audioTracks.indices.contains(imageRecordTrack) {
+            scene.audioTracks[imageRecordTrack].cues = rebuilt(scene.audioTracks[imageRecordTrack].cues)
+        } else if scene.imageTracks.indices.contains(imageRecordTrack) {
+            scene.imageTracks[imageRecordTrack].cues = rebuilt(scene.imageTracks[imageRecordTrack].cues)
+        }
+    }
+
     // MARK: - Light path recording ("draw" the light over time)
 
     private(set) var lightRecordTrack: Int?
@@ -549,6 +637,13 @@ final class StudioModel {
         let dy = (heldLightKeys.contains(.down) ? 1.0 : 0) - (heldLightKeys.contains(.up) ? 1.0 : 0)
         let di = (heldLightKeys.contains(.plus) ? 1.0 : 0) - (heldLightKeys.contains(.minus) ? 1.0 : 0)
         let ds = (heldLightKeys.contains(.sizeUp) ? 1.0 : 0) - (heldLightKeys.contains(.sizeDown) ? 1.0 : 0)
+        if isImageRecording {
+            imagePen.x = min(1.2, max(-0.2, imagePen.x + dx * 0.4 * dt))
+            imagePen.y = min(1.2, max(-0.2, imagePen.y + dy * 0.4 * dt))
+            imagePen.scale = min(1.2, max(0.05, imagePen.scale + ds * 0.35 * dt))
+            imageRecordSample(x: imagePen.x, y: imagePen.y)
+            return
+        }
         if isLightRecording {
             lightPen.x = min(1.1, max(-0.1, lightPen.x + dx * 0.4 * dt))
             lightPen.y = min(1.1, max(-0.1, lightPen.y + dy * 0.4 * dt))
@@ -659,6 +754,30 @@ final class StudioModel {
 
     func record() {
         if recording || playing { pause(); return }
+        // A selected image cue records its motion: drag it around as time rolls.
+        if let id = selectedImageCue, let owner = selectedImageCueOwner,
+           selectedTrackKey != nil,
+           scene.audioTracks.contains(where: { $0.id == selectedTrackKey })
+            || scene.imageTracks.contains(where: { $0.id == selectedTrackKey }) {
+            clearFreeform()
+            imageRecordCueID = id
+            imageRecordAssetID = owner.cue.assetID
+            if let ti = scene.audioTracks.firstIndex(where: { $0.id == owner.trackID }) {
+                imageRecordOwnerIsMedia = true
+                imageRecordTrack = ti
+            } else if let ti = scene.imageTracks.firstIndex(where: { $0.id == owner.trackID }) {
+                imageRecordOwnerIsMedia = false
+                imageRecordTrack = ti
+            }
+            imageSamples = []
+            let p = owner.cue.placement(at: time)
+            imagePen = (p.x, p.y, p.scale)
+            recording = true
+            playing = true
+            startWall = Date.timeIntervalSinceReferenceDate - time
+            file?.audioEngine?.syncPlayback(self)
+            return
+        }
         // A selected light track records by DRAWING on the stage.
         if let key = selectedTrackKey,
            let li = scene.lightTracks.firstIndex(where: { $0.id == key }) {
@@ -706,6 +825,11 @@ final class StudioModel {
     }
 
     private func finishRecording() {
+        if isImageRecording {
+            commitImageRecording()
+            recording = false
+            return
+        }
         if isLightRecording {
             commitLightRecording()
             recording = false

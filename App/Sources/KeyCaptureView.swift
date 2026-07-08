@@ -91,7 +91,9 @@ struct KeyCaptureView: NSViewRepresentable {
                     return true
                 }
                 if event.keyCode == 9 {                                     // ⌘V
-                    model.pasteTimeline()
+                    if !model.pasteImageFromPasteboard() {
+                        model.pasteTimeline()
+                    }
                     return true
                 }
                 if event.keyCode == 6 {                                     // ⌘Z / ⇧⌘Z
@@ -104,9 +106,11 @@ struct KeyCaptureView: NSViewRepresentable {
                 }
                 return false
             }
-            // Light tracks take the arrows and +/- (move + intensity).
-            if let key = model.selectedTrackKey,
-               model.scene.lightTracks.contains(where: { $0.id == key }) {
+            // Light tracks and image recording take the arrows + pen keys.
+            if model.isImageRecording
+                || (model.selectedTrackKey.map { key in
+                        model.scene.lightTracks.contains(where: { $0.id == key })
+                    } ?? false) {
                 let lightMap: [UInt16: StudioModel.LightKey] = [
                     123: .left, 124: .right, 126: .up, 125: .down,
                     24: .plus, 69: .plus, 27: .minus, 78: .minus,

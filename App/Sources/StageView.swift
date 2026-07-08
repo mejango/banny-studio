@@ -76,6 +76,26 @@ struct StageView: View {
     /// Temporary editor-only handle for the selected light cue: lights never
     /// render in the scene, but while selected they show a draggable point.
     private func drawLightHandle(context: GraphicsContext, size: CGSize) {
+        // While recording image motion, ghost the asset at the pen.
+        if model.isImageRecording, let pen = model.imagePenNow {
+            let p = CGPoint(x: pen.x * size.width, y: pen.y * size.height)
+            if let assetID = model.imageRecordAsset,
+               let img = media.still(assetID: assetID, file: file) {
+                let w = pen.scale * size.width
+                let h = w * CGFloat(img.height) / CGFloat(max(1, img.width))
+                var ghost = context
+                ghost.opacity = 0.75
+                ghost.draw(Image(decorative: img, scale: 1).interpolation(.none),
+                           in: CGRect(x: p.x - w / 2, y: p.y - h / 2, width: w, height: h))
+                context.stroke(Path(roundedRect: CGRect(x: p.x - w / 2, y: p.y - h / 2,
+                                                        width: w, height: h), cornerRadius: 2),
+                               with: .color(.red), style: StrokeStyle(lineWidth: 1.5, dash: [5, 4]))
+            } else {
+                context.stroke(Path(ellipseIn: CGRect(x: p.x - 8, y: p.y - 8, width: 16, height: 16)),
+                               with: .color(.red), lineWidth: 1.5)
+            }
+            return
+        }
         // While drawing a light path, show the pen position.
         if model.isLightRecording {
             if let pen = model.lightPenNow {
@@ -140,6 +160,11 @@ struct StageView: View {
     private var stageDrag: some Gesture {
         DragGesture(minimumDistance: 4)
             .onChanged { value in
+                if model.isImageRecording {
+                    model.imageRecordSample(x: value.location.x / stageSize.width,
+                                            y: value.location.y / stageSize.height)
+                    return
+                }
                 if model.isLightRecording {
                     model.lightRecordSample(x: value.location.x / stageSize.width,
                                             y: value.location.y / stageSize.height)
@@ -218,9 +243,21 @@ final class StageMediaCache {
 
     func still(assetID: String, file: ShowDocumentFile) -> CGImage? {
         if let hit = stills[assetID] { return hit }
-        guard !failed.contains(assetID), let mediaData = file.assetsMedia[assetID],
-              let src = CGImageSourceCreateWithData(mediaData.data as CFData, nil),
-              let img = CGImageSourceCreateImageAtIndex(src, 0, nil) else {
+        guard !failed.contains(assetID), let mediaData = file.assetsMedia[assetID] else {
+            failed.insert(assetID)
+            return nil
+        }
+        var img = CGImageSourceCreateWithData(mediaData.data as CFData, nil)
+            .flatMap { CGImageSourceCreateImageAtIndex($0, 0, nil) }
+        #if os(macOS)
+        if img == nil, let ns = NSImage(data: mediaData.data) {
+            // SVG (and anything else ImageIO can't touch) rasterizes via NSImage.
+            var rect = CGRect(x: 0, y: 0, width: max(64, ns.size.width * 2),
+                              height: max(64, ns.size.height * 2))
+            img = ns.cgImage(forProposedRect: &rect, context: nil, hints: nil)
+        }
+        #endif
+        guard let img else {
             failed.insert(assetID)
             return nil
         }

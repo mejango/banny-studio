@@ -185,6 +185,9 @@ struct StudioTimelineView: View {
     @State private var hoverLanePoint: CGPoint?
     /// Click/double-click on an empty audio-track spot → import a file there.
     @State private var audioImportAt: (trackIndex: Int, t: Double)?
+    /// Empty media-lane click: add-menu popover (import / bank / paste).
+    @State private var mediaAddAt: (trackIndex: Int, t: Double, x: CGFloat, y: CGFloat)?
+    @State private var imageImportAt: (trackIndex: Int, t: Double)?
     /// Wardrobe-strip click: add a timed outfit change here.
     @State private var outfitPopover: (char: Int, t: Double, x: CGFloat, y: CGFloat)?
     @State private var renamingText = ""
@@ -376,6 +379,16 @@ struct StudioTimelineView: View {
                                    audioTrackIndex: target.trackIndex, at: target.t)
             }
             audioImportAt = nil
+        }
+        .fileImporter(isPresented: Binding(get: { imageImportAt != nil },
+                                           set: { if !$0 { imageImportAt = nil } }),
+                      allowedContentTypes: [.png, .jpeg, .gif, .webP, .svg]) { result in
+            if case .success(let url) = result, let target = imageImportAt,
+               let asset = model.addAsset(from: url) {
+                model.addMediaImageCue(trackIndex: target.trackIndex,
+                                       assetID: asset.id, at: target.t)
+            }
+            imageImportAt = nil
         }
         .onChange(of: model.timelineDeleteRequest) { _, _ in deleteSelection() }
         #if os(macOS)
@@ -917,10 +930,11 @@ struct StudioTimelineView: View {
                 } else if case .light(let li) = row, let track = model.scene.lightTracks[safe: li],
                           size.width >= 120, !track.cues.isEmpty {
                     readoutX = 12 + 28 + 10
-                    let cue = track.cues.first { model.time >= $0.start && model.time < $0.start + $0.dur }
-                        ?? track.cues[0]
-                    let state = cue.state(at: model.time)
-                    readouts = ["Intensity: \(Int((state.intensity * 100).rounded()))%"]
+                    // The 0-second state: the track's first cue at its start.
+                    let first = track.cues.min { $0.start < $1.start } ?? track.cues[0]
+                    let state = first.state(at: first.start)
+                    readouts = ["Intensity: \(Int((state.intensity * 100).rounded()))%",
+                                "Size: \(Int(state.size.rounded()))"]
                 }
                 for (li, line) in readouts.enumerated() {
                     let ly = y + presenceStripH + 13 + CGFloat(li) * 13
@@ -1078,6 +1092,49 @@ struct StudioTimelineView: View {
                                     .presentationBackground(lightMode ? Color(red: 1, green: 0.99, blue: 0.95)
                                                                       : Color(red: 0.13, green: 0.13, blue: 0.16))
                                     .environment(\.colorScheme, lightMode ? .light : .dark)
+                                }
+                        }
+                        if let ma = mediaAddAt {
+                            Color.clear
+                                .frame(width: 1, height: 1)
+                                .offset(x: ma.x, y: ma.y)
+                                .popover(isPresented: Binding(
+                                    get: { mediaAddAt != nil },
+                                    set: { if !$0 { mediaAddAt = nil } })) {
+                                    VStack(alignment: .leading, spacing: 8) {
+                                        Text(String(format: "Add to track at %.1fs", ma.t))
+                                            .font(.caption.bold())
+                                        Button("Import audio…") {
+                                            audioImportAt = (ma.trackIndex, ma.t)
+                                            mediaAddAt = nil
+                                        }
+                                        Button("Import image…") {
+                                            imageImportAt = (ma.trackIndex, ma.t)
+                                            mediaAddAt = nil
+                                        }
+                                        #if os(macOS)
+                                        Button("Paste from clipboard") {
+                                            _ = model.pasteImageFromPasteboard(
+                                                mediaTrackIndex: ma.trackIndex, at: ma.t)
+                                            mediaAddAt = nil
+                                        }
+                                        #endif
+                                        let images = model.document.assets.filter { $0.kind == .image }
+                                        if !images.isEmpty {
+                                            Divider()
+                                            Text("FROM THE BANK").font(.caption2.bold())
+                                                .foregroundStyle(.secondary)
+                                            ForEach(images) { asset in
+                                                Button(asset.name) {
+                                                    model.addMediaImageCue(trackIndex: ma.trackIndex,
+                                                                           assetID: asset.id, at: ma.t)
+                                                    mediaAddAt = nil
+                                                }
+                                            }
+                                        }
+                                    }
+                                    .padding(12)
+                                    .frame(width: 240)
                                 }
                         }
                         if let cm = clipMix {
@@ -1292,6 +1349,28 @@ struct StudioTimelineView: View {
                            assetID: "",
                            selected: model.selectedLightCue == cue.id,
                            animated: cue.to != nil, ctx: content)
+                // Change lanes under the bar, colored like the pen chips:
+                // move (blue), intensity (yellow), size (purple).
+                guard let to = cue.to else { continue }
+                let x0 = x(forTime: cue.start)
+                let w = max(2, CGFloat(cue.dur) * pxPerSecond)
+                let laneY = y + h - 14
+                var lane = 0
+                func changeBar(_ changed: Bool, _ color: Color) {
+                    if changed {
+                        content.fill(Path(roundedRect: CGRect(x: x0, y: laneY + CGFloat(lane) * 4,
+                                                              width: w, height: 3),
+                                          cornerRadius: 1.5),
+                                     with: .color(color))
+                    }
+                    lane += 1
+                }
+                changeBar(abs(to.x - cue.from.x) > 0.002 || abs(to.y - cue.from.y) > 0.002,
+                          Color(red: 0.45, green: 0.62, blue: 0.95))
+                changeBar(abs(to.intensity - cue.from.intensity) > 0.005,
+                          Color(red: 0.95, green: 0.78, blue: 0.25))
+                changeBar(abs(to.size - cue.from.size) > 1,
+                          Color(red: 0.75, green: 0.55, blue: 0.95))
             }
         case .background(let i):
             let cues = model.scene.backgroundTracks[i].cues
@@ -2231,8 +2310,9 @@ struct StudioTimelineView: View {
                 selectCue(row: row, id: cue.id)
             }
         } else if case .audio(let ai) = row(at: y), !model.hasTimelineSelection {
-            // Empty audio-lane click: bring in a file right here.
-            audioImportAt = (ai, max(0, (time(forX: point.x) * 10).rounded() / 10))
+            // Empty media-lane click: choose what to add right here.
+            mediaAddAt = (ai, max(0, (time(forX: point.x) * 10).rounded() / 10),
+                          point.x, point.y)
         } else {
             model.selectedMarks = []
             model.selectedClips = []
@@ -2481,9 +2561,19 @@ struct TransportBar: View {
                 .help("Record the selected characters (⇧Space)")
                 if let key = model.selectedTrackKey,
                    model.scene.lightTracks.contains(where: { $0.id == key }) {
-                    lightChip(title: "Move", keys: ["←", "→", "↑", "↓"])
-                    lightChip(title: "Intensity", keys: ["−", "+"])
-                    lightChip(title: "Size", keys: ["1", "2"])
+                    lightChip(title: "Move", keys: ["←", "→", "↑", "↓"],
+                              tint: Color(red: 0.45, green: 0.62, blue: 0.95))
+                    lightChip(title: "Intensity", keys: ["−", "+"],
+                              tint: Color(red: 0.95, green: 0.78, blue: 0.25))
+                    lightChip(title: "Size", keys: ["1", "2"],
+                              tint: Color(red: 0.75, green: 0.55, blue: 0.95))
+                } else if model.selectedImageCue != nil,
+                          model.scene.audioTracks.contains(where: { $0.id == model.selectedTrackKey })
+                            || model.scene.imageTracks.contains(where: { $0.id == model.selectedTrackKey }) {
+                    lightChip(title: "Move", keys: ["←", "→", "↑", "↓"],
+                              tint: Color(red: 0.45, green: 0.62, blue: 0.95))
+                    lightChip(title: "Scale", keys: ["1", "2"],
+                              tint: Color(red: 0.75, green: 0.55, blue: 0.95))
                 } else {
                     let pose = livePose
                     ForEach(EventGroup.allCases, id: \.self) { group in
@@ -2530,6 +2620,11 @@ struct TransportBar: View {
 
     /// Who REC will capture: the locked targets while recording, else the selection.
     private var recTargetNames: String {
+        if model.isImageRecording || (model.selectedImageCue != nil
+            && (model.scene.audioTracks.contains { $0.id == model.selectedTrackKey }
+                || model.scene.imageTracks.contains { $0.id == model.selectedTrackKey })) {
+            return "image — drag on stage"
+        }
         if let key = model.selectedTrackKey,
            let t = model.scene.lightTracks.first(where: { $0.id == key }) {
             return "\(t.name) — draw on stage"
@@ -2543,9 +2638,9 @@ struct TransportBar: View {
         return names.isEmpty ? "—" : names.joined(separator: ", ")
     }
 
-    /// Key-hint chip for light control (matches the arm-chip look, yellow).
-    private func lightChip(title: String, keys: [String]) -> some View {
-        let tint = Color(red: 0.95, green: 0.78, blue: 0.25)
+    /// Key-hint chip for pen control (matches the arm-chip look).
+    private func lightChip(title: String, keys: [String],
+                           tint: Color = Color(red: 0.95, green: 0.78, blue: 0.25)) -> some View {
         return HStack(spacing: 4) {
             Text(title)
                 .font(.system(size: 9, weight: .bold))

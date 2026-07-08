@@ -81,7 +81,7 @@ struct WideEditor: View {
     }
 
     private var header: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: 16) {
             Image(lightMode ? "HeaderLogo" : "HeaderLogoDark")
                 .resizable()
                 .interpolation(.none)

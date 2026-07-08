@@ -1,5 +1,8 @@
 import Foundation
 import AVFoundation
+#if os(macOS)
+import AppKit
+#endif
 import SwiftUI
 import BannyCore
 
@@ -135,6 +138,13 @@ final class CueThumbCache {
                     kCGImageSourceThumbnailMaxPixelSize: 512,
                 ] as CFDictionary)
             }
+            #if os(macOS)
+            if img == nil, let ns = NSImage(data: media.data) {
+                var rect = CGRect(x: 0, y: 0, width: max(64, ns.size.width * 2),
+                                  height: max(64, ns.size.height * 2))
+                img = ns.cgImage(forProposedRect: &rect, context: nil, hints: nil)
+            }
+            #endif
             await MainActor.run { [weak self] in
                 if let img { self?.cache[assetID] = img } else { self?.failed.insert(assetID) }
                 self?.pending.remove(assetID)

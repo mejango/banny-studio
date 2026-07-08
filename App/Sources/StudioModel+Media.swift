@@ -1,5 +1,8 @@
 import Foundation
 import AVFoundation
+#if os(macOS)
+import AppKit
+#endif
 import BannyCore
 
 /// Media + editing operations: audio clips, backgrounds, captions, clipboard.
@@ -132,6 +135,49 @@ extension StudioModel {
     }
 
     // MARK: - Asset bank
+
+    /// Raw-bytes asset add (pasteboard, generated content).
+    @discardableResult
+    func addAsset(data: Data, ext: String, name: String) -> Asset? {
+        registerUndoSnapshot(label: "Add Asset")
+        let id = ShowDocumentFile.newID()
+        file?.assetsMedia[id] = (data, ext)
+        let kind: Asset.Kind = ["mp4", "mov", "webm", "m4v"].contains(ext) ? .video : .image
+        let asset = Asset(id: id, name: name, kind: kind, file: "\(id).\(ext)")
+        document.assets.append(asset)
+        return asset
+    }
+
+    #if os(macOS)
+    /// ⌘V with an image on the system pasteboard: import it to the bank and
+    /// cue it on the given media track (or the selected/first one).
+    @discardableResult
+    func pasteImageFromPasteboard(mediaTrackIndex: Int? = nil, at t: Double? = nil) -> Bool {
+        let pb = NSPasteboard.general
+        var newAsset: Asset?
+        if let urls = pb.readObjects(forClasses: [NSURL.self]) as? [URL],
+           let url = urls.first,
+           ["png", "jpg", "jpeg", "gif", "svg", "webp"].contains(url.pathExtension.lowercased()) {
+            newAsset = addAsset(from: url)
+        } else if let data = pb.data(forType: .png) {
+            newAsset = addAsset(data: data, ext: "png", name: "Pasted image")
+        } else if let tiff = pb.data(forType: .tiff),
+                  let rep = NSBitmapImageRep(data: tiff),
+                  let png = rep.representation(using: .png, properties: [:]) {
+            newAsset = addAsset(data: png, ext: "png", name: "Pasted image")
+        }
+        guard let asset = newAsset, asset.kind == .image else { return newAsset != nil }
+        let ti = mediaTrackIndex
+            ?? scene.audioTracks.firstIndex { $0.id == selectedTrackKey }
+            ?? scene.audioTracks.indices.first
+        if let ti {
+            addMediaImageCue(trackIndex: ti, assetID: asset.id, at: t ?? time)
+        } else {
+            addImageTrack(assetID: asset.id, assetName: asset.name)
+        }
+        return true
+    }
+    #endif
 
     /// Imports an image/video file into the bank and returns the new asset.
     @discardableResult
