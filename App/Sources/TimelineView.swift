@@ -245,6 +245,14 @@ struct StudioTimelineView: View {
             ZStack(alignment: .topLeading) {
                 GutterWheelRedirect(gutterWidth: laneLabelWidth)
                 gutterCanvas
+                // Starting-outfit cards: click to edit the base wardrobe.
+                ForEach(Array(model.scene.characters.indices), id: \.self) { ci in
+                    let row = TrackRow.character(ci)
+                    if height(of: row) - presenceStripH >= 66 {
+                        OutfitCardButton(model: model, characterIndex: ci)
+                            .offset(x: 10, y: laneTop(of: row) + presenceStripH + 4 - scrollOffset.y)
+                    }
+                }
                 newTrackRow
                     .offset(y: totalLaneHeight - scrollOffset.y)
             }
@@ -374,6 +382,20 @@ struct StudioTimelineView: View {
             model.addImageTrack(assetID: asset.id, assetName: asset.name)
         }
         return true
+    }
+
+    /// The outfit-change dot near a click, if any.
+    private func outfitEvent(at point: CGPoint) -> (char: Int, index: Int)? {
+        guard let row = row(at: point.y), case .character(let ci) = row,
+              model.scene.characters.indices.contains(ci) else { return nil }
+        let zones = characterLaneZones(h: height(of: row))
+        let cy = laneTop(of: row) + zones.eventTop + 6 * zones.subH + zones.subH / 2
+        guard abs(point.y - cy) < 8 else { return nil }
+        for (i, ev) in model.scene.characters[ci].events.enumerated() {
+            guard case .outfit(let t, _, _) = ev else { continue }
+            if abs(x(forTime: t) - point.x) < 7 { return (ci, i) }
+        }
+        return nil
     }
 
     private func row(at y: CGFloat) -> TrackRow? {
@@ -1062,6 +1084,11 @@ struct StudioTimelineView: View {
             let cy = y + zones.eventTop + 6 * zones.subH + zones.subH / 2
             ctx.fill(Path(ellipseIn: CGRect(x: cx - 3, y: cy - 3, width: 6, height: 6)),
                      with: .color(lightMode ? .black : .white))
+            if let sel = model.selectedOutfitEvent, sel.char == i,
+               character.events.indices.contains(sel.index), character.events[sel.index] == ev {
+                ctx.stroke(Path(ellipseIn: CGRect(x: cx - 5.5, y: cy - 5.5, width: 11, height: 11)),
+                           with: .color(.orange), lineWidth: 1.5)
+            }
         }
         for clip in character.clips {
             drawClip(clip, top: y + zones.clipTop, height: zones.clipH, ctx: ctx)
@@ -1433,6 +1460,20 @@ struct StudioTimelineView: View {
             selectCue(row: row, id: cueHit.id)
             return
         }
+        // Outfit-change dots: click selects (Delete removes); ⌘-click removes.
+        if let dot = outfitEvent(at: point) {
+            if isCommandDown() {
+                model.selectedOutfitEvent = dot
+                model.deleteTimelineSelection()
+            } else if model.selectedOutfitEvent?.char == dot.char,
+                      model.selectedOutfitEvent?.index == dot.index {
+                model.selectedOutfitEvent = nil
+            } else {
+                model.selectedOutfitEvent = dot
+            }
+            return
+        }
+        if model.selectedOutfitEvent != nil { model.selectedOutfitEvent = nil }
         let splitting = isCommandDown()
         if let hit = mark(at: point) {
             if splitting {

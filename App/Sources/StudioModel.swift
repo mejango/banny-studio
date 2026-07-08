@@ -39,6 +39,8 @@ final class StudioModel {
     /// Image cue selected on the timeline (drag on stage repositions it).
     var selectedImageCue: String?
     var selectedBackgroundCue: String?
+    /// A clicked outfit-change dot: (character, index into its events).
+    var selectedOutfitEvent: (char: Int, index: Int)?
     var selectedLightCue: String?
     private var markClipboard: [(character: Int, code: EventCode, start: Double, end: Double)] = []
 
@@ -109,6 +111,15 @@ final class StudioModel {
                 scene.imageTracks[i].cues.removeAll { $0.id == id }
             }
             selectedImageCue = nil
+        }
+        if let sel = selectedOutfitEvent {
+            if scene.characters.indices.contains(sel.char),
+               scene.characters[sel.char].events.indices.contains(sel.index),
+               case .outfit = scene.characters[sel.char].events[sel.index] {
+                registerUndoSnapshot(label: "Delete Outfit Change")
+                scene.characters[sel.char].events.remove(at: sel.index)
+            }
+            selectedOutfitEvent = nil
         }
         if let id = selectedBackgroundCue {
             registerUndoSnapshot(label: "Delete Background Cue")
@@ -389,6 +400,15 @@ final class StudioModel {
         registerUndoSnapshot(label: "Remove Character")
         scene.characters.remove(at: index)
         selection = scene.characters.isEmpty ? [] : [min(index, scene.characters.count - 1)]
+    }
+
+    /// Edits the base (t=0) outfit regardless of where the playhead is.
+    func setBaseOutfit(characterIndex: Int, slot: Int, name: String?) {
+        guard scene.characters.indices.contains(characterIndex) else { return }
+        registerUndoSnapshot(label: "Outfit")
+        var c = scene.characters[characterIndex]
+        if let name { c.baseOutfit[slot] = name } else { c.baseOutfit.removeValue(forKey: slot) }
+        scene.characters[characterIndex] = c
     }
 
     func setOutfit(characterIndex: Int, slot: Int, name: String?) {

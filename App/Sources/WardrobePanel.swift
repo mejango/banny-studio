@@ -7,6 +7,8 @@ import BannyRender
 struct WardrobePanel: View {
     @Bindable var model: StudioModel
     let characterIndex: Int
+    /// Edit the base (t=0) outfit instead of recording timed changes.
+    var baseOnly = false
 
     private static let outfitSlots = [2, 3, 4, 6, 8, 9, 10, 11, 12, 13]
     private let columns = Array(repeating: GridItem(.flexible(), spacing: 0), count: 3)
@@ -40,16 +42,14 @@ struct WardrobePanel: View {
                      items: ["default", "eyeliner", "fierce", "glassy", "surprised", "introspective"].map {
                          ($0, $0, SharedAssets.catalog.eyesImage(option: $0, expression: .open, body: body_))
                      }) { name in
-                model.setOutfit(characterIndex: characterIndex, slot: 5,
-                                name: name == "default" ? nil : name)
+                apply(slot: 5, name: name == "default" ? nil : name)
             }
             slotGrid(title: "Mouth", selected: outfit[7] ?? "default", allowNone: false,
                      crop: Self.cropRegion(forSlot: 7),
                      items: ["default", "lipstick", "gapteeth", "open"].map {
                          ($0, $0, SharedAssets.catalog.mouthImage(option: $0, state: .closed, body: body_))
                      }) { name in
-                model.setOutfit(characterIndex: characterIndex, slot: 7,
-                                name: name == "default" ? nil : name)
+                apply(slot: 7, name: name == "default" ? nil : name)
             }
             ForEach(Self.outfitSlots, id: \.self) { slot in
                 let items = SharedAssets.catalog.outfits(inSlot: slot)
@@ -59,8 +59,7 @@ struct WardrobePanel: View {
                              items: items.map {
                                  ($0.name, $0.label, SharedAssets.catalog.outfitImage($0.name, body: body_))
                              }) { name in
-                        model.setOutfit(characterIndex: characterIndex, slot: slot,
-                                        name: name.isEmpty ? nil : name)
+                        apply(slot: slot, name: name.isEmpty ? nil : name)
                     }
                 }
             }
@@ -68,7 +67,16 @@ struct WardrobePanel: View {
     }
 
     private var currentOutfit: [Int: String] {
-        model.simulator.pose(characterIndex: characterIndex, at: model.time).outfit
+        baseOnly ? (model.scene.characters[safe: characterIndex]?.baseOutfit ?? [:])
+                 : model.simulator.pose(characterIndex: characterIndex, at: model.time).outfit
+    }
+
+    private func apply(slot: Int, name: String?) {
+        if baseOnly {
+            model.setBaseOutfit(characterIndex: characterIndex, slot: slot, name: name)
+        } else {
+            model.setOutfit(characterIndex: characterIndex, slot: slot, name: name)
+        }
     }
 
     private func slotName(_ slot: Int) -> String {
@@ -160,5 +168,75 @@ struct MannequinThumb: View {
                 .interpolation(.none), in: box)
         }
         .clipped()
+    }
+}
+
+/// The character's full starting outfit on a mini mannequin (renderer slot order).
+struct OutfitCard: View {
+    let character: BannyCore.Character
+
+    var body: some View {
+        Canvas(rendersAsynchronously: false) { ctx, size in
+            ctx.fill(Path(CGRect(origin: .zero, size: size)),
+                     with: .color(Color(red: 0.96, green: 0.95, blue: 0.91)))
+            let crop = WardrobePanel.cropRegion(forSlot: 0) // full body
+            let s = size.height / crop.height
+            let box = CGRect(x: -crop.minX * s + (size.width - crop.width * s) / 2,
+                             y: -crop.minY * s, width: 400 * s, height: 400 * s)
+            let cat = SharedAssets.catalog
+            let o = character.baseOutfit
+            let headWorn = o[4] != nil
+            var hidden = Set<Int>()
+            if headWorn { hidden.formUnion([6, 12]) }
+            if o[9] != nil { hidden.formUnion([10, 11]) }
+            func draw(_ img: CGImage?) {
+                if let img {
+                    ctx.draw(Image(decorative: img, scale: 1).interpolation(.none), in: box)
+                }
+            }
+            // FrameRenderer slot order, flat (no pose).
+            draw(o[2].flatMap { cat.outfitImage($0, body: character.body) })
+            draw(cat.bodyImage(character.body))
+            if let n = o[3] { draw(cat.outfitImage(n, body: character.body)) }
+            else { draw(cat.necklaceImage(body: character.body)) }
+            draw(o[4].flatMap { cat.outfitImage($0, body: character.body) })
+            if !headWorn {
+                draw(cat.eyesImage(option: o[5] ?? "default", expression: .open, body: character.body))
+                if !hidden.contains(6) { draw(o[6].flatMap { cat.outfitImage($0, body: character.body) }) }
+                draw(cat.mouthImage(option: o[7] ?? "default", state: .closed, body: character.body))
+            }
+            for slot in [8, 9, 10, 11, 12, 13] where !hidden.contains(slot) {
+                draw(o[slot].flatMap { cat.outfitImage($0, body: character.body) })
+            }
+        }
+        .clipped()
+    }
+}
+
+/// Gutter card: the starting outfit, click to edit it (always edits base).
+struct OutfitCardButton: View {
+    @Bindable var model: StudioModel
+    let characterIndex: Int
+    @State private var editing = false
+
+    var body: some View {
+        if let c = model.scene.characters[safe: characterIndex] {
+            Button { editing = true } label: {
+                OutfitCard(character: c)
+                    .frame(width: 30, height: 54)
+                    .clipShape(RoundedRectangle(cornerRadius: 4))
+                    .overlay(RoundedRectangle(cornerRadius: 4)
+                        .stroke(Color.primary.opacity(0.3), lineWidth: 1))
+            }
+            .buttonStyle(.plain)
+            .help("Starting outfit — click to edit")
+            .popover(isPresented: $editing) {
+                ScrollView {
+                    WardrobePanel(model: model, characterIndex: characterIndex, baseOnly: true)
+                        .padding(10)
+                }
+                .frame(width: 300, height: 430)
+            }
+        }
     }
 }
