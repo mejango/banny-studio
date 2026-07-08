@@ -281,7 +281,7 @@ struct StudioTimelineView: View {
                     let available = height(of: row) - presenceStripH - 16
                     if available >= 26 {
                         TrackCardButton(model: model, file: file, row: row,
-                                        cardHeight: min(available, (laneLabelWidth - 56) * 54 / 30))
+                                        cardHeight: min(available, 160))
                             .offset(x: 10, y: laneTop(of: row) + presenceStripH + 4 - scrollOffset.y)
                     }
                 }
@@ -309,6 +309,11 @@ struct StudioTimelineView: View {
             }
         }
         .background(theme.surface)
+        .onChange(of: neededGutterWidth) { _, needed in
+            if needed > laneLabelWidthStore {
+                laneLabelWidthStore = min(300, needed)
+            }
+        }
         .simultaneousGesture(
                 MagnifyGesture()
                     .onChanged { g in
@@ -414,6 +419,20 @@ struct StudioTimelineView: View {
 
     private var totalLaneHeight: CGFloat {
         rows.reduce(0) { $0 + height(of: $1) }
+    }
+
+    /// Gutter width needed so the outfit card plus its readouts fit; the
+    /// gutter auto-expands (never shrinks) to this when rows grow tall.
+    private var neededGutterWidth: Double {
+        var need = 0.0
+        for row in rows {
+            guard case .character = row else { continue }
+            let available = height(of: row) - presenceStripH - 16
+            guard available >= 26 else { continue }
+            let cardW = (min(available, 160) * 30 / 54).rounded()
+            need = max(need, Double(12 + cardW + 10 + 74))
+        }
+        return need
     }
 
     private func laneTop(of row: TrackRow) -> CGFloat {
@@ -808,7 +827,7 @@ struct StudioTimelineView: View {
                 if case .character(let ci) = row, let c = model.scene.characters[safe: ci] {
                     let available = h - presenceStripH - 16
                     if available >= 26, size.width >= 120 {
-                        let cardH = min(available, (size.width - 56) * 54 / 30)
+                        let cardH = min(available, 160)
                         let tx = 12 + (cardH * 30 / 54).rounded() + 10
                         let sizeName = abs(c.size - 1) < 0.01 ? "Normal"
                             : abs(c.size - 0.62) < 0.01 ? "Small"
