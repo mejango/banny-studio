@@ -73,6 +73,9 @@ struct WideEditor: View {
                 }
             }
             .background(theme.surface)
+            // Drive SwiftUI's semantic colors (.primary on buttons/menus) from the
+            // studio theme, not the system appearance.
+            .environment(\.colorScheme, lightMode ? .light : .dark)
         }
     }
 
