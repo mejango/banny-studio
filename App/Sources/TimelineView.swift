@@ -2104,11 +2104,24 @@ struct StudioTimelineView: View {
            abs(p.x - x(forTime: c.start)) < edge || abs(p.x - x(forTime: c.start + c.dur)) < edge {
             return true
         }
-        if let (_, cue) = cue(at: p)
+        if let (row, cue) = cue(at: p)
             ?? cue(at: CGPoint(x: p.x - 6, y: p.y))
-            ?? cue(at: CGPoint(x: p.x + 6, y: p.y)),
-           abs(p.x - x(forTime: cue.start)) < edge || abs(p.x - x(forTime: cue.start + cue.dur)) < edge {
-            return true
+            ?? cue(at: CGPoint(x: p.x + 6, y: p.y)) {
+            var start = cue.start
+            var end = cue.start + cue.dur
+            // Chains resize only at their OUTER edges — interior segment
+            // boundaries are not handles.
+            if case .light(let li) = row {
+                let run = StudioModel.lightRun(in: model.scene.lightTracks[li].cues,
+                                               containing: cue.id)
+                if let f = run.first, let l = run.last {
+                    start = f.start
+                    end = l.start + l.dur
+                }
+            }
+            if abs(p.x - x(forTime: start)) < edge || abs(p.x - x(forTime: end)) < edge {
+                return true
+            }
         }
         if let m = mark(at: p),
            abs(p.x - x(forTime: m.start)) < 4 || abs(p.x - x(forTime: m.end)) < 4 {
