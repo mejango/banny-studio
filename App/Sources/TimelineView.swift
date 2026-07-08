@@ -174,6 +174,7 @@ struct StudioTimelineView: View {
                 headerBand
             }
             .frame(height: lanesTop)
+            ZStack(alignment: .topLeading) {
             ScrollView([.horizontal, .vertical]) {
                 ZStack(alignment: .topLeading) {
                     ZStack(alignment: .topLeading) {
@@ -203,13 +204,6 @@ struct StudioTimelineView: View {
                         }
                     }
                     .padding(.leading, laneLabelWidth)
-                    gutterCanvas
-                        .frame(width: laneLabelWidth, height: totalLaneHeight)
-                        .offset(x: scrollOffset.x)
-                    gearButtons
-                        .offset(x: scrollOffset.x)
-                    newTrackRow
-                        .offset(x: scrollOffset.x, y: totalLaneHeight)
                 }
                 .frame(width: laneLabelWidth + max(600, contentWidth + 40),
                        height: totalLaneHeight + 34, alignment: .topLeading)
@@ -218,6 +212,18 @@ struct StudioTimelineView: View {
             .onPreferenceChange(TLOffsetKey.self) { origin in
                 // origin.x includes the leading gutter padding at rest.
                 scrollOffset = CGPoint(x: laneLabelWidth - origin.x, y: -origin.y)
+            }
+            // Pinned gutter: never moves horizontally; tracks vertical scroll.
+            ZStack(alignment: .topLeading) {
+                GutterWheelRedirect(gutterWidth: laneLabelWidth)
+                gutterCanvas
+                gearButtons
+                    .offset(y: -scrollOffset.y)
+                newTrackRow
+                    .offset(y: totalLaneHeight - scrollOffset.y)
+            }
+            .frame(width: laneLabelWidth)
+            .clipped()
             }
         }
         .background(theme.surface)
@@ -507,9 +513,11 @@ struct StudioTimelineView: View {
 
     /// Pinned label gutter: names, eye toggles, track-height pills, width handle.
     private var gutterCanvas: some View {
-        Canvas { ctx, size in
-            ctx.fill(Path(CGRect(origin: .zero, size: size)),
-                     with: .color(theme.gutterBase))
+        Canvas { ctx0, size in
+            ctx0.fill(Path(CGRect(origin: .zero, size: size)),
+                      with: .color(theme.gutterBase))
+            var ctx = ctx0
+            ctx.translateBy(x: 0, y: -scrollOffset.y)
             ctx.stroke(Path { p in
                 p.move(to: CGPoint(x: size.width - 0.5, y: 0))
                 p.addLine(to: CGPoint(x: size.width - 0.5, y: size.height))
@@ -553,7 +561,7 @@ struct StudioTimelineView: View {
             case .active(let p):
                 if abs(p.x - laneLabelWidth) < 6 {
                     NSCursor.resizeLeftRight.set()
-                } else if rowNearBottomEdge(of: p.y) != nil {
+                } else if rowNearBottomEdge(of: p.y + scrollOffset.y) != nil {
                     NSCursor.resizeUpDown.set()
                 } else {
                     NSCursor.arrow.set()
@@ -618,7 +626,7 @@ struct StudioTimelineView: View {
                     return
                 }
                 if let dragging = draggingRow {
-                    let updated = (dragging.row, value.location.y)
+                    let updated = (dragging.row, value.location.y + scrollOffset.y)
                     draggingRow = updated
                     dragPreviewIndex = previewSlot(for: updated)
                     return
@@ -627,14 +635,14 @@ struct StudioTimelineView: View {
                     resizingGutter = true
                     return
                 }
-                if let row = rowNearBottomEdge(of: value.startLocation.y) {
+                if let row = rowNearBottomEdge(of: value.startLocation.y + scrollOffset.y) {
                     resizingTrack = (row.key(in: model.scene), height(of: row), minHeight(of: row))
                     return
                 }
                 // Vertical pull on a row label lifts the row for reordering.
                 if abs(value.translation.height) > 8,
-                   let row = row(at: value.startLocation.y) {
-                    draggingRow = (row, value.location.y)
+                   let row = row(at: value.startLocation.y + scrollOffset.y) {
+                    draggingRow = (row, value.location.y + scrollOffset.y)
                     dragPreviewIndex = groupRows(of: row).firstIndex(of: row)
                 }
             }
@@ -648,7 +656,7 @@ struct StudioTimelineView: View {
                     return
                 }
                 if value.translation.width.magnitude < 3, value.translation.height.magnitude < 3,
-                   let row = row(at: value.location.y) {
+                   let row = row(at: value.location.y + scrollOffset.y) {
                     if value.location.x > laneLabelWidth - 24 {
                         toggleHidden(row)
                     } else if case .character(let i) = row {
@@ -1567,3 +1575,43 @@ struct TLOffsetKey: PreferenceKey {
         value = nextValue()
     }
 }
+
+#if os(macOS)
+import AppKit
+
+/// The pinned gutter sits over the timeline's scroll view and would swallow
+/// scroll-wheel events. This redirector re-posts wheel events that land on the
+/// gutter to just right of it, so scrolling works anywhere.
+struct GutterWheelRedirect: NSViewRepresentable {
+    let gutterWidth: CGFloat
+
+    func makeNSView(context: Context) -> RedirectView {
+        let v = RedirectView()
+        v.gutterWidth = gutterWidth
+        return v
+    }
+
+    func updateNSView(_ nsView: RedirectView, context: Context) {
+        nsView.gutterWidth = gutterWidth
+    }
+
+    final class RedirectView: NSView {
+        var gutterWidth: CGFloat = 110
+
+        override func scrollWheel(with event: NSEvent) {
+            // Find the scroll view sharing our window and hand it the event.
+            guard let window, let content = window.contentView else { return }
+            let probe = NSPoint(x: convert(NSPoint(x: gutterWidth + 20, y: bounds.midY), to: nil).x,
+                                y: event.locationInWindow.y)
+            if let target = content.hitTest(probe), let scroll = target.enclosingScrollView {
+                scroll.scrollWheel(with: event)
+            }
+        }
+    }
+}
+#else
+struct GutterWheelRedirect: View {
+    let gutterWidth: CGFloat
+    var body: some View { Color.clear }
+}
+#endif
