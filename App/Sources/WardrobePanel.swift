@@ -23,7 +23,7 @@ struct WardrobePanel: View {
         case 3:               // Necklace → torso up
             return CGRect(x: 115, y: 30, width: 170, height: 190)
         case 12:              // Head top → torso up, centered on the head
-            return CGRect(x: 132, y: 26, width: 150, height: 196)
+            return CGRect(x: 118, y: 26, width: 150, height: 196)
         default:              // Backside, Suit, Suit top/bottom, Hand → full body
             return CGRect(x: 115, y: 30, width: 170, height: 324)
         }
@@ -79,12 +79,19 @@ struct WardrobePanel: View {
                           items: [(name: String, label: String, image: CGImage?)],
                           choose: @escaping (String) -> Void) -> some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text(title).font(.caption2.bold()).foregroundStyle(.secondary)
-            LazyVGrid(columns: columns, spacing: 0) {
+            HStack(spacing: 8) {
+                Text(title).font(.caption2.bold()).foregroundStyle(.secondary)
                 if allowNone {
-                    thumbCell(name: "", label: "none", image: nil, crop: crop,
-                              selected: selected.isEmpty, choose: choose)
+                    Button("none") { choose("") }
+                        .buttonStyle(.plain)
+                        .font(.system(size: 9, weight: .semibold))
+                        .padding(.horizontal, 7).padding(.vertical, 2)
+                        .background(selected.isEmpty ? Color.orange : Color.primary.opacity(0.08),
+                                    in: Capsule())
+                        .foregroundStyle(selected.isEmpty ? .white : .secondary)
                 }
+            }
+            LazyVGrid(columns: columns, spacing: 0) {
                 ForEach(items, id: \.name) { item in
                     thumbCell(name: item.name, label: item.label, image: item.image, crop: crop,
                               selected: item.name == selected, choose: choose)

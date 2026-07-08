@@ -15,8 +15,14 @@ struct StageView: View {
     @State private var dragLast: CGSize?
     @State private var stageSize: CGSize = .init(width: 1280, height: 720)
 
+    /// The 60fps schedule only runs while something is actually animating;
+    /// paused edits redraw via model observation instead.
+    private var renderLoopPaused: Bool {
+        !model.playing && model.heldCodes.isEmpty
+    }
+
     var body: some View {
-        TimelineView(.animation) { timeline in
+        TimelineView(.animation(minimumInterval: 1.0 / 60.0, paused: renderLoopPaused)) { timeline in
             Canvas(rendersAsynchronously: false) { context, size in
                 model.tick(now: Date.timeIntervalSinceReferenceDate)
                 model.freeformNudge(dt: 1 / 60)
@@ -36,7 +42,9 @@ struct StageView: View {
                 }
                 drawImageCueHighlight(context: context, size: size)
                 drawLightHandle(context: context, size: size)
-                DispatchQueue.main.async { stageSize = size }
+                if abs(stageSize.width - size.width) > 1 {
+                    DispatchQueue.main.async { stageSize = size }
+                }
                 _ = timeline.date
             }
         }

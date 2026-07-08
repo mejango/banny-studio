@@ -159,8 +159,11 @@ struct StudioTimelineView: View {
     @State private var resizingGutter = false
     @State private var scrubZoomBase: Double?
     @State private var pinchZoomBase: Double?
-    /// Lanes viewport scroll offset (drives the pinned header band + gutter).
-    @State private var scrollOffset: CGPoint = .zero
+    /// Lanes viewport scroll offset. An observable holder (not view @State) so
+    /// scrolling re-renders ONLY the pinned overlays that read it — the heavy
+    /// lanes canvas is untouched by scroll ticks.
+    @State private var offsets = TLOffsets()
+    private var scrollOffset: CGPoint { CGPoint(x: offsets.x, y: offsets.y) }
     private let rulerHeight: CGFloat = 18
     private let scrubHeight: CGFloat = 16
     private let defaultLaneHeight: CGFloat = 52
@@ -208,9 +211,10 @@ struct StudioTimelineView: View {
                        height: totalLaneHeight + 34, alignment: .topLeading)
             }
             .coordinateSpace(name: "tlScroll")
-            .onPreferenceChange(TLOffsetKey.self) { origin in
+            .onPreferenceChange(TLOffsetKey.self) { [offsets] origin in
                 // origin.x includes the leading gutter padding at rest.
-                scrollOffset = CGPoint(x: laneLabelWidth - origin.x, y: -origin.y)
+                offsets.x = laneLabelWidth - origin.x
+                offsets.y = -origin.y
             }
             // Pinned gutter: never moves horizontally; tracks vertical scroll.
             ZStack(alignment: .topLeading) {
@@ -668,7 +672,9 @@ struct StudioTimelineView: View {
     private var timelineCanvas: some View {
         Canvas { ctx, size in
             for row in rows { drawLane(row, ctx: ctx, size: size) }
-            drawPlayhead(ctx: ctx, size: size)
+        }
+        .overlay(alignment: .topLeading) {
+            PlayheadOverlay(model: model, pxPerSecond: pxPerSecond, color: theme.playhead)
         }
         .gesture(interaction)
     }
@@ -1625,3 +1631,27 @@ struct GutterWheelRedirect: NSViewRepresentable {
     }
 }
 #endif
+
+/// Scroll offsets as a reference type: mutating it re-renders only observers.
+@Observable
+final class TLOffsets {
+    var x: CGFloat = 0
+    var y: CGFloat = 0
+}
+
+/// The playhead as its own observer, so 60fps time updates during playback
+/// repaint one thin line instead of the whole lanes canvas.
+struct PlayheadOverlay: View {
+    let model: StudioModel
+    let pxPerSecond: CGFloat
+    let color: Color
+
+    var body: some View {
+        Rectangle()
+            .fill(color)
+            .frame(width: 1.5)
+            .frame(maxHeight: .infinity)
+            .offset(x: 4 + CGFloat(model.time) * pxPerSecond)
+            .allowsHitTesting(false)
+    }
+}
