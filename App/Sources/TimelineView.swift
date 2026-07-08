@@ -381,6 +381,30 @@ struct StudioTimelineView: View {
                            animated: false, ctx: content)
             }
         }
+
+        // Dim lane content across the spans where the track is not on stage.
+        let visible = visibleSegments(presence(of: row))
+        var edges: [Double] = [0]
+        for (a, b) in visible { edges.append(a); edges.append(b) }
+        edges.append(model.duration)
+        var cursor = 0.0
+        for (a, b) in visible.sorted(by: { $0.0 < $1.0 }) {
+            if a > cursor {
+                shadeHidden(from: cursor, to: a, laneY: y, laneH: h, ctx: ctx)
+            }
+            cursor = max(cursor, b)
+        }
+        if cursor < model.duration {
+            shadeHidden(from: cursor, to: model.duration, laneY: y, laneH: h, ctx: ctx)
+        }
+    }
+
+    private func shadeHidden(from: Double, to: Double, laneY y: CGFloat, laneH h: CGFloat,
+                             ctx: GraphicsContext) {
+        guard to > from else { return }
+        let rect = CGRect(x: x(forTime: from), y: y + presenceStripH,
+                          width: CGFloat(to - from) * pxPerSecond, height: h - presenceStripH)
+        ctx.fill(Path(rect), with: .color(Color.black.opacity(0.55)))
     }
 
     private let captionStripH: CGFloat = 13
@@ -398,28 +422,30 @@ struct StudioTimelineView: View {
         return (clipTop, clipH, eventTop, subH)
     }
 
-    /// Presence strip: tinted spans while visible, eye/eye-slash markers at toggles.
-    private func drawPresenceStrip(_ row: TrackRow, y: CGFloat, ctx: GraphicsContext) {
-        let events = presence(of: row).sorted { $0.t < $1.t }
-        let stripRect = CGRect(x: 0, y: y, width: contentWidth + 40, height: presenceStripH)
-        ctx.fill(Path(stripRect), with: .color(Color.white.opacity(0.025)))
-        // Visible spans.
-        var spanStart: Double? = events.first?.visible == false || events.isEmpty || events[0].t > 0 ? 0 : nil
-        var cursorVisible = true
+    /// Contiguous [from, to) spans where the track is visible.
+    private func visibleSegments(_ events: [VisibilityEvent]) -> [(Double, Double)] {
         var segments: [(Double, Double)] = []
-        var last = 0.0
-        for ev in events {
-            if cursorVisible, ev.visible == false, let s0 = spanStart {
+        var spanStart: Double? = 0
+        var cursorVisible = true
+        for ev in events.sorted(by: { $0.t < $1.t }) {
+            if cursorVisible, !ev.visible, let s0 = spanStart {
                 segments.append((s0, ev.t))
                 spanStart = nil
             } else if !cursorVisible, ev.visible {
                 spanStart = ev.t
             }
             cursorVisible = ev.visible
-            last = ev.t
         }
         if let s0 = spanStart { segments.append((s0, model.duration)) }
-        _ = last
+        return segments
+    }
+
+    /// Presence strip: tinted spans while visible, eye/eye-slash markers at toggles.
+    private func drawPresenceStrip(_ row: TrackRow, y: CGFloat, ctx: GraphicsContext) {
+        let events = presence(of: row).sorted { $0.t < $1.t }
+        let stripRect = CGRect(x: 0, y: y, width: contentWidth + 40, height: presenceStripH)
+        ctx.fill(Path(stripRect), with: .color(Color.white.opacity(0.025)))
+        let segments = visibleSegments(events)
         for (a, b) in segments {
             ctx.fill(Path(CGRect(x: x(forTime: a), y: y + 2,
                                  width: max(2, CGFloat(b - a) * pxPerSecond), height: presenceStripH - 4)),
