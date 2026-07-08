@@ -94,30 +94,35 @@ extension StudioModel {
         for i in scene.audioTracks.indices { move(&scene.audioTracks[i].clips) }
     }
 
-    // MARK: - Background
+    // MARK: - Asset bank
 
-    func setBackground(imageData: Data, ext: String, crop: Crop) {
-        registerUndoSnapshot(label: "Background")
-        let sceneID = document.scenes[activeSceneIndex].id
-        file?.backgrounds[sceneID] = (imageData, ext)
-        scene.background = .image(file: "\(sceneID).\(ext)", crop: crop)
-        backgroundRevision += 1
+    /// Imports an image/video file into the bank and returns the new asset.
+    @discardableResult
+    func addAsset(from url: URL) -> Asset? {
+        let scoped = url.startAccessingSecurityScopedResource()
+        defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+        guard let data = try? Data(contentsOf: url) else { return nil }
+        let ext = url.pathExtension.isEmpty ? "png" : url.pathExtension.lowercased()
+        let kind: Asset.Kind = ["mp4", "mov", "webm", "m4v"].contains(ext) ? .video : .image
+        registerUndoSnapshot(label: "Add Asset")
+        let id = ShowDocumentFile.newID()
+        file?.assetsMedia[id] = (data, ext)
+        let asset = Asset(id: id, name: url.deletingPathExtension().lastPathComponent,
+                          kind: kind, file: "\(id).\(ext)")
+        document.assets.append(asset)
+        return asset
     }
 
-    func setBackgroundCrop(_ crop: Crop) {
-        guard let bg = scene.background else { return }
-        switch bg {
-        case .image(let f, _): scene.background = .image(file: f, crop: crop)
-        case .video(let f, _): scene.background = .video(file: f, crop: crop)
+    func removeAsset(id: String) {
+        registerUndoSnapshot(label: "Remove Asset")
+        document.assets.removeAll { $0.id == id }
+        file?.assetsMedia.removeValue(forKey: id)
+        for i in scene.imageTracks.indices {
+            scene.imageTracks[i].cues.removeAll { $0.assetID == id }
         }
-        backgroundRevision += 1
-    }
-
-    func clearBackground() {
-        registerUndoSnapshot(label: "Clear Background")
-        let sceneID = document.scenes[activeSceneIndex].id
-        file?.backgrounds.removeValue(forKey: sceneID)
-        scene.background = nil
+        for i in scene.backgroundTracks.indices {
+            scene.backgroundTracks[i].cues.removeAll { $0.assetID == id }
+        }
         backgroundRevision += 1
     }
 

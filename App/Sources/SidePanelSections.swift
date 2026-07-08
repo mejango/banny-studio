@@ -39,41 +39,121 @@ struct AudioSection: View {
     }
 }
 
-/// Background: pick an image, choose crop mode, clear.
-struct BackgroundSection: View {
+/// The set's reusable assets: import once, use as backgrounds or stage images.
+struct AssetBankSection: View {
     @Bindable var model: StudioModel
+    let file: ShowDocumentFile
     @State private var importing = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text("BACKGROUND").font(.caption.bold()).foregroundStyle(.secondary)
-            HStack {
-                Button("Choose Image…") { importing = true }.font(.caption)
-                if model.scene.background != nil {
-                    Button("Clear") { model.clearBackground() }
-                        .font(.caption).foregroundStyle(.red)
-                }
+            Text("ASSET BANK").font(.caption.bold()).foregroundStyle(.secondary)
+            Button("＋ Add image/video…") { importing = true }.font(.caption)
+            if model.document.assets.isEmpty {
+                Text("Assets you add live with the show and can back any number of background or image cues.")
+                    .font(.caption2).foregroundStyle(.secondary)
             }
-            if case .image(_, let crop) = model.scene.background {
-                Picker("", selection: Binding(
-                    get: { crop },
-                    set: { model.setBackgroundCrop($0) })) {
-                    ForEach([Crop.cover, .fit, .stretch, .tile], id: \.self) {
-                        Text($0.rawValue).tag($0)
+            ForEach(model.document.assets) { asset in
+                HStack(spacing: 6) {
+                    AssetThumb(assetID: asset.id, file: file)
+                        .frame(width: 34, height: 24)
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(asset.name).font(.caption2.bold()).lineLimit(1)
+                        Text(asset.kind.rawValue).font(.system(size: 8)).foregroundStyle(.secondary)
                     }
+                    Spacer()
+                    Button("BG") { model.addBackgroundCue(assetID: asset.id, assetName: asset.name) }
+                        .font(.system(size: 9, weight: .bold))
+                        .help("Set as the background from the playhead onward")
+                    if asset.kind == .image {
+                        Button("Stage") { model.addImageTrack(assetID: asset.id, assetName: asset.name) }
+                            .font(.system(size: 9, weight: .bold))
+                            .help("Add to the stage as an image track at the playhead")
+                    }
+                    Button("×") { model.removeAsset(id: asset.id) }
+                        .buttonStyle(.plain).foregroundStyle(.red)
                 }
-                .pickerStyle(.segmented)
-                .controlSize(.small)
+                .padding(3)
+                .background(Color(red: 1, green: 0.97, blue: 0.9))
             }
         }
         .fileImporter(isPresented: $importing,
-                      allowedContentTypes: [.png, .jpeg, .gif, .webP, .svg]) { result in
-            guard case .success(let url) = result else { return }
-            let scoped = url.startAccessingSecurityScopedResource()
-            defer { if scoped { url.stopAccessingSecurityScopedResource() } }
-            guard let data = try? Data(contentsOf: url) else { return }
-            let ext = url.pathExtension.isEmpty ? "png" : url.pathExtension.lowercased()
-            model.setBackground(imageData: data, ext: ext, crop: .cover)
+                      allowedContentTypes: [.png, .jpeg, .gif, .webP, .svg, .mpeg4Movie, .quickTimeMovie]) { result in
+            if case .success(let url) = result {
+                model.addAsset(from: url)
+            }
+        }
+    }
+}
+
+/// Tiny bank thumbnail (images only; videos get a film icon).
+struct AssetThumb: View {
+    let assetID: String
+    let file: ShowDocumentFile
+
+    var body: some View {
+        Group {
+            if let media = file.assetsMedia[assetID],
+               let img = decodeThumb(media.data) {
+                Image(decorative: img, scale: 1).resizable().scaledToFill()
+            } else {
+                Image(systemName: "film").foregroundStyle(.secondary)
+            }
+        }
+        .clipShape(RoundedRectangle(cornerRadius: 3))
+    }
+
+    private func decodeThumb(_ data: Data) -> CGImage? {
+        guard let src = CGImageSourceCreateWithData(data as CFData, nil) else { return nil }
+        return CGImageSourceCreateThumbnailAtIndex(src, 0, [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceThumbnailMaxPixelSize: 80,
+        ] as CFDictionary)
+    }
+}
+
+/// Placement controls for the selected image cue: position, size, motion.
+struct ImageCueInspector: View {
+    @Bindable var model: StudioModel
+
+    var body: some View {
+        if let path = model.selectedImageCuePath {
+            let binding = Binding(
+                get: { model.scene.imageTracks[path.track].cues[path.cue] },
+                set: { model.scene.imageTracks[path.track].cues[path.cue] = $0 })
+            VStack(alignment: .leading, spacing: 6) {
+                Text("IMAGE CUE").font(.caption.bold()).foregroundStyle(.secondary)
+                Text("drag it on the stage to place; use ⤢ size below")
+                    .font(.caption2).foregroundStyle(.secondary)
+                placement("size ⤢", value: Binding(
+                    get: { binding.wrappedValue.from.scale },
+                    set: { v in
+                        var cue = binding.wrappedValue
+                        cue.from.scale = v
+                        if cue.to != nil { cue.to?.scale = v }
+                        binding.wrappedValue = cue
+                    }), range: 0.05...1.2)
+                Toggle(isOn: Binding(
+                    get: { binding.wrappedValue.to != nil },
+                    set: { on in
+                        var cue = binding.wrappedValue
+                        cue.to = on ? cue.from : nil
+                        binding.wrappedValue = cue
+                    })) {
+                    Text("move over time (drag the stage while the playhead is in the second half of the cue to set the end position)")
+                        .font(.caption2)
+                }
+                #if os(macOS)
+                .toggleStyle(.checkbox)
+                #endif
+            }
+        }
+    }
+
+    private func placement(_ label: String, value: Binding<Double>, range: ClosedRange<Double>) -> some View {
+        HStack {
+            Text(label).font(.caption2).frame(width: 60, alignment: .leading)
+            Slider(value: value, in: range)
         }
     }
 }

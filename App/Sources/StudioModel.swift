@@ -32,6 +32,9 @@ final class StudioModel {
     // Timeline selection (shared with keyboard shortcuts).
     var selectedMarks: Set<PerfMark> = []
     var selectedClips: Set<String> = []
+    /// Image cue selected on the timeline (drag on stage repositions it).
+    var selectedImageCue: String?
+    var selectedBackgroundCue: String?
     private var markClipboard: [(character: Int, code: EventCode, start: Double, end: Double)] = []
 
     /// ⌘C: copy selected marks (times kept relative to the earliest mark).
@@ -68,32 +71,50 @@ final class StudioModel {
         }
         for id in selectedClips { removeClip(id: id) }
         selectedClips = []
+        if let id = selectedImageCue {
+            registerUndoSnapshot(label: "Delete Image Cue")
+            for i in scene.imageTracks.indices {
+                scene.imageTracks[i].cues.removeAll { $0.id == id }
+            }
+            // Empty image tracks disappear.
+            scene.imageTracks.removeAll { $0.cues.isEmpty }
+            selectedImageCue = nil
+        }
+        if let id = selectedBackgroundCue {
+            registerUndoSnapshot(label: "Delete Background Cue")
+            for i in scene.backgroundTracks.indices {
+                scene.backgroundTracks[i].cues.removeAll { $0.id == id }
+            }
+            selectedBackgroundCue = nil
+            backgroundRevision += 1
+        }
+    }
+
+    /// The selected image cue's track/cue indices, if any.
+    var selectedImageCuePath: (track: Int, cue: Int)? {
+        guard let id = selectedImageCue else { return nil }
+        for (ti, track) in scene.imageTracks.enumerated() {
+            if let ci = track.cues.firstIndex(where: { $0.id == id }) { return (ti, ci) }
+        }
+        return nil
     }
 
     init(document: ShowDocument) {
         self.document = document
-        self.activeSceneIndex = min(max(0, document.settings.activeScene), max(0, document.scenes.count - 1))
+        self.activeSceneIndex = 0
     }
 
+    /// The single stage/timeline (v3).
     var scene: SceneState {
-        get { document.scenes[activeSceneIndex].state }
-        set { document.scenes[activeSceneIndex].state = newValue }
+        get { document.stage }
+        set { document.stage = newValue }
     }
 
     var simulator: SceneSimulator { SceneSimulator(state: scene) }
 
     /// Timeline duration: web tlDurNeeded — max content end + 3s, clamped 20..3600.
     var duration: Double {
-        var end = 0.0
-        for c in scene.characters {
-            end = max(end, c.events.last?.t ?? 0)
-            for clip in c.clips { end = max(end, clip.start + clip.dur) }
-            for s in c.subs { end = max(end, s.start + s.dur) }
-        }
-        for t in scene.audioTracks {
-            for clip in t.clips { end = max(end, clip.start + clip.dur) }
-        }
-        return min(3600, max(20, (end + 3).rounded(.up)))
+        min(3600, max(20, (scene.contentEnd + 3).rounded(.up)))
     }
 
     // MARK: - Transport
@@ -282,69 +303,58 @@ final class StudioModel {
         scene.characters[characterIndex] = c
     }
 
-    // MARK: - Scenes
+    // MARK: - Tracks
 
-    func addScene() {
-        pause()
-        registerUndoSnapshot(label: "Add Scene")
-        document.scenes.append(BannyCore.Scene(id: ShowDocumentFile.newID(),
-                                               name: "Scene \(document.scenes.count + 1)",
-                                               state: ShowDocumentFile.defaultSceneState()))
-        switchScene(to: document.scenes.count - 1)
+    func addImageTrack(assetID: String, assetName: String) {
+        registerUndoSnapshot(label: "Add Image Track")
+        let cue = ImageCue(id: ShowDocumentFile.newID(), assetID: assetID,
+                           start: time, dur: 5, from: ImagePlacement())
+        scene.imageTracks.append(ImageTrack(id: ShowDocumentFile.newID(),
+                                            name: assetName, cues: [cue]))
+        selectedImageCue = cue.id
     }
 
-    func removeScene(at index: Int) {
-        guard document.scenes.count > 1, document.scenes.indices.contains(index) else { return }
-        pause()
-        registerUndoSnapshot(label: "Delete Scene")
-        document.scenes.remove(at: index)
-        activeSceneIndex = min(activeSceneIndex > index ? activeSceneIndex - 1 : activeSceneIndex,
-                               document.scenes.count - 1)
-        document.settings.activeScene = activeSceneIndex
-    }
-
-    func switchScene(to index: Int) {
-        guard document.scenes.indices.contains(index) else { return }
-        pause()
-        activeSceneIndex = index
-        document.settings.activeScene = index
-        time = 0
-        selection = scene.characters.isEmpty ? [] : [0]
-    }
-
-    func moveScene(from: Int, to: Int) {
-        guard from != to, document.scenes.indices.contains(from) else { return }
-        registerUndoSnapshot(label: "Reorder Scenes")
-        let current = document.scenes[activeSceneIndex]
-        let moved = document.scenes.remove(at: from)
-        document.scenes.insert(moved, at: min(to, document.scenes.count))
-        activeSceneIndex = document.scenes.firstIndex { $0.id == current.id } ?? 0
-        document.settings.activeScene = activeSceneIndex
+    func addBackgroundCue(assetID: String, assetName: String) {
+        registerUndoSnapshot(label: "Set Background")
+        if scene.backgroundTracks.isEmpty {
+            scene.backgroundTracks = [BackgroundTrack(id: ShowDocumentFile.newID(), name: "Backgrounds")]
+        }
+        // New cue runs from the playhead to the end of content (or +30s).
+        let end = max(scene.contentEnd, time + 30)
+        // Trim any cue that overlaps the new start.
+        var cues = scene.backgroundTracks[0].cues
+        for i in cues.indices where cues[i].start < time && cues[i].start + cues[i].dur > time {
+            cues[i].dur = time - cues[i].start
+        }
+        cues.removeAll { $0.start >= time }
+        cues.append(BackgroundCue(id: ShowDocumentFile.newID(), assetID: assetID,
+                                  start: time, dur: end - time))
+        scene.backgroundTracks[0].cues = cues.sorted { $0.start < $1.start }
+        backgroundRevision += 1
     }
 
     // MARK: - Show playlist
 
     func addShowSegment(from: Double, to: Double) {
-        let scene = document.scenes[activeSceneIndex]
         document.show.append(ShowSegment(
-            sceneID: scene.id,
-            name: "\(scene.name) \(String(format: "%.1f", from))–\(String(format: "%.1f", to))s",
+            name: "\(String(format: "%.1f", from))–\(String(format: "%.1f", to))s",
             from: from, to: to))
     }
 
     // MARK: - Undo
 
-    /// Scene-state snapshot undo, mirroring the web's per-scene undo stack.
+    /// Stage snapshot undo (the whole timeline state).
     func registerUndoSnapshot(label: String) {
-        let snapshot = scene
-        let sceneIndex = activeSceneIndex
+        let snapshot = document.stage
         undoManager?.registerUndo(withTarget: self) { model in
             MainActor.assumeIsolated {
-                let redo = model.document.scenes[sceneIndex].state
-                model.document.scenes[sceneIndex].state = snapshot
+                let redo = model.document.stage
+                model.document.stage = snapshot
+                model.backgroundRevision += 1
                 model.undoManager?.registerUndo(withTarget: model) { m in
                     MainActor.assumeIsolated {
-                        m.document.scenes[sceneIndex].state = redo
+                        m.document.stage = redo
+                        m.backgroundRevision += 1
                     }
                 }
             }

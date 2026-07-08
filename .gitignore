@@ -3,5 +3,5 @@
 *.xcuserdata*
 DerivedData/
 *.xcodeproj/
-ep1.bannyshow/
+*.bannyshow/
 *.mp4

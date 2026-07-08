@@ -14,7 +14,7 @@ final class ShowDocumentFile: ReferenceFileDocument {
 
     /// Media bytes carried alongside the document JSON. Keyed by clip/scene id.
     var audio: [String: (data: Data, ext: String)]
-    var backgrounds: [String: (data: Data, ext: String)]
+    var assetsMedia: [String: (data: Data, ext: String)]
 
     @MainActor private var _model: StudioModel?
     @MainActor private var _audioEngine: LiveAudioEngine?
@@ -37,16 +37,16 @@ final class ShowDocumentFile: ReferenceFileDocument {
 
     init() {
         var doc = ShowDocument()
-        doc.scenes = [Scene(id: Self.newID(), name: "Scene 1", state: Self.defaultSceneState())]
+        doc.stage = Self.defaultSceneState()
         self.initialDocument = doc
         self.audio = [:]
-        self.backgrounds = [:]
+        self.assetsMedia = [:]
     }
 
     init(imported: V1Importer.Result) {
         self.initialDocument = imported.document
         self.audio = imported.audioFiles
-        self.backgrounds = imported.backgroundFiles
+        self.assetsMedia = imported.backgroundFiles
     }
 
     required init(configuration: ReadConfiguration) throws {
@@ -66,7 +66,10 @@ final class ShowDocumentFile: ReferenceFileDocument {
             return out
         }
         self.audio = media(in: "audio")
-        self.backgrounds = media(in: "bg")
+        // v3 keeps bank media in assets/; v2 packages used bg/.
+        var assets = media(in: "bg")
+        assets.merge(media(in: "assets")) { _, new in new }
+        self.assetsMedia = assets
         self.initialDocument = doc
     }
 
@@ -94,7 +97,7 @@ final class ShowDocumentFile: ReferenceFileDocument {
             root.addFileWrapper(dir)
         }
         folder("audio", audio)
-        folder("bg", backgrounds)
+        folder("assets", assetsMedia)
         return root
     }
 

@@ -44,9 +44,8 @@ struct ShipButton: View {
         shipping = true
         progress = 0
         let document = model.document
-        let activeScene = model.activeSceneIndex
         let audio = file.audio
-        let backgrounds = file.backgrounds
+        let assetsMedia = file.assetsMedia
 
         Task.detached(priority: .userInitiated) {
             // Media to temp files for AVFoundation.
@@ -59,19 +58,19 @@ struct ShipButton: View {
                 try? m.data.write(to: url)
                 audioURLs[id] = url
             }
-            var bgURLs: [String: URL] = [:]
-            for (id, m) in backgrounds {
-                let url = dir.appendingPathComponent("bg-\(id).\(m.ext)")
+            var assetURLs: [String: URL] = [:]
+            for (id, m) in assetsMedia {
+                let url = dir.appendingPathComponent("asset-\(id).\(m.ext)")
                 try? m.data.write(to: url)
-                bgURLs[id] = url
+                assetURLs[id] = url
             }
             let out = dir.appendingPathComponent("banny-show.mp4")
             do {
                 try ShowExporter.export(
-                    document: document, activeScene: activeScene,
+                    document: document,
                     assets: SharedAssets.catalog,
                     audioURL: { audioURLs[$0] },
-                    backgroundURL: { bgURLs[$0] },
+                    assetURL: { assetURLs[$0] },
                     options: .p1080,
                     to: out,
                     progress: { p in

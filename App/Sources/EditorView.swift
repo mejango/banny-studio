@@ -1,10 +1,8 @@
 import SwiftUI
 import BannyCore
 
-/// Main editor layout, adaptive per platform:
-/// - macOS / iPad (regular width): scene tabs / stage / timeline + side panel,
-///   with a touch performance deck overlay on iPad.
-/// - iPhone (compact width): one region at a time behind a mode switcher.
+/// Main editor layout, adaptive per platform. One stage + one timeline;
+/// the divider between them drags to trade stage space for track space.
 struct EditorView: View {
     let file: ShowDocumentFile
     @Environment(\.undoManager) private var undoManager
@@ -38,10 +36,12 @@ struct WideEditor: View {
     let file: ShowDocumentFile
     let showDeck: Bool
 
+    @AppStorage("timelineHeight") private var timelineHeight: Double = 230
+    @State private var dividerDragBase: Double?
+
     var body: some View {
         HStack(spacing: 0) {
             VStack(spacing: 0) {
-                SceneTabsView(model: model)
                 StageView(model: model, file: file)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .overlay(alignment: .bottom) {
@@ -49,17 +49,38 @@ struct WideEditor: View {
                             PerformanceDeck(model: model)
                         }
                     }
+                divider
                 StudioTimelineView(model: model, file: file)
-                    .frame(height: 230)
+                    .frame(height: CGFloat(timelineHeight))
             }
             Divider()
             SidePanel(model: model, file: file)
                 .frame(width: 300)
         }
     }
+
+    /// Drag up to grow the timeline (shrinking the stage), down to shrink it.
+    private var divider: some View {
+        Rectangle()
+            .fill(Color(red: 0.16, green: 0.16, blue: 0.22))
+            .frame(height: 6)
+            .overlay(Capsule().fill(Color(white: 0.4)).frame(width: 48, height: 3))
+            #if os(macOS)
+            .onHover { inside in
+                if inside { NSCursor.resizeUpDown.push() } else { NSCursor.pop() }
+            }
+            #endif
+            .gesture(DragGesture(minimumDistance: 1)
+                .onChanged { value in
+                    let base = dividerDragBase ?? timelineHeight
+                    dividerDragBase = base
+                    timelineHeight = min(700, max(120, base - Double(value.translation.height)))
+                }
+                .onEnded { _ in dividerDragBase = nil })
+    }
 }
 
-/// iPhone layout: Stage / Timeline / Wardrobe / Watch, one at a time.
+/// iPhone layout: Stage / Timeline / Cast, one at a time.
 struct CompactEditor: View {
     @Bindable var model: StudioModel
     let file: ShowDocumentFile
@@ -88,7 +109,6 @@ struct CompactEditor: View {
                     }
                 TransportBar(model: model, file: file)
             case .timeline:
-                SceneTabsView(model: model)
                 StageView(model: model, file: file)
                     .frame(height: 180)
                 StudioTimelineView(model: model, file: file)
@@ -99,41 +119,7 @@ struct CompactEditor: View {
     }
 }
 
-struct SceneTabsView: View {
-    @Bindable var model: StudioModel
-
-    var body: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 5) {
-                ForEach(Array(model.document.scenes.enumerated()), id: \.element.id) { i, scene in
-                    HStack(spacing: 8) {
-                        Text(scene.name).font(.system(size: 12, weight: .semibold))
-                        if model.document.scenes.count > 1 {
-                            Button("×") { model.removeScene(at: i) }
-                                .buttonStyle(.plain)
-                                .foregroundStyle(i == model.activeSceneIndex ? .white : .red)
-                        }
-                    }
-                    .padding(.horizontal, 12).padding(.vertical, 5)
-                    .background(i == model.activeSceneIndex ? Color.orange : Color(white: 0.12))
-                    .foregroundStyle(i == model.activeSceneIndex ? .white : Color(white: 0.75))
-                    .onTapGesture { model.switchScene(to: i) }
-                }
-                Button("+ Scene") { model.addScene() }
-                    .buttonStyle(.plain)
-                    .font(.system(size: 12, weight: .bold))
-                    .foregroundStyle(.green)
-                    .padding(.horizontal, 12).padding(.vertical, 5)
-                    .background(Color(red: 0.07, green: 0.13, blue: 0.06))
-            }
-            .padding(.horizontal, 8)
-        }
-        .frame(height: 34)
-        .background(Color(red: 0.055, green: 0.055, blue: 0.086))
-    }
-}
-
-/// Right panel: cast, wardrobe, audio, background, script, physics, show playlist.
+/// Right panel: tracks, wardrobe, asset bank, script, physics, show playlist.
 struct SidePanel: View {
     @Bindable var model: StudioModel
     var file: ShowDocumentFile? = nil
@@ -141,16 +127,19 @@ struct SidePanel: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
-                castSection
+                tracksSection
                 if let i = model.selection.first, model.scene.characters.indices.contains(i) {
                     MotionSection(model: model, characterIndex: i)
                     ScriptSection(model: model, characterIndex: i)
                     WardrobePanel(model: model, characterIndex: i)
                 }
+                if model.selectedImageCuePath != nil {
+                    ImageCueInspector(model: model)
+                }
                 if let file {
+                    AssetBankSection(model: model, file: file)
                     AudioSection(model: model, file: file)
                 }
-                BackgroundSection(model: model)
                 physicsSection
                 showSection
             }
@@ -162,9 +151,9 @@ struct SidePanel: View {
         .environment(\.colorScheme, .light)
     }
 
-    private var castSection: some View {
+    private var tracksSection: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text("CAST").font(.caption.bold()).foregroundStyle(.secondary)
+            Text("TRACKS").font(.caption.bold()).foregroundStyle(.secondary)
             ForEach(Array(model.scene.characters.enumerated()), id: \.offset) { i, c in
                 HStack {
                     Text("\((i + 1) % 10)").font(.system(.caption, design: .monospaced).bold())
@@ -187,12 +176,14 @@ struct SidePanel: View {
                         .font(.caption2)
                 }
             }
+            Text("audio / image / background tracks are added from AUDIO and the ASSET BANK; hide/show any track with the eye on its timeline lane")
+                .font(.caption2).foregroundStyle(.secondary)
         }
     }
 
     private var physicsSection: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text("SCENE").font(.caption.bold()).foregroundStyle(.secondary)
+            Text("STAGE").font(.caption.bold()).foregroundStyle(.secondary)
             slider("size", value: Binding(get: { model.scene.gSize }, set: { model.scene.gSize = $0 }),
                    range: 0.3...2.5)
             slider("depth scale", value: Binding(get: { model.scene.gScale }, set: { model.scene.gScale = $0 }),
@@ -213,7 +204,7 @@ struct SidePanel: View {
         VStack(alignment: .leading, spacing: 6) {
             Text("SHOW").font(.caption.bold()).foregroundStyle(.secondary)
             if model.document.show.isEmpty {
-                Text("Drop anchors on the SHOW bar, then tap a segment to add it.")
+                Text("Drop anchors on the SHOW bar, then tap a segment to add it. Empty = ship the whole timeline.")
                     .font(.caption2).foregroundStyle(.secondary)
             }
             ForEach(Array(model.document.show.enumerated()), id: \.offset) { i, seg in
