@@ -2010,6 +2010,12 @@ struct TransportBar: View {
             .help("Play/Pause (Space)")
             // Record cluster: REC + what it records (armed event groups).
             HStack(spacing: 6) {
+                Text(recTargetNames)
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundStyle(model.recording ? Color.red
+                                     : lightMode ? Color.black
+                                     : Color.orange)
+                    .lineLimit(1)
                 Button(action: model.record) {
                     HStack(spacing: 4) {
                         Circle().fill(model.recording ? Color.white : Color.red.opacity(0.8))
@@ -2026,12 +2032,6 @@ struct TransportBar: View {
                 }
                 .help("Record the selected characters (⇧Space)")
                 .padding(.trailing, 12)
-                Text(recTargetNames)
-                    .font(.system(size: 10, weight: .bold))
-                    .foregroundStyle(model.recording ? Color.red
-                                     : lightMode ? Color.black
-                                     : Color.orange)
-                    .lineLimit(1)
                 let pose = livePose
                 ForEach(EventGroup.allCases, id: \.self) { group in
                     armChip(group, pose: pose)
