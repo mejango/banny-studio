@@ -738,9 +738,9 @@ struct StudioTimelineView: View {
                             : abs(c.size - 0.62) < 0.01 ? "Small"
                             : abs(c.size - 0.38) < 0.01 ? "Baby"
                             : String(format: "%.2f", c.size)
-                        let lines = ["speed \(Int(c.speed))",
-                                     "wobble \(String(format: "%.1f", c.wobble))",
-                                     "size \(sizeName)"]
+                        let lines = ["Speed: \(Int(c.speed))",
+                                     "Wobble: \(String(format: "%.1f", c.wobble))",
+                                     "Size: \(sizeName)"]
                         for (li, line) in lines.enumerated() {
                             let ly = y + presenceStripH + 13 + CGFloat(li) * 13
                             if ly < y + h - 10 {
