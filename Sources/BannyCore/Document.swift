@@ -374,6 +374,7 @@ public struct SceneState: Equatable, Sendable {
         }
         for t in audioTracks {
             for clip in t.clips { end = max(end, clip.start + clip.dur) }
+            for cue in t.cues { end = max(end, cue.start + cue.dur) }
         }
         for t in imageTracks {
             for cue in t.cues { end = max(end, cue.start + cue.dur) }
@@ -611,26 +612,30 @@ public struct AudioTrack: Codable, Equatable, Sendable {
     public var name: String
     public var fx: Fx
     public var clips: [AudioClip]
+    /// Image cues on the same track — audio tracks are general MEDIA tracks.
+    public var cues: [ImageCue]
     public var hidden: Bool
     public var presence: [VisibilityEvent]
 
     public init(id: String, name: String, fx: Fx = .defaultTrack, clips: [AudioClip] = [],
-                hidden: Bool = false, presence: [VisibilityEvent] = []) {
+                cues: [ImageCue] = [], hidden: Bool = false, presence: [VisibilityEvent] = []) {
         self.id = id
         self.name = name
         self.fx = fx
         self.clips = clips
+        self.cues = cues
         self.hidden = hidden
         self.presence = presence
     }
 
-    private enum CodingKeys: String, CodingKey { case id, name, fx, clips, hidden, presence }
+    private enum CodingKeys: String, CodingKey { case id, name, fx, clips, cues, hidden, presence }
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         id = try c.decode(String.self, forKey: .id)
         name = try c.decodeIfPresent(String.self, forKey: .name) ?? "Audio"
         fx = try c.decodeIfPresent(Fx.self, forKey: .fx) ?? .defaultTrack
         clips = try c.decodeIfPresent([AudioClip].self, forKey: .clips) ?? []
+        cues = try c.decodeIfPresent([ImageCue].self, forKey: .cues) ?? []
         hidden = try c.decodeIfPresent(Bool.self, forKey: .hidden) ?? false
         presence = try c.decodeIfPresent([VisibilityEvent].self, forKey: .presence) ?? []
     }

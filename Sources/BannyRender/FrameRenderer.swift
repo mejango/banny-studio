@@ -57,9 +57,13 @@ public struct FrameRenderer: Sendable {
             drawBackground(background.image, crop: background.crop, size: CGSize(width: W, height: outH), in: ctx)
         }
 
-        // Image cues (between backdrop and characters).
+        // Image cues (between backdrop and characters) — image tracks and the
+        // image cues living on media (audio) tracks.
         if let imageAsset {
-            for track in scene.imageTracks where !track.hidden && track.presence.isPresent(at: t) {
+            var visualTracks: [(hidden: Bool, presence: [VisibilityEvent], cues: [ImageCue])] =
+                scene.imageTracks.map { ($0.hidden, $0.presence, $0.cues) }
+            visualTracks += scene.audioTracks.map { ($0.hidden, $0.presence, $0.cues) }
+            for track in visualTracks where !track.hidden && track.presence.isPresent(at: t) {
                 for cue in track.cues where t >= cue.start && t < cue.start + cue.dur {
                     guard let img = imageAsset(cue.assetID) else { continue }
                     let p = cue.placement(at: t)

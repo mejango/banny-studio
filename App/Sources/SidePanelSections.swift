@@ -111,10 +111,10 @@ struct ImageCueInspector: View {
     @Bindable var model: StudioModel
 
     var body: some View {
-        if let path = model.selectedImageCuePath {
+        if let current = model.selectedImageCueValue {
             let binding = Binding(
-                get: { model.scene.imageTracks[path.track].cues[path.cue] },
-                set: { model.scene.imageTracks[path.track].cues[path.cue] = $0 })
+                get: { model.selectedImageCueValue ?? current },
+                set: { newValue in model.updateSelectedImageCue { $0 = newValue } })
             VStack(alignment: .leading, spacing: 6) {
                 Text("IMAGE CUE").font(.caption.bold()).foregroundStyle(.secondary)
                 Text("drag it on the stage to place; use ⤢ size below")

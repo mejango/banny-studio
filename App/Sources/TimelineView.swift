@@ -514,6 +514,8 @@ struct StudioTimelineView: View {
         }
         guard let asset = model.addAsset(from: url) else { return false }
         switch row(at: location.y) {
+        case .audio(let i) where asset.kind == .image:
+            model.addMediaImageCue(trackIndex: i, assetID: asset.id, at: t)
         case .image(let i) where asset.kind == .image:
             model.addImageCue(trackIndex: i, assetID: asset.id, at: t)
         case .background, .some where asset.kind == .video, nil where asset.kind == .video:
@@ -817,9 +819,8 @@ struct StudioTimelineView: View {
                         Button(body.rawValue) { model.addCharacter(body: body) }
                     }
                 }
-                Button("Audio") { model.addAudioTrack() }
+                Button("Media (audio + images)") { model.addAudioTrack() }
                 Button("Light") { model.addLightTrack() }
-                Button("Image") { model.addEmptyImageTrack() }
             } label: {
                 HStack(spacing: 5) {
                     Image(systemName: "plus")
@@ -1263,6 +1264,14 @@ struct StudioTimelineView: View {
         case .character(let i):
             drawCharacterLane(i, y: y, h: h, ctx: content)
         case .audio(let i):
+            for cue in model.scene.audioTracks[i].cues {
+                drawCueBar(start: cue.start, dur: cue.dur, y: y, h: h,
+                           color: Color(red: 0.85, green: 0.6, blue: 0.25),
+                           label: cue.label ?? assetName(cue.assetID),
+                           assetID: cue.assetID,
+                           selected: model.selectedImageCue == cue.id,
+                           animated: cue.to != nil, ctx: content)
+            }
             for clip in model.scene.audioTracks[i].clips {
                 drawClip(clip, top: y + presenceStripH + 2, height: h - presenceStripH - 6, ctx: content)
             }
@@ -2069,6 +2078,10 @@ struct StudioTimelineView: View {
             newDur = dc.baseDur
         }
         switch dc.row {
+        case .audio(let i):
+            guard let ci = model.scene.audioTracks[i].cues.firstIndex(where: { $0.id == dc.cueID }) else { return }
+            model.scene.audioTracks[i].cues[ci].start = newStart
+            model.scene.audioTracks[i].cues[ci].dur = newDur
         case .image(let i):
             guard let ci = model.scene.imageTracks[i].cues.firstIndex(where: { $0.id == dc.cueID }) else { return }
             model.scene.imageTracks[i].cues[ci].start = newStart
@@ -2088,7 +2101,7 @@ struct StudioTimelineView: View {
     private func selectCue(row: TrackRow, id: String) {
         model.selectedTrackKey = row.key(in: model.scene)
         switch row {
-        case .image: model.selectedImageCue = id
+        case .image, .audio: model.selectedImageCue = id
         case .light: model.selectedLightCue = id
         case .background: model.selectedBackgroundCue = id
         default: break
@@ -2211,7 +2224,7 @@ struct StudioTimelineView: View {
                 switch row {
                 case .background: model.splitBackgroundCue(id: cue.id, at: time(forX: point.x))
                 case .light: model.splitLightCue(id: cue.id, at: time(forX: point.x))
-                case .image: model.splitImageCue(id: cue.id, at: time(forX: point.x))
+                case .image, .audio: model.splitImageCue(id: cue.id, at: time(forX: point.x))
                 default: selectCue(row: row, id: cue.id)
                 }
             } else {
@@ -2355,6 +2368,10 @@ struct StudioTimelineView: View {
                    height: h - presenceStripH - 6).contains(point)
         }
         switch row {
+        case .audio(let i):
+            for cue in model.scene.audioTracks[i].cues where hit(cue.start, cue.dur) {
+                return (row, (cue.id, cue.start, cue.dur))
+            }
         case .image(let i):
             for cue in model.scene.imageTracks[i].cues where hit(cue.start, cue.dur) {
                 return (row, (cue.id, cue.start, cue.dur))

@@ -175,6 +175,14 @@ final class StudioModel {
             scene.backgroundTracks[i].cues.insert(copy, at: ci + 1)
             selectedBackgroundCue = copy.id
             return copy.id
+        case .audio(let i):
+            guard scene.audioTracks.indices.contains(i),
+                  let ci = scene.audioTracks[i].cues.firstIndex(where: { $0.id == id }) else { return nil }
+            var copy = scene.audioTracks[i].cues[ci]
+            copy.id = ShowDocumentFile.newID()
+            scene.audioTracks[i].cues.insert(copy, at: ci + 1)
+            selectedImageCue = copy.id
+            return copy.id
         default:
             return nil
         }
@@ -210,10 +218,9 @@ final class StudioModel {
             }
         }
         var pickedImage: [(String, ImageCue)] = []
-        if let p = selectedImageCuePath {
-            let cue = scene.imageTracks[p.track].cues[p.cue]
-            pickedImage.append((scene.imageTracks[p.track].id, cue))
-            t0 = min(t0, cue.start)
+        if let owner = selectedImageCueOwner {
+            pickedImage.append((owner.trackID, owner.cue))
+            t0 = min(t0, owner.cue.start)
         }
         var pickedLight: [(String, LightCue)] = []
         if let p = selectedLightCuePath {
@@ -296,6 +303,10 @@ final class StudioModel {
                 scene.imageTracks[ti].cues.append(c)
                 scene.imageTracks[ti].cues.sort { $0.start < $1.start }
                 selectedImageCue = c.id
+            } else if let ti = scene.audioTracks.firstIndex(where: { $0.id == tid }) {
+                scene.audioTracks[ti].cues.append(c)
+                scene.audioTracks[ti].cues.sort { $0.start < $1.start }
+                selectedImageCue = c.id
             }
         }
         for (tid, cue) in lightCueClipboard {
@@ -345,6 +356,9 @@ final class StudioModel {
             for i in scene.imageTracks.indices {
                 scene.imageTracks[i].cues.removeAll { $0.id == id }
             }
+            for i in scene.audioTracks.indices {
+                scene.audioTracks[i].cues.removeAll { $0.id == id }
+            }
             selectedImageCue = nil
         }
         if let sel = selectedOutfitEvent {
@@ -379,6 +393,56 @@ final class StudioModel {
             if let ci = track.cues.firstIndex(where: { $0.id == id }) { return (ti, ci) }
         }
         return nil
+    }
+
+    /// The selected image cue wherever it lives (image track OR media track).
+    var selectedImageCueValue: ImageCue? {
+        guard let id = selectedImageCue else { return nil }
+        for t in scene.imageTracks {
+            if let c = t.cues.first(where: { $0.id == id }) { return c }
+        }
+        for t in scene.audioTracks {
+            if let c = t.cues.first(where: { $0.id == id }) { return c }
+        }
+        return nil
+    }
+
+    var selectedImageCueOwner: (trackID: String, cue: ImageCue)? {
+        guard let id = selectedImageCue else { return nil }
+        for t in scene.imageTracks {
+            if let c = t.cues.first(where: { $0.id == id }) { return (t.id, c) }
+        }
+        for t in scene.audioTracks {
+            if let c = t.cues.first(where: { $0.id == id }) { return (t.id, c) }
+        }
+        return nil
+    }
+
+    func updateSelectedImageCue(_ body: (inout ImageCue) -> Void) {
+        guard let id = selectedImageCue else { return }
+        for ti in scene.imageTracks.indices {
+            if let ci = scene.imageTracks[ti].cues.firstIndex(where: { $0.id == id }) {
+                body(&scene.imageTracks[ti].cues[ci])
+                return
+            }
+        }
+        for ti in scene.audioTracks.indices {
+            if let ci = scene.audioTracks[ti].cues.firstIndex(where: { $0.id == id }) {
+                body(&scene.audioTracks[ti].cues[ci])
+                return
+            }
+        }
+    }
+
+    /// Image cue on a MEDIA (audio) track.
+    func addMediaImageCue(trackIndex: Int, assetID: String, at t: Double) {
+        guard scene.audioTracks.indices.contains(trackIndex) else { return }
+        registerUndoSnapshot(label: "Add Image Cue")
+        let cue = ImageCue(id: ShowDocumentFile.newID(), assetID: assetID,
+                           start: t, dur: 5, from: ImagePlacement())
+        scene.audioTracks[trackIndex].cues.append(cue)
+        scene.audioTracks[trackIndex].cues.sort { $0.start < $1.start }
+        selectedImageCue = cue.id
     }
 
     init(document: ShowDocument) {
@@ -967,10 +1031,10 @@ final class StudioModel {
 
     /// ⌘-click on an image cue: split at t, meeting at the interpolated placement.
     func splitImageCue(id: String, at t: Double) {
-        for ti in scene.imageTracks.indices {
-            guard let ci = scene.imageTracks[ti].cues.firstIndex(where: { $0.id == id }) else { continue }
-            var first = scene.imageTracks[ti].cues[ci]
-            guard t > first.start + 0.1, t < first.start + first.dur - 0.1 else { return }
+        func split(_ cues: inout [ImageCue]) -> Bool {
+            guard let ci = cues.firstIndex(where: { $0.id == id }) else { return false }
+            var first = cues[ci]
+            guard t > first.start + 0.1, t < first.start + first.dur - 0.1 else { return true }
             registerUndoSnapshot(label: "Split Image")
             let mid = first.placement(at: t)
             var second = first
@@ -982,11 +1046,13 @@ final class StudioModel {
                 first.to = mid
                 second.from = mid
             }
-            scene.imageTracks[ti].cues[ci] = first
-            scene.imageTracks[ti].cues.insert(second, at: ci + 1)
+            cues[ci] = first
+            cues.insert(second, at: ci + 1)
             selectedImageCue = second.id
-            return
+            return true
         }
+        for ti in scene.imageTracks.indices where split(&scene.imageTracks[ti].cues) { return }
+        for ti in scene.audioTracks.indices where split(&scene.audioTracks[ti].cues) { return }
     }
 
     /// ⌘-click on a background cue: split it at t (select the second half).
@@ -1052,7 +1118,7 @@ final class StudioModel {
     func addAudioTrack() {
         registerUndoSnapshot(label: "Add Audio Track")
         scene.audioTracks.append(AudioTrack(id: ShowDocumentFile.newID(),
-                                            name: "Audio \(scene.audioTracks.count + 1)"))
+                                            name: "Media \(scene.audioTracks.count + 1)"))
     }
 
     /// New cue on an existing light track, seeded from where the light was

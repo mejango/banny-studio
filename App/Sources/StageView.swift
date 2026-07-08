@@ -61,8 +61,7 @@ struct StageView: View {
 
     /// Dashed outline around the selected image cue while it's on stage.
     private func drawImageCueHighlight(context: GraphicsContext, size: CGSize) {
-        guard let path = model.selectedImageCuePath else { return }
-        let cue = model.scene.imageTracks[path.track].cues[path.cue]
+        guard let cue = model.selectedImageCueValue else { return }
         guard model.time >= cue.start, model.time < cue.start + cue.dur,
               let img = media.still(assetID: cue.assetID, file: file) else { return }
         let W = Double(size.width), H = Double(size.height)
@@ -168,10 +167,10 @@ struct StageView: View {
                         return
                     }
                 }
-                if let path = model.selectedImageCuePath {
-                    var cue = model.scene.imageTracks[path.track].cues[path.cue]
-                    if model.time >= cue.start, model.time < cue.start + cue.dur {
-                        let inSecondHalf = model.time > cue.start + cue.dur / 2
+                if let cue = model.selectedImageCueValue,
+                   model.time >= cue.start, model.time < cue.start + cue.dur {
+                    let inSecondHalf = model.time > cue.start + cue.dur / 2
+                    model.updateSelectedImageCue { cue in
                         if var end = cue.to, inSecondHalf {
                             end.x = min(1.2, max(-0.2, end.x + dx))
                             end.y = min(1.2, max(-0.2, end.y + dy))
@@ -180,9 +179,8 @@ struct StageView: View {
                             cue.from.x = min(1.2, max(-0.2, cue.from.x + dx))
                             cue.from.y = min(1.2, max(-0.2, cue.from.y + dy))
                         }
-                        model.scene.imageTracks[path.track].cues[path.cue] = cue
-                        return
                     }
+                    return
                 }
                 guard let i = model.selection.first, model.scene.characters.indices.contains(i) else { return }
                 var c = model.scene.characters[i]
@@ -195,7 +193,7 @@ struct StageView: View {
             }
             .onEnded { _ in
                 dragLast = nil
-                if model.selectedImageCuePath != nil {
+                if model.selectedImageCueValue != nil {
                     model.registerUndoSnapshot(label: "Place Image")
                 }
             }

@@ -382,8 +382,8 @@ struct TrackCardButton: View {
         switch row {
         case .character: return 560
         case .background, .image: return 380
-        case .audio: return 420
-        case .light: return 190
+        case .audio: return 480
+        case .light: return 220
         }
     }
 
