@@ -75,7 +75,8 @@ struct StageView: View {
     /// Temporary editor-only handle for the selected light cue: lights never
     /// render in the scene, but while selected they show a draggable point.
     private func drawLightHandle(context: GraphicsContext, size: CGSize) {
-        guard let path = model.selectedLightCuePath else { return }
+        // Editor-only affordance: never during playback.
+        guard !model.playing, let path = model.selectedLightCuePath else { return }
         let cue = model.scene.lightTracks[path.track].cues[path.cue]
         guard model.time >= cue.start, model.time < cue.start + cue.dur else { return }
         let state = cue.state(at: model.time)
