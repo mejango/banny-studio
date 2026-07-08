@@ -50,12 +50,16 @@ struct WideEditor: View {
             let availH = Double(geo.size.height) - headerH
             let stageWidth = Double(max(200, geo.size.width))
             let requestedTL = min(max(0, timelineHeight), availH - 140)
-            let stageH = min(stageWidth * 9.0 / 16.0, availH - 6 - requestedTL)
-            let tlH = max(0, availH - 6 - stageH)
+            // Below ~24pt the timeline snaps away entirely and the stage keeps
+            // the whole area (letterboxed once it hits its 16:9 width limit).
+            let wantTL = requestedTL < 24 ? 0.0 : requestedTL
+            let stageH = min(stageWidth * 9.0 / 16.0, availH - 9 - wantTL)
+            let tlH = wantTL == 0 ? 0.0 : max(0, availH - 9 - stageH)
+            let stageBoxH = availH - 9 - tlH
             VStack(spacing: 0) {
                 header
                 StageView(model: model, file: file)
-                    .frame(width: CGFloat(stageWidth), height: CGFloat(stageH))
+                    .frame(width: CGFloat(stageWidth), height: CGFloat(stageBoxH))
                     .overlay(alignment: .bottom) {
                         if showDeck {
                             PerformanceDeck(model: model)
