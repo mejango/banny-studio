@@ -63,7 +63,8 @@ struct WideEditor: View {
                     }
                 divider(maxHeight: availH - 140)
                 StudioTimelineView(model: model, file: file, showShip: false)
-                    .frame(height: CGFloat(tlH))
+                    .frame(height: CGFloat(tlH), alignment: .top)
+                    .clipped()
             }
             .background(theme.surface)
             // Drive SwiftUI's semantic colors (.primary on buttons/menus) from the
