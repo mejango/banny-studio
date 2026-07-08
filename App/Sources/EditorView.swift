@@ -95,10 +95,10 @@ struct WideEditor: View {
                 // Match the logo art: black in light mode, off-white in dark.
                 .foregroundStyle(lightMode ? Color.black
                                            : Color(red: 0.92, green: 0.92, blue: 0.92))
+            ThemeToggle()
             Spacer()
             SaveBadge(indicator: file.saveIndicator, lightMode: lightMode)
             ProjectMenu()
-            ThemeToggle()
         }
         .padding(.horizontal, 14)
         .frame(height: CGFloat(headerH))
