@@ -19,13 +19,13 @@ struct WardrobePanel: View {
         case 5, 6, 7:         // Eyes, Glasses, Mouth → head only
             return CGRect(x: 122, y: 60, width: 160, height: 130)
         case 8:               // Legs → full legs
-            return CGRect(x: 115, y: 150, width: 170, height: 196)
+            return CGRect(x: 115, y: 150, width: 170, height: 204)
         case 3:               // Necklace → torso up
             return CGRect(x: 115, y: 30, width: 170, height: 190)
         case 12:              // Head top → torso up, centered on the head
             return CGRect(x: 132, y: 26, width: 150, height: 196)
         default:              // Backside, Suit, Suit top/bottom, Hand → full body
-            return CGRect(x: 115, y: 30, width: 170, height: 316)
+            return CGRect(x: 115, y: 30, width: 170, height: 324)
         }
     }
 
