@@ -513,6 +513,14 @@ struct StudioTimelineView: View {
     private var cornerCell: some View {
         Canvas { ctx, size in
             ctx.fill(Path(CGRect(origin: .zero, size: size)), with: .color(theme.gutterBase))
+            // Same band colors as the rows to the right — the column boundary
+            // reads from color continuity, not a drawn line.
+            ctx.fill(Path(CGRect(x: 0, y: 0, width: size.width, height: exportRowH)),
+                     with: .color(theme.ccRow.opacity(0.6)))
+            ctx.fill(Path(CGRect(x: 0, y: exportRowH, width: size.width, height: rulerHeight)),
+                     with: .color(theme.ruler))
+            ctx.fill(Path(CGRect(x: 0, y: captionsTop, width: size.width, height: captionsRowH)),
+                     with: .color(theme.ccRow))
             ctx.draw(Text(String(format: "%.1f / %.0fs", model.time, model.duration))
                         .font(.system(size: 10, weight: .medium, design: .monospaced))
                         .foregroundStyle(lightMode ? Color(red: 0, green: 0.45, blue: 0.1) : .green),
@@ -522,10 +530,6 @@ struct StudioTimelineView: View {
                         .foregroundStyle(theme.mutedText),
                      at: CGPoint(x: size.width - 10, y: captionsTop + captionsRowH / 2),
                      anchor: .trailing)
-            ctx.stroke(Path { p in
-                p.move(to: CGPoint(x: size.width - 0.5, y: 0))
-                p.addLine(to: CGPoint(x: size.width - 0.5, y: size.height))
-            }, with: .color(theme.gutterDivider), lineWidth: 1)
         }
         .overlay(alignment: .topTrailing) {
             // The Export action lives on its row, sticky to the divider.
@@ -778,10 +782,6 @@ struct StudioTimelineView: View {
                       with: .color(theme.gutterBase))
             var ctx = ctx0
             ctx.translateBy(x: 0, y: -scrollOffset.y)
-            ctx.stroke(Path { p in
-                p.move(to: CGPoint(x: size.width - 0.5, y: 0))
-                p.addLine(to: CGPoint(x: size.width - 0.5, y: size.height))
-            }, with: .color(theme.gutterDivider), lineWidth: 1)
             for row in rows {
                 let y = laneTop(of: row)
                 let h = height(of: row)
