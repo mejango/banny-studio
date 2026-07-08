@@ -552,6 +552,55 @@ final class StudioModel {
         selectedImageCue = cue.id
     }
 
+    /// ⌘-click on a light cue: split at t; animated cues keep their ramp by
+    /// meeting at the interpolated state.
+    func splitLightCue(id: String, at t: Double) {
+        for ti in scene.lightTracks.indices {
+            guard let ci = scene.lightTracks[ti].cues.firstIndex(where: { $0.id == id }) else { continue }
+            var first = scene.lightTracks[ti].cues[ci]
+            guard t > first.start + 0.1, t < first.start + first.dur - 0.1 else { return }
+            registerUndoSnapshot(label: "Split Light")
+            let mid = first.state(at: t)
+            var second = first
+            second.id = ShowDocumentFile.newID()
+            second.start = t
+            second.dur = first.start + first.dur - t
+            first.dur = t - first.start
+            if first.to != nil {
+                first.to = mid
+                second.from = mid
+            }
+            scene.lightTracks[ti].cues[ci] = first
+            scene.lightTracks[ti].cues.insert(second, at: ci + 1)
+            selectedLightCue = second.id
+            return
+        }
+    }
+
+    /// ⌘-click on an image cue: split at t, meeting at the interpolated placement.
+    func splitImageCue(id: String, at t: Double) {
+        for ti in scene.imageTracks.indices {
+            guard let ci = scene.imageTracks[ti].cues.firstIndex(where: { $0.id == id }) else { continue }
+            var first = scene.imageTracks[ti].cues[ci]
+            guard t > first.start + 0.1, t < first.start + first.dur - 0.1 else { return }
+            registerUndoSnapshot(label: "Split Image")
+            let mid = first.placement(at: t)
+            var second = first
+            second.id = ShowDocumentFile.newID()
+            second.start = t
+            second.dur = first.start + first.dur - t
+            first.dur = t - first.start
+            if first.to != nil {
+                first.to = mid
+                second.from = mid
+            }
+            scene.imageTracks[ti].cues[ci] = first
+            scene.imageTracks[ti].cues.insert(second, at: ci + 1)
+            selectedImageCue = second.id
+            return
+        }
+    }
+
     /// ⌘-click on a background cue: split it at t (select the second half).
     func splitBackgroundCue(id: String, at t: Double) {
         for ti in scene.backgroundTracks.indices {

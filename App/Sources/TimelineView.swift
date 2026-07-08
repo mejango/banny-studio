@@ -2045,8 +2045,13 @@ struct StudioTimelineView: View {
                 model.selectedClips = [c.id]
             }
         } else if let (row, cue) = cue(at: point) {
-            if splitting, case .background = row {
-                model.splitBackgroundCue(id: cue.id, at: time(forX: point.x))
+            if splitting {
+                switch row {
+                case .background: model.splitBackgroundCue(id: cue.id, at: time(forX: point.x))
+                case .light: model.splitLightCue(id: cue.id, at: time(forX: point.x))
+                case .image: model.splitImageCue(id: cue.id, at: time(forX: point.x))
+                default: selectCue(row: row, id: cue.id)
+                }
             } else {
                 selectCue(row: row, id: cue.id)
             }
