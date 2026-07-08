@@ -177,6 +177,8 @@ struct StudioTimelineView: View {
     /// Edge auto-scroll while dragging: px past the viewport edge (sign = side).
     @State private var dragOvershootX: CGFloat = 0
     @State private var autoScrollTimer: Timer?
+    /// Anchor a drag is currently snapped to (draws a guide line).
+    @State private var snapGuide: Double?
     /// Group-drag base positions for selected clips.
     @State private var dragStartClips: [String: Double]?
     /// Pointer position over the lanes (content coords) for context menus.
@@ -1101,6 +1103,14 @@ struct StudioTimelineView: View {
                 ctx.fill(Path(r), with: .color(Color.orange.opacity(0.1)))
                 ctx.stroke(Path(r), with: .color(Color.orange.opacity(0.7)), lineWidth: 1)
             }
+            if let g = snapGuide {
+                let gx = x(forTime: g)
+                ctx.stroke(Path { p in
+                    p.move(to: CGPoint(x: gx, y: 0))
+                    p.addLine(to: CGPoint(x: gx, y: size.height))
+                }, with: .color(Color.cyan.opacity(0.8)),
+                   style: StrokeStyle(lineWidth: 1, dash: [4, 3]))
+            }
         }
         .gesture(interaction)
         #if os(macOS)
@@ -1676,6 +1686,7 @@ struct StudioTimelineView: View {
                     model.registerUndoSnapshot(label: "Edit Timeline")
                 }
                 stopAutoScroll()
+                snapGuide = nil
                 if let m = marquee {
                     applyMarquee(m.start, m.current)
                     marquee = nil
@@ -2006,9 +2017,10 @@ struct StudioTimelineView: View {
         return ts
     }
 
-    /// Snaps t to the nearest anchor within ~7px at the current zoom.
+    /// Snaps t to the nearest anchor within ~14px at the current zoom, and
+    /// remembers the engaged anchor so the canvas can flash a guide line.
     private func snapped(_ t: Double, excluding cueID: String? = nil) -> Double {
-        let tol = Double(10 / pxPerSecond)
+        let tol = Double(14 / pxPerSecond)
         var best = t
         var bestD = tol
         for a in snapAnchors(excluding: cueID) {
@@ -2018,6 +2030,7 @@ struct StudioTimelineView: View {
                 best = a
             }
         }
+        snapGuide = best == t ? nil : best
         return best
     }
 
