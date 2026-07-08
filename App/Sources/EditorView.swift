@@ -170,10 +170,10 @@ struct SidePanel: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
-                tracksSection
                 if let i = model.selection.first, model.scene.characters.indices.contains(i) {
-                    MotionSection(model: model, characterIndex: i)
-                    ScriptSection(model: model, characterIndex: i)
+                    Text(model.scene.characters[i].name.isEmpty ? "banny \((i + 1) % 10)"
+                                                                : model.scene.characters[i].name)
+                        .font(.caption.bold())
                     WardrobePanel(model: model, characterIndex: i)
                 }
                 if model.selectedImageCuePath != nil {
@@ -186,7 +186,6 @@ struct SidePanel: View {
                     AssetBankSection(model: model, file: file)
                     AudioSection(model: model, file: file)
                 }
-                physicsSection
             }
             .padding(10)
         }
@@ -196,56 +195,6 @@ struct SidePanel: View {
         .environment(\.colorScheme, .light)
     }
 
-    private var tracksSection: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text("TRACKS").font(.caption.bold()).foregroundStyle(.secondary)
-            ForEach(Array(model.scene.characters.enumerated()), id: \.offset) { i, c in
-                HStack {
-                    Text("\((i + 1) % 10)").font(.system(.caption, design: .monospaced).bold())
-                        .foregroundStyle(.purple)
-                    TextField("name", text: Binding(
-                        get: { model.scene.characters[safe: i]?.name ?? "" },
-                        set: { if model.scene.characters.indices.contains(i) { model.scene.characters[i].name = $0 } }))
-                        .textFieldStyle(.plain).font(.caption)
-                    Text(c.body.rawValue).font(.caption2).foregroundStyle(.secondary)
-                    Button("×") { model.removeCharacter(at: i) }
-                        .buttonStyle(.plain).foregroundStyle(.red)
-                }
-                .padding(4)
-                .background(model.selection.contains(i) ? Color.orange.opacity(0.15) : .clear)
-                .onTapGesture { model.selection = [i] }
-            }
-            HStack {
-                ForEach(BannyCore.Body.allCases, id: \.self) { body in
-                    Button("+ \(body.rawValue)") { model.addCharacter(body: body) }
-                        .font(.caption2)
-                }
-                Button("+ light") { model.addLightTrack() }
-                    .font(.caption2)
-            }
-            Text("audio / image / background tracks are added from AUDIO and the ASSET BANK; hide/show any track with the eye on its timeline lane")
-                .font(.caption2).foregroundStyle(.secondary)
-        }
-    }
-
-    private var physicsSection: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text("STAGE").font(.caption.bold()).foregroundStyle(.secondary)
-            slider("size", value: Binding(get: { model.scene.gSize }, set: { model.scene.gSize = $0 }),
-                   range: 0.3...2.5)
-            slider("depth scale", value: Binding(get: { model.scene.gScale }, set: { model.scene.gScale = $0 }),
-                   range: 0...1.2)
-            slider("gravity", value: Binding(get: { model.scene.gravity }, set: { model.scene.gravity = $0 }),
-                   range: 0.3...2.5)
-        }
-    }
-
-    private func slider(_ label: String, value: Binding<Double>, range: ClosedRange<Double>) -> some View {
-        HStack {
-            Text(label).font(.caption2).frame(width: 80, alignment: .leading)
-            Slider(value: value, in: range)
-        }
-    }
 
 }
 

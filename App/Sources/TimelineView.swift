@@ -141,12 +141,14 @@ struct StudioTimelineView: View {
     @State private var draggingRow: (row: TrackRow, currentY: CGFloat)?
     /// Preview slot (within the dragged row's group) while a row drag is live.
     @State private var dragPreviewIndex: Int?
+    /// Which track's settings popover is open (row key).
+    @State private var settingsRowKey: String?
     @State private var peakCache = PeakCache()
     /// Per-track lane heights (session-scoped), keyed by TrackRow.key.
     @State private var trackHeights: [String: CGFloat] = [:]
 
     /// In-place label editing over the canvas.
-    enum LabelKind { case clip, cue }
+    enum LabelKind { case clip, cue, caption }
     @State private var editingLabel: (kind: LabelKind, id: String, origin: CGPoint)?
     @State private var editingText = ""
     @FocusState private var labelFocused: Bool
@@ -203,6 +205,8 @@ struct StudioTimelineView: View {
                     .padding(.leading, laneLabelWidth)
                     gutterCanvas
                         .frame(width: laneLabelWidth, height: totalLaneHeight)
+                        .offset(x: scrollOffset.x)
+                    gearButtons
                         .offset(x: scrollOffset.x)
                     newTrackRow
                         .offset(x: scrollOffset.x, y: totalLaneHeight)
@@ -347,6 +351,27 @@ struct StudioTimelineView: View {
             }, with: .color(Color(red: 0.6, green: 1, blue: 0.6)), lineWidth: 1)
         }
         .clipped()
+        .overlay(alignment: .topLeading) {
+            if let editing = editingLabel, editing.kind == .caption {
+                TextField("caption", text: $editingText)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 9, weight: .medium))
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 3)
+                    .frame(width: 150)
+                    .background(Color.black.opacity(0.8), in: RoundedRectangle(cornerRadius: 3))
+                    .focused($labelFocused)
+                    .onSubmit { commitLabelEdit() }
+                    #if os(macOS)
+                    .onExitCommand { editingLabel = nil }
+                    #endif
+                    .offset(x: editing.origin.x - scrollOffset.x, y: headerHeight + 3)
+                    .onAppear { labelFocused = true }
+                    .onChange(of: labelFocused) { _, focused in
+                        if !focused { commitLabelEdit() }
+                    }
+            }
+        }
         .gesture(headerInteraction)
     }
 
@@ -378,7 +403,28 @@ struct StudioTimelineView: View {
                     zoom = min(16, max(1, base * pow(2, dy / 90)))
                 }
             }
-            .onEnded { _ in
+            .onEnded { value in
+                if value.translation.width.magnitude < 3, value.translation.height.magnitude < 3,
+                   value.location.y >= headerHeight {
+                    let cx = value.location.x + scrollOffset.x
+                    if let st = subtitleAt(contentX: cx) {
+                        // Click a caption → edit its text in place.
+                        editingText = st.sub.text
+                        editingLabel = (.caption, "\(st.char)-\(st.index)",
+                                        CGPoint(x: x(forTime: st.sub.start), y: 0))
+                    } else if !model.scene.characters.isEmpty {
+                        // Click empty strip → new caption for the selected character.
+                        let ci = model.selection.first ?? 0
+                        model.registerUndoSnapshot(label: "Add Caption")
+                        let t = (time(forX: cx) * 10).rounded() / 10
+                        model.scene.characters[ci].subs.append(Subtitle(text: "", start: t, dur: 2))
+                        model.scene.characters[ci].subs.sort { $0.start < $1.start }
+                        if let si = model.scene.characters[ci].subs.firstIndex(where: { $0.start == t }) {
+                            editingText = ""
+                            editingLabel = (.caption, "\(ci)-\(si)", CGPoint(x: x(forTime: t), y: 0))
+                        }
+                    }
+                }
                 if draggingSub != nil {
                     model.registerUndoSnapshot(label: "Edit Captions")
                 }
@@ -530,6 +576,33 @@ struct StudioTimelineView: View {
         }
     }
 
+
+    /// Per-row settings gear (a real button so the popover can anchor to it).
+    private var gearButtons: some View {
+        ZStack(alignment: .topLeading) {
+            ForEach(Array(rows.enumerated()), id: \.offset) { _, row in
+                let key = row.key(in: model.scene)
+                Button {
+                    settingsRowKey = settingsRowKey == key ? nil : key
+                } label: {
+                    Image(systemName: "gearshape.fill")
+                        .font(.system(size: 9))
+                        .foregroundStyle(theme.mutedText)
+                        .frame(width: 18, height: 18)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .position(x: laneLabelWidth - 36, y: laneTop(of: row) + presenceStripH / 2)
+                .popover(isPresented: Binding(
+                    get: { settingsRowKey == key },
+                    set: { if !$0 { settingsRowKey = nil } })) {
+                    TrackSettingsView(model: model, row: row)
+                        .environment(\.colorScheme, lightMode ? .light : .dark)
+                }
+            }
+        }
+        .frame(width: laneLabelWidth, height: totalLaneHeight, alignment: .topLeading)
+    }
 
     private var gutterInteraction: some Gesture {
         DragGesture(minimumDistance: 0)
@@ -1362,11 +1435,30 @@ struct StudioTimelineView: View {
         guard let editing = editingLabel else { return }
         editingLabel = nil
         let name = editingText.trimmingCharacters(in: .whitespaces)
-        guard !name.isEmpty else { return }
+        guard !name.isEmpty else {
+            deleteCaptionIfEmpty(editing)
+            return
+        }
         switch editing.kind {
         case .clip: model.renameClip(id: editing.id, to: name)
         case .cue: model.renameCue(id: editing.id, to: name)
+        case .caption:
+            let parts = editing.id.split(separator: "-").compactMap { Int($0) }
+            guard parts.count == 2, model.scene.characters.indices.contains(parts[0]),
+                  model.scene.characters[parts[0]].subs.indices.contains(parts[1]) else { return }
+            model.registerUndoSnapshot(label: "Edit Caption")
+            model.scene.characters[parts[0]].subs[parts[1]].text = name
         }
+    }
+
+    /// Empty commit on a caption removes it (typing nothing = delete).
+    private func deleteCaptionIfEmpty(_ editing: (kind: LabelKind, id: String, origin: CGPoint)) {
+        guard editing.kind == .caption else { return }
+        let parts = editing.id.split(separator: "-").compactMap { Int($0) }
+        guard parts.count == 2, model.scene.characters.indices.contains(parts[0]),
+              model.scene.characters[parts[0]].subs.indices.contains(parts[1]) else { return }
+        model.registerUndoSnapshot(label: "Delete Caption")
+        model.scene.characters[parts[0]].subs.remove(at: parts[1])
     }
 
     private func deleteSelection() {

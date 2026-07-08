@@ -354,6 +354,28 @@ final class StudioModel {
         scene.backgroundTracks[0].cues = cues.sorted { $0.start < $1.start }
     }
 
+    func removeTrack(_ row: TrackRowKind) {
+        registerUndoSnapshot(label: "Delete Track")
+        switch row {
+        case .character(let i):
+            guard scene.characters.indices.contains(i) else { return }
+            scene.characters.remove(at: i)
+            selection = scene.characters.isEmpty ? [] : [min(i, scene.characters.count - 1)]
+            selectedMarks = []
+        case .audio(let i):
+            guard scene.audioTracks.indices.contains(i) else { return }
+            scene.audioTracks.remove(at: i)
+        case .image(let i):
+            guard scene.imageTracks.indices.contains(i) else { return }
+            scene.imageTracks.remove(at: i)
+        case .light(let i):
+            guard scene.lightTracks.indices.contains(i) else { return }
+            scene.lightTracks.remove(at: i)
+        case .background:
+            break // the background track is permanent
+        }
+    }
+
     func addAudioTrack() {
         registerUndoSnapshot(label: "Add Audio Track")
         scene.audioTracks.append(AudioTrack(id: ShowDocumentFile.newID(),
@@ -413,4 +435,10 @@ final class StudioModel {
 /// The model only needs a sync hook; LiveAudioEngine implements it.
 protocol StudioAudioEngine {
     @MainActor func syncPlayback(_ model: StudioModel)
+}
+
+
+/// Track reference for model-level operations (mirrors the timeline's TrackRow).
+enum TrackRowKind {
+    case character(Int), audio(Int), image(Int), light(Int), background(Int)
 }
