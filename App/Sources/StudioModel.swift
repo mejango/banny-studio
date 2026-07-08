@@ -390,6 +390,13 @@ final class StudioModel {
 
     // MARK: - Characters
 
+    // UI-facing 1–10 motion scale; documents keep the web simulation units
+    // (speed 40–600, wobble 0–16) so playback math and old shows are untouched.
+    static func uiSpeed(_ speed: Double) -> Double { 1 + (speed - 40) / 560 * 9 }
+    static func speed(fromUI ui: Double) -> Double { 40 + (ui - 1) / 9 * 560 }
+    static func uiWobble(_ wobble: Double) -> Double { 1 + wobble / 16 * 9 }
+    static func wobble(fromUI ui: Double) -> Double { (ui - 1) / 9 * 16 }
+
     func addCharacter(body: Body) {
         guard scene.characters.count < 10 else { return }
         registerUndoSnapshot(label: "Add Character")

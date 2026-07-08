@@ -289,22 +289,24 @@ struct MotionSection: View {
             HStack {
                 Text("speed").font(.caption2).frame(width: 80, alignment: .leading)
                 Slider(value: Binding(
-                    get: { model.scene.characters[safe: characterIndex]?.speed ?? 320 },
+                    get: { StudioModel.uiSpeed(model.scene.characters[safe: characterIndex]?.speed ?? 320) },
                     set: { if model.scene.characters.indices.contains(characterIndex) {
-                        model.scene.characters[characterIndex].speed = $0 } }),
-                    in: 40...600)
-                Text("\(Int(model.scene.characters[safe: characterIndex]?.speed ?? 320))")
+                        model.scene.characters[characterIndex].speed = StudioModel.speed(fromUI: $0) } }),
+                    in: 1...10, step: 0.1)
+                Text(String(format: "%.1f",
+                            StudioModel.uiSpeed(model.scene.characters[safe: characterIndex]?.speed ?? 320)))
                     .font(.system(size: 9, design: .monospaced)).foregroundStyle(.secondary)
                     .frame(width: 28, alignment: .trailing)
             }
             HStack {
                 Text("wobble").font(.caption2).frame(width: 80, alignment: .leading)
                 Slider(value: Binding(
-                    get: { model.scene.characters[safe: characterIndex]?.wobble ?? 7 },
+                    get: { StudioModel.uiWobble(model.scene.characters[safe: characterIndex]?.wobble ?? 7) },
                     set: { if model.scene.characters.indices.contains(characterIndex) {
-                        model.scene.characters[characterIndex].wobble = $0 } }),
-                    in: 0...16)
-                Text(String(format: "%.1f", model.scene.characters[safe: characterIndex]?.wobble ?? 7))
+                        model.scene.characters[characterIndex].wobble = StudioModel.wobble(fromUI: $0) } }),
+                    in: 1...10, step: 0.1)
+                Text(String(format: "%.1f",
+                            StudioModel.uiWobble(model.scene.characters[safe: characterIndex]?.wobble ?? 7)))
                     .font(.system(size: 9, design: .monospaced)).foregroundStyle(.secondary)
                     .frame(width: 28, alignment: .trailing)
             }
