@@ -39,32 +39,52 @@ struct WideEditor: View {
     @AppStorage("timelineHeight") private var timelineHeight: Double = 230
     @State private var dividerDragBase: Double?
 
+    private let headerH = 36.0
+
     var body: some View {
         GeometryReader { geo in
             // Stage never letterboxes vertically: it takes exactly its 16:9 height
             // for the available width, and the timeline absorbs all remaining space.
+            let availH = Double(geo.size.height) - headerH
             let stageWidth = Double(max(200, geo.size.width - 300))
-            let requestedTL = min(max(120, timelineHeight), Double(geo.size.height) - 140)
-            let stageH = min(stageWidth * 9.0 / 16.0, Double(geo.size.height) - 6 - requestedTL)
-            let tlH = max(120, Double(geo.size.height) - 6 - stageH)
-            HStack(spacing: 0) {
-                VStack(spacing: 0) {
-                    StageView(model: model, file: file)
-                        .frame(width: CGFloat(stageWidth), height: CGFloat(stageH))
-                        .overlay(alignment: .bottom) {
-                            if showDeck {
-                                PerformanceDeck(model: model)
+            let requestedTL = min(max(120, timelineHeight), availH - 140)
+            let stageH = min(stageWidth * 9.0 / 16.0, availH - 6 - requestedTL)
+            let tlH = max(120, availH - 6 - stageH)
+            VStack(spacing: 0) {
+                header
+                HStack(spacing: 0) {
+                    VStack(spacing: 0) {
+                        StageView(model: model, file: file)
+                            .frame(width: CGFloat(stageWidth), height: CGFloat(stageH))
+                            .overlay(alignment: .bottom) {
+                                if showDeck {
+                                    PerformanceDeck(model: model)
+                                }
                             }
-                        }
-                    divider(maxHeight: Double(geo.size.height) - 140)
-                    StudioTimelineView(model: model, file: file)
-                        .frame(height: CGFloat(tlH))
+                        divider(maxHeight: availH - 140)
+                        StudioTimelineView(model: model, file: file, showShip: false)
+                            .frame(height: CGFloat(tlH))
+                    }
+                    Divider()
+                    SidePanel(model: model, file: file)
+                        .frame(width: 300)
                 }
-                Divider()
-                SidePanel(model: model, file: file)
-                    .frame(width: 300)
             }
         }
+    }
+
+    private var header: some View {
+        HStack {
+            Text("BANNY STUDIO")
+                .font(.system(size: 13, weight: .heavy, design: .rounded))
+                .kerning(2)
+                .foregroundStyle(Color(red: 1, green: 0.54, blue: 0))
+            Spacer()
+            ShipButton(model: model, file: file)
+        }
+        .padding(.horizontal, 14)
+        .frame(height: CGFloat(headerH))
+        .background(Color(red: 0.04, green: 0.04, blue: 0.065))
     }
 
     /// Drag up to grow the timeline (shrinking the stage), down to shrink it.

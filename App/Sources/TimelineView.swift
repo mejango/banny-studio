@@ -112,6 +112,7 @@ enum TrackRow: Equatable {
 struct StudioTimelineView: View {
     @Bindable var model: StudioModel
     var file: ShowDocumentFile? = nil
+    var showShip = true
     @State private var zoom: Double = 1
     @State private var dragStartMarks: [Int: [PerfEvent]]?
     @State private var resizing: (mark: PerfMark, leading: Bool, baseEvents: [PerfEvent])?
@@ -146,7 +147,7 @@ struct StudioTimelineView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            TransportBar(model: model, file: file)
+            TransportBar(model: model, file: showShip ? file : nil)
             ScrollView(.vertical) {
                 VStack(alignment: .leading, spacing: 0) {
                 HStack(alignment: .top, spacing: 0) {
@@ -302,7 +303,7 @@ struct StudioTimelineView: View {
     private var gutterCanvas: some View {
         Canvas { ctx, size in
             ctx.fill(Path(CGRect(origin: .zero, size: size)),
-                     with: .color(Color(red: 0.045, green: 0.045, blue: 0.07)))
+                     with: .color(Color(red: 0.1, green: 0.1, blue: 0.135)))
             ctx.draw(Text("CC").font(.system(size: 9, weight: .bold))
                         .foregroundStyle(Color(red: 0.85, green: 0.8, blue: 0.6)),
                      at: CGPoint(x: 8, y: headerHeight + 6), anchor: .topLeading)
@@ -318,14 +319,17 @@ struct StudioTimelineView: View {
                 let y = laneTop(of: row)
                 let h = height(of: row)
                 let hidden = isHidden(row)
+                // Lighter cell over the base, bounded by strong dark separators.
+                ctx.fill(Path(CGRect(x: 0, y: y, width: size.width, height: h - 2)),
+                         with: .color(Color(red: 0.115, green: 0.115, blue: 0.155)))
                 if draggingRow?.row == row {
                     ctx.fill(Path(CGRect(x: 0, y: y, width: size.width, height: h)),
                              with: .color(Color.white.opacity(0.08)))
                 }
                 ctx.stroke(Path { p in
-                    p.move(to: CGPoint(x: 0, y: y + h))
-                    p.addLine(to: CGPoint(x: size.width, y: y + h))
-                }, with: .color(.black), lineWidth: 1)
+                    p.move(to: CGPoint(x: 0, y: y + h - 1))
+                    p.addLine(to: CGPoint(x: size.width, y: y + h - 1))
+                }, with: .color(.black), lineWidth: 2)
                 let pillActive = resizingTrack?.key == row.key(in: model.scene)
                 ctx.fill(Path(roundedRect: CGRect(x: size.width / 2 - 16, y: y + h - 4.5,
                                                   width: 32, height: 3), cornerRadius: 1.5),
