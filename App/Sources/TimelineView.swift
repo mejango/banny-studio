@@ -111,7 +111,6 @@ struct StudioTimelineView: View {
     @Bindable var model: StudioModel
     var file: ShowDocumentFile? = nil
     @State private var zoom: Double = 1
-    @State private var selectedAnchor: Int?
     @State private var dragStartMarks: [Int: [PerfEvent]]?
     @State private var resizing: (mark: PerfMark, leading: Bool, baseEvents: [PerfEvent])?
     @State private var draggingClip: (id: String, baseStart: Double)?
@@ -128,10 +127,12 @@ struct StudioTimelineView: View {
     @FocusState private var labelFocused: Bool
     @State private var cueThumbs = CueThumbCache()
 
-    private let laneLabelWidth: CGFloat = 96
+    /// Label gutter width — draggable at its right edge.
+    @AppStorage("laneLabelWidth") private var laneLabelWidthStore: Double = 110
+    private var laneLabelWidth: CGFloat { CGFloat(laneLabelWidthStore) }
+    @State private var resizingGutter = false
     private let rulerHeight: CGFloat = 18
     private let scrubHeight: CGFloat = 16
-    private let cropHeight: CGFloat = 18
     private let defaultLaneHeight: CGFloat = 52
 
     var body: some View {
@@ -169,7 +170,7 @@ struct StudioTimelineView: View {
         .onDeleteCommand { deleteSelection() }
         #else
         .toolbar {
-            if !model.selectedMarks.isEmpty || selectedAnchor != nil || !model.selectedClips.isEmpty {
+            if !model.selectedMarks.isEmpty || !model.selectedClips.isEmpty {
                 Button("Delete", role: .destructive) { deleteSelection() }
             }
         }
@@ -185,7 +186,7 @@ struct StudioTimelineView: View {
             + model.scene.backgroundTracks.indices.map(TrackRow.background)
     }
 
-    private var headerHeight: CGFloat { rulerHeight + scrubHeight + cropHeight }
+    private var headerHeight: CGFloat { rulerHeight + scrubHeight }
 
     private func height(of row: TrackRow) -> CGFloat {
         trackHeights[row.key(in: model.scene)] ?? defaultLaneHeight
@@ -222,7 +223,6 @@ struct StudioTimelineView: View {
     private var timelineCanvas: some View {
         Canvas { ctx, size in
             drawRuler(ctx: ctx, size: size)
-            drawCropBar(ctx: ctx)
             for row in rows { drawLane(row, ctx: ctx, size: size) }
             drawPlayhead(ctx: ctx, size: size)
         }
@@ -237,6 +237,8 @@ struct StudioTimelineView: View {
     private func drawRuler(ctx: GraphicsContext, size: CGSize) {
         ctx.fill(Path(CGRect(x: 0, y: 0, width: size.width, height: rulerHeight)),
                  with: .color(Color(red: 0.055, green: 0.055, blue: 0.086)))
+        ctx.fill(Path(CGRect(x: 0, y: 0, width: laneLabelWidth, height: headerHeight)),
+                 with: .color(Color(red: 0.045, green: 0.045, blue: 0.07)))
         let step: Double = zoom >= 8 ? 1 : zoom >= 3 ? 5 : 10
         var t: Double = 0
         while t <= model.duration {
@@ -249,26 +251,6 @@ struct StudioTimelineView: View {
         }
         ctx.fill(Path(CGRect(x: 0, y: rulerHeight, width: size.width, height: scrubHeight)),
                  with: .color(Color(red: 0.09, green: 0.09, blue: 0.15)))
-    }
-
-    private func drawCropBar(ctx: GraphicsContext) {
-        let y = rulerHeight + scrubHeight
-        ctx.fill(Path(CGRect(x: 0, y: y, width: laneLabelWidth + contentWidth, height: cropHeight)),
-                 with: .color(Color(red: 0.078, green: 0.063, blue: 0.13)))
-        ctx.draw(Text("SHOW").font(.system(size: 8, weight: .semibold)).foregroundStyle(Color.purple),
-                 at: CGPoint(x: 30, y: y + cropHeight / 2))
-        let anchors = model.scene.cropAnchors.sorted()
-        for (i, a) in anchors.enumerated() {
-            let px = x(forTime: a)
-            let isSel = selectedAnchor == i
-            ctx.fill(Path(CGRect(x: px - 1, y: y, width: isSel ? 3 : 2, height: cropHeight)),
-                     with: .color(isSel ? .white : Color(red: 0.8, green: 0.69, blue: 1)))
-        }
-        for pair in zip(anchors, anchors.dropFirst()) {
-            let a = x(forTime: pair.0), b = x(forTime: pair.1)
-            ctx.fill(Path(CGRect(x: a + 2, y: y + 2, width: b - a - 4, height: cropHeight - 4)),
-                     with: .color(Color(red: 0.59, green: 0.47, blue: 1).opacity(0.14)))
-        }
     }
 
     private func drawLane(_ row: TrackRow, ctx: GraphicsContext, size: CGSize) {
@@ -287,7 +269,7 @@ struct StudioTimelineView: View {
         if hidden { labelCtx.opacity = 0.35 }
         labelCtx.draw(Text(label(for: row)).font(.system(size: 10, weight: .semibold))
                         .foregroundStyle(labelColor(for: row)),
-                      at: CGPoint(x: laneLabelWidth / 2 - 8, y: y + 12))
+                      at: CGPoint(x: 8, y: y + 6), anchor: .topLeading)
         ctx.draw(Text(Image(systemName: hidden ? "eye.slash" : "eye"))
                     .font(.system(size: 9))
                     .foregroundStyle(hidden ? Color.gray : Color(white: 0.55)),
@@ -486,15 +468,22 @@ struct StudioTimelineView: View {
         DragGesture(minimumDistance: 0)
             .onChanged { value in
                 let y = value.startLocation.y
+                if resizingGutter {
+                    laneLabelWidthStore = min(300, max(60, Double(value.location.x)))
+                    return
+                }
                 if let tr = resizingTrack {
                     let delta = value.location.y - value.startLocation.y
                     trackHeights[tr.key] = min(220, max(32, tr.baseHeight + delta))
                     return
                 }
-                if y < rulerHeight + scrubHeight {
+                if abs(value.startLocation.x - laneLabelWidth) < 5, resizingTrack == nil,
+                   dragStartMarks == nil, draggingClip == nil, draggingCue == nil, resizing == nil {
+                    resizingGutter = true
+                    return
+                }
+                if y < headerHeight {
                     model.seek(to: time(forX: value.location.x))
-                } else if y < headerHeight {
-                    handleCropDrag(value)
                 } else if value.startLocation.x < laneLabelWidth,
                           dragStartMarks == nil, draggingClip == nil,
                           draggingCue == nil, resizing == nil {
@@ -514,11 +503,11 @@ struct StudioTimelineView: View {
                     model.registerUndoSnapshot(label: "Edit Timeline")
                 }
                 dragStartMarks = nil
-                draggingAnchor = nil
                 resizing = nil
                 draggingClip = nil
                 draggingCue = nil
                 resizingTrack = nil
+                resizingGutter = false
             }
     }
 
@@ -529,21 +518,6 @@ struct StudioTimelineView: View {
             if abs(bottom - y) < 6 { return r }
         }
         return nil
-    }
-
-    @State private var draggingAnchor: Int?
-
-    private func handleCropDrag(_ value: DragGesture.Value) {
-        let t = time(forX: value.location.x)
-        let anchors = model.scene.cropAnchors.sorted()
-        if draggingAnchor == nil {
-            draggingAnchor = anchors.firstIndex { abs(x(forTime: $0) - value.startLocation.x) < 6 } ?? -1
-            model.scene.cropAnchors = anchors
-        }
-        if let i = draggingAnchor, i >= 0 {
-            model.scene.cropAnchors[i] = t
-            selectedAnchor = i
-        }
     }
 
     private func handleLaneDrag(_ value: DragGesture.Value) {
@@ -646,22 +620,6 @@ struct StudioTimelineView: View {
                 toggleHidden(row)
             } else if case .character(let i) = row {
                 model.selection = [i]
-            }
-            return
-        }
-        let cropTop = rulerHeight + scrubHeight
-        if y >= cropTop, y < cropTop + cropHeight {
-            let anchors = model.scene.cropAnchors.sorted()
-            let t = time(forX: point.x)
-            if let i = anchors.firstIndex(where: { abs(x(forTime: $0) - point.x) < 6 }) {
-                selectedAnchor = i
-            } else if let seg = zip(anchors, anchors.dropFirst()).first(where: { t > $0.0 && t < $0.1 }) {
-                model.addShowSegment(from: seg.0, to: seg.1)
-            } else {
-                model.registerUndoSnapshot(label: "Add Anchor")
-                model.scene.cropAnchors.append((t * 10).rounded() / 10)
-                model.scene.cropAnchors.sort()
-                selectedAnchor = nil
             }
             return
         }
@@ -842,13 +800,6 @@ struct StudioTimelineView: View {
     }
 
     private func deleteSelection() {
-        if let i = selectedAnchor, model.scene.cropAnchors.indices.contains(i) {
-            model.registerUndoSnapshot(label: "Delete Anchor")
-            model.scene.cropAnchors.sort()
-            model.scene.cropAnchors.remove(at: i)
-            selectedAnchor = nil
-            return
-        }
         model.deleteTimelineSelection()
     }
 }

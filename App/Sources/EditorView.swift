@@ -141,7 +141,6 @@ struct SidePanel: View {
                     AudioSection(model: model, file: file)
                 }
                 physicsSection
-                showSection
             }
             .padding(10)
         }
@@ -200,30 +199,6 @@ struct SidePanel: View {
         }
     }
 
-    private var showSection: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text("SHOW").font(.caption.bold()).foregroundStyle(.secondary)
-            if model.document.show.isEmpty {
-                Text("Drop anchors on the SHOW bar, then tap a segment to add it. Empty = ship the whole timeline.")
-                    .font(.caption2).foregroundStyle(.secondary)
-            }
-            ForEach(Array(model.document.show.enumerated()), id: \.offset) { i, seg in
-                HStack {
-                    Text("\(i + 1)").font(.caption2.bold()).foregroundStyle(.purple)
-                    Text(seg.name).font(.caption2).lineLimit(1)
-                    Spacer()
-                    Button("×") { model.document.show.remove(at: i) }
-                        .buttonStyle(.plain).foregroundStyle(.red)
-                }
-                .padding(4)
-                .background(Color(red: 1, green: 0.97, blue: 0.9))
-            }
-            let total = model.document.show.reduce(0) { $0 + ($1.to - $1.from) }
-            if total > 0 {
-                Text(String(format: "total %.1fs", total)).font(.caption2).foregroundStyle(.secondary)
-            }
-        }
-    }
 }
 
 extension Array {
