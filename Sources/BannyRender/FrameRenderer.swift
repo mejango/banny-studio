@@ -36,7 +36,6 @@ public struct FrameRenderer: Sendable {
     public func draw(scene: SceneState, at t: Double, size: CGSize,
                      background: (image: CGImage, crop: Crop)? = nil,
                      imageAsset: ((String) -> CGImage?)? = nil,
-                     showSuns: Bool = false,
                      flipped: Bool = false,
                      in ctx: CGContext) {
         let W = Double(size.width)
@@ -82,14 +81,16 @@ public struct FrameRenderer: Sendable {
         }
 
         // Shadows first (web z = char z - 1, under every character).
+        let lights = scene.activeLights(at: t)
         if let shadow = assets.shadowImage() {
             for e in entries.sorted(by: { $0.placement.zIndex < $1.placement.zIndex }) {
-                for light in scene.lights {
-                    let s = StageLayout.shadow(for: e.placement, pose: e.pose, light: light,
+                for light in lights where light.intensity > 0.01 {
+                    let s = StageLayout.shadow(for: e.placement, pose: e.pose,
+                                               light: Light(x: light.x, y: light.y),
                                                stageWidth: W, virtualHeight: H)
                     guard s.opacity > 0 else { continue }
                     ctx.saveGState()
-                    ctx.setAlpha(CGFloat(s.opacity))
+                    ctx.setAlpha(CGFloat(s.opacity * light.intensity))
                     ctx.translateBy(x: CGFloat(s.x + 75), y: CGFloat(s.y + StageLayout.shadowSize.height / 2))
                     ctx.scaleBy(x: CGFloat(s.scaleX), y: CGFloat(s.scaleY))
                     drawImage(shadow, in: CGRect(x: -75, y: -StageLayout.shadowSize.height / 2,
@@ -102,14 +103,6 @@ public struct FrameRenderer: Sendable {
 
         for e in entries.sorted(by: { $0.placement.zIndex < $1.placement.zIndex }) {
             drawCharacter(scene.characters[e.index], pose: e.pose, placement: e.placement, in: ctx)
-        }
-
-        if showSuns, let sun = assets.sunImage() {
-            let sunSize = 120.0 // editor-only affordance; lightSize slider drives the app UI value
-            for light in scene.lights {
-                drawImage(sun, in: CGRect(x: light.x * W - sunSize / 2, y: light.y * H - sunSize / 2,
-                                          width: sunSize, height: sunSize), ctx: ctx)
-            }
         }
 
         drawCaptions(entries.compactMap { entry in

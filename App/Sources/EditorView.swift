@@ -146,6 +146,9 @@ struct SidePanel: View {
                 if model.selectedImageCuePath != nil {
                     ImageCueInspector(model: model)
                 }
+                if model.selectedLightCuePath != nil {
+                    LightCueInspector(model: model)
+                }
                 if let file {
                     AssetBankSection(model: model, file: file)
                     AudioSection(model: model, file: file)
@@ -184,6 +187,8 @@ struct SidePanel: View {
                     Button("+ \(body.rawValue)") { model.addCharacter(body: body) }
                         .font(.caption2)
                 }
+                Button("+ light") { model.addLightTrack() }
+                    .font(.caption2)
             }
             Text("audio / image / background tracks are added from AUDIO and the ASSET BANK; hide/show any track with the eye on its timeline lane")
                 .font(.caption2).foregroundStyle(.secondary)

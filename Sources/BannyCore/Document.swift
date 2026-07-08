@@ -329,6 +329,7 @@ public struct SceneState: Equatable, Sendable {
     public var audioTracks: [AudioTrack]
     public var imageTracks: [ImageTrack]
     public var backgroundTracks: [BackgroundTrack]
+    public var lightTracks: [LightTrack]
     public var lights: [Light]
     /// Crop anchor times (seconds) that split the timeline into Show segments.
     public var cropAnchors: [Double]
@@ -343,6 +344,7 @@ public struct SceneState: Equatable, Sendable {
 
     public init(characters: [Character] = [], audioTracks: [AudioTrack] = [],
                 imageTracks: [ImageTrack] = [], backgroundTracks: [BackgroundTrack] = [],
+                lightTracks: [LightTrack] = [],
                 lights: [Light] = [], cropAnchors: [Double] = [],
                 gScale: Double = 0.6, gravity: Double = 1, gSize: Double = 1,
                 background: BackgroundSpec? = nil) {
@@ -350,6 +352,7 @@ public struct SceneState: Equatable, Sendable {
         self.audioTracks = audioTracks
         self.imageTracks = imageTracks
         self.backgroundTracks = backgroundTracks
+        self.lightTracks = lightTracks
         self.lights = lights
         self.cropAnchors = cropAnchors
         self.gScale = gScale
@@ -375,7 +378,27 @@ public struct SceneState: Equatable, Sendable {
         for t in backgroundTracks {
             for cue in t.cues { end = max(end, cue.start + cue.dur) }
         }
+        for t in lightTracks {
+            for cue in t.cues { end = max(end, cue.start + cue.dur) }
+        }
         return end
+    }
+
+    /// Lights shining at time t: every visible light track's active cue,
+    /// interpolated. Falls back to the legacy static `lights` array when no
+    /// light track is active (pre-light-track documents keep their sun).
+    public func activeLights(at t: Double) -> [ResolvedLight] {
+        var out: [ResolvedLight] = []
+        for track in lightTracks where !track.hidden && track.presence.isPresent(at: t) {
+            for cue in track.cues where t >= cue.start && t < cue.start + cue.dur {
+                let state = cue.state(at: t)
+                out.append(ResolvedLight(x: state.x, y: state.y, intensity: state.intensity))
+            }
+        }
+        if out.isEmpty {
+            out = lights.map { ResolvedLight(x: $0.x, y: $0.y, intensity: 1) }
+        }
+        return out
     }
 
     /// The backdrop to paint at time t: last visible background track's active cue wins.
@@ -391,7 +414,7 @@ public struct SceneState: Equatable, Sendable {
 
 extension SceneState: Codable {
     private enum CodingKeys: String, CodingKey {
-        case characters, audioTracks, imageTracks, backgroundTracks, lights,
+        case characters, audioTracks, imageTracks, backgroundTracks, lightTracks, lights,
              cropAnchors, gScale, gravity, gSize, background
     }
 
@@ -401,6 +424,7 @@ extension SceneState: Codable {
         audioTracks = try c.decodeIfPresent([AudioTrack].self, forKey: .audioTracks) ?? []
         imageTracks = try c.decodeIfPresent([ImageTrack].self, forKey: .imageTracks) ?? []
         backgroundTracks = try c.decodeIfPresent([BackgroundTrack].self, forKey: .backgroundTracks) ?? []
+        lightTracks = try c.decodeIfPresent([LightTrack].self, forKey: .lightTracks) ?? []
         lights = try c.decodeIfPresent([Light].self, forKey: .lights) ?? []
         cropAnchors = try c.decodeIfPresent([Double].self, forKey: .cropAnchors) ?? []
         gScale = try c.decodeIfPresent(Double.self, forKey: .gScale) ?? 0.6
@@ -686,6 +710,87 @@ extension Pan: Codable {
         case .wide: try c.encode("wide")
         case .value(let n): try c.encode(n)
         }
+    }
+}
+
+/// A light on stage at a moment: position (normalized) + intensity 0..1.
+public struct LightState: Codable, Equatable, Sendable {
+    public var x: Double
+    public var y: Double
+    public var intensity: Double
+
+    public init(x: Double = 0.8, y: Double = 0.18, intensity: Double = 1) {
+        self.x = x
+        self.y = y
+        self.intensity = intensity
+    }
+}
+
+/// A light resolved at render time.
+public struct ResolvedLight: Equatable, Sendable {
+    public var x: Double
+    public var y: Double
+    public var intensity: Double
+
+    public init(x: Double, y: Double, intensity: Double) {
+        self.x = x
+        self.y = y
+        self.intensity = intensity
+    }
+}
+
+public struct LightTrack: Codable, Equatable, Identifiable, Sendable {
+    public var id: String
+    public var name: String
+    public var hidden: Bool
+    public var cues: [LightCue]
+    public var presence: [VisibilityEvent]
+
+    public init(id: String, name: String, hidden: Bool = false, cues: [LightCue] = [],
+                presence: [VisibilityEvent] = []) {
+        self.id = id
+        self.name = name
+        self.hidden = hidden
+        self.cues = cues
+        self.presence = presence
+    }
+
+    private enum CodingKeys: String, CodingKey { case id, name, hidden, cues, presence }
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(String.self, forKey: .id)
+        name = try c.decode(String.self, forKey: .name)
+        hidden = try c.decodeIfPresent(Bool.self, forKey: .hidden) ?? false
+        cues = try c.decodeIfPresent([LightCue].self, forKey: .cues) ?? []
+        presence = try c.decodeIfPresent([VisibilityEvent].self, forKey: .presence) ?? []
+    }
+}
+
+public struct LightCue: Codable, Equatable, Identifiable, Sendable {
+    public var id: String
+    public var start: Double
+    public var dur: Double
+    public var from: LightState
+    /// State at cue end; nil = static. Linear interpolation between.
+    public var to: LightState?
+    public var label: String?
+
+    public init(id: String, start: Double, dur: Double, from: LightState,
+                to: LightState? = nil, label: String? = nil) {
+        self.id = id
+        self.start = start
+        self.dur = dur
+        self.from = from
+        self.to = to
+        self.label = label
+    }
+
+    public func state(at t: Double) -> LightState {
+        guard let to, dur > 0 else { return from }
+        let k = min(1, max(0, (t - start) / dur))
+        return LightState(x: from.x + (to.x - from.x) * k,
+                          y: from.y + (to.y - from.y) * k,
+                          intensity: from.intensity + (to.intensity - from.intensity) * k)
     }
 }
 

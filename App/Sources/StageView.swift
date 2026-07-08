@@ -31,10 +31,11 @@ struct StageView: View {
                         scene: scene, at: model.time, size: size,
                         background: bg,
                         imageAsset: { media.still(assetID: $0, file: file) },
-                        showSuns: !model.playing, in: cg)
+                        in: cg)
                 }
                 drawSelectionTags(context: context, size: size, scene: scene)
                 drawImageCueHighlight(context: context, size: size)
+                drawLightHandle(context: context, size: size)
                 DispatchQueue.main.async { stageSize = size }
                 _ = timeline.date
             }
@@ -73,6 +74,26 @@ struct StageView: View {
                        with: .color(.orange), style: StrokeStyle(lineWidth: 1.5, dash: [5, 4]))
     }
 
+    /// Temporary editor-only handle for the selected light cue: lights never
+    /// render in the scene, but while selected they show a draggable point.
+    private func drawLightHandle(context: GraphicsContext, size: CGSize) {
+        guard let path = model.selectedLightCuePath else { return }
+        let cue = model.scene.lightTracks[path.track].cues[path.cue]
+        guard model.time >= cue.start, model.time < cue.start + cue.dur else { return }
+        let state = cue.state(at: model.time)
+        let p = CGPoint(x: state.x * size.width, y: state.y * size.height)
+        let r: CGFloat = 10
+        context.stroke(Path(ellipseIn: CGRect(x: p.x - r, y: p.y - r, width: r * 2, height: r * 2)),
+                       with: .color(.yellow), style: StrokeStyle(lineWidth: 1.5, dash: [4, 3]))
+        context.fill(Path(ellipseIn: CGRect(x: p.x - 2.5, y: p.y - 2.5, width: 5, height: 5)),
+                     with: .color(.yellow))
+        // Rays hint + intensity readout.
+        context.draw(Text(String(format: "☀ %.0f%%", state.intensity * 100))
+                        .font(.system(size: 9, weight: .bold))
+                        .foregroundStyle(.yellow),
+                     at: CGPoint(x: p.x, y: p.y - r - 8))
+    }
+
     /// Stage drag: repositions the selected image cue if the playhead is inside it
     /// (second half sets the end placement when animated); otherwise moves the
     /// selected character's start pose (web idle drag).
@@ -85,6 +106,22 @@ struct StageView: View {
                 let dy = (value.translation.height - prev.height) / stageSize.height
                 dragLast = value.translation
 
+                if let path = model.selectedLightCuePath {
+                    var cue = model.scene.lightTracks[path.track].cues[path.cue]
+                    if model.time >= cue.start, model.time < cue.start + cue.dur {
+                        let inSecondHalf = model.time > cue.start + cue.dur / 2
+                        if var end = cue.to, inSecondHalf {
+                            end.x = min(1.1, max(-0.1, end.x + dx))
+                            end.y = min(1.1, max(-0.1, end.y + dy))
+                            cue.to = end
+                        } else {
+                            cue.from.x = min(1.1, max(-0.1, cue.from.x + dx))
+                            cue.from.y = min(1.1, max(-0.1, cue.from.y + dy))
+                        }
+                        model.scene.lightTracks[path.track].cues[path.cue] = cue
+                        return
+                    }
+                }
                 if let path = model.selectedImageCuePath {
                     var cue = model.scene.imageTracks[path.track].cues[path.cue]
                     if model.time >= cue.start, model.time < cue.start + cue.dur {

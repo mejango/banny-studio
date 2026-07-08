@@ -92,6 +92,7 @@ enum TrackRow: Equatable {
     case character(Int)
     case image(Int)
     case audio(Int)
+    case light(Int)
     case background(Int)
 
     /// Stable identity for per-track height storage.
@@ -100,6 +101,7 @@ enum TrackRow: Equatable {
         case .character(let i): return "c-\(i)"
         case .image(let i): return scene.imageTracks[safe: i]?.id ?? "i-\(i)"
         case .audio(let i): return scene.audioTracks[safe: i]?.id ?? "a-\(i)"
+        case .light(let i): return scene.lightTracks[safe: i]?.id ?? "l-\(i)"
         case .background(let i): return scene.backgroundTracks[safe: i]?.id ?? "b-\(i)"
         }
     }
@@ -204,6 +206,7 @@ struct StudioTimelineView: View {
         model.scene.characters.indices.map(TrackRow.character)
             + model.scene.imageTracks.indices.map(TrackRow.image)
             + model.scene.audioTracks.indices.map(TrackRow.audio)
+            + model.scene.lightTracks.indices.map(TrackRow.light)
             + model.scene.backgroundTracks.indices.map(TrackRow.background)
     }
 
@@ -312,6 +315,7 @@ struct StudioTimelineView: View {
         case .character: return model.scene.characters.indices.map(TrackRow.character)
         case .image: return model.scene.imageTracks.indices.map(TrackRow.image)
         case .audio: return model.scene.audioTracks.indices.map(TrackRow.audio)
+        case .light: return model.scene.lightTracks.indices.map(TrackRow.light)
         case .background: return model.scene.backgroundTracks.indices.map(TrackRow.background)
         }
     }
@@ -406,6 +410,8 @@ struct StudioTimelineView: View {
             move(&model.scene.imageTracks, from: i, to: target)
         case .audio(let i):
             move(&model.scene.audioTracks, from: i, to: target)
+        case .light(let i):
+            move(&model.scene.lightTracks, from: i, to: target)
         case .background(let i):
             move(&model.scene.backgroundTracks, from: i, to: target)
         }
@@ -470,6 +476,15 @@ struct StudioTimelineView: View {
                            label: cue.label ?? assetName(cue.assetID),
                            assetID: cue.assetID,
                            selected: model.selectedImageCue == cue.id,
+                           animated: cue.to != nil, ctx: content)
+            }
+        case .light(let i):
+            for cue in model.scene.lightTracks[i].cues {
+                drawCueBar(start: cue.start, dur: cue.dur, y: y, h: h,
+                           color: Color(red: 0.95, green: 0.78, blue: 0.25),
+                           label: (cue.label ?? "light") + String(format: " %.0f%%", cue.from.intensity * 100),
+                           assetID: "",
+                           selected: model.selectedLightCue == cue.id,
                            animated: cue.to != nil, ctx: content)
             }
         case .background(let i):
@@ -703,6 +718,7 @@ struct StudioTimelineView: View {
             return n.isEmpty ? "banny \((i + 1) % 10)" : n
         case .audio(let i): return model.scene.audioTracks[i].name
         case .image(let i): return model.scene.imageTracks[i].name
+        case .light(let i): return model.scene.lightTracks[i].name
         case .background(let i): return model.scene.backgroundTracks[i].name
         }
     }
@@ -713,6 +729,7 @@ struct StudioTimelineView: View {
             return model.selection.contains(i) ? .orange : Color(white: 0.7)
         case .audio: return Color(red: 0.45, green: 0.9, blue: 0.75)
         case .image: return Color(red: 0.9, green: 0.7, blue: 0.4)
+        case .light: return Color(red: 1, green: 0.85, blue: 0.35)
         case .background: return Color(red: 0.65, green: 0.6, blue: 0.95)
         }
     }
@@ -727,6 +744,7 @@ struct StudioTimelineView: View {
         case .character(let i): return model.scene.characters[i].presence
         case .audio(let i): return model.scene.audioTracks[i].presence
         case .image(let i): return model.scene.imageTracks[i].presence
+        case .light(let i): return model.scene.lightTracks[i].presence
         case .background(let i): return model.scene.backgroundTracks[i].presence
         }
     }
@@ -737,6 +755,7 @@ struct StudioTimelineView: View {
         case .character(let i): model.scene.characters[i].presence = sorted
         case .audio(let i): model.scene.audioTracks[i].presence = sorted
         case .image(let i): model.scene.imageTracks[i].presence = sorted
+        case .light(let i): model.scene.lightTracks[i].presence = sorted
         case .background(let i): model.scene.backgroundTracks[i].presence = sorted
         }
     }
@@ -746,6 +765,7 @@ struct StudioTimelineView: View {
         case .character(let i): return model.scene.characters[i].hidden
         case .audio(let i): return model.scene.audioTracks[i].hidden
         case .image(let i): return model.scene.imageTracks[i].hidden
+        case .light(let i): return model.scene.lightTracks[i].hidden
         case .background(let i): return model.scene.backgroundTracks[i].hidden
         }
     }
@@ -756,6 +776,7 @@ struct StudioTimelineView: View {
         case .character(let i): model.scene.characters[i].hidden.toggle()
         case .audio(let i): model.scene.audioTracks[i].hidden.toggle()
         case .image(let i): model.scene.imageTracks[i].hidden.toggle()
+        case .light(let i): model.scene.lightTracks[i].hidden.toggle()
         case .background(let i): model.scene.backgroundTracks[i].hidden.toggle()
         }
     }
@@ -937,6 +958,10 @@ struct StudioTimelineView: View {
             guard let ci = model.scene.imageTracks[i].cues.firstIndex(where: { $0.id == dc.cueID }) else { return }
             update(start: &model.scene.imageTracks[i].cues[ci].start,
                    dur: &model.scene.imageTracks[i].cues[ci].dur)
+        case .light(let i):
+            guard let ci = model.scene.lightTracks[i].cues.firstIndex(where: { $0.id == dc.cueID }) else { return }
+            update(start: &model.scene.lightTracks[i].cues[ci].start,
+                   dur: &model.scene.lightTracks[i].cues[ci].dur)
         case .background(let i):
             guard let ci = model.scene.backgroundTracks[i].cues.firstIndex(where: { $0.id == dc.cueID }) else { return }
             update(start: &model.scene.backgroundTracks[i].cues[ci].start,
@@ -948,6 +973,7 @@ struct StudioTimelineView: View {
     private func selectCue(row: TrackRow, id: String) {
         switch row {
         case .image: model.selectedImageCue = id
+        case .light: model.selectedLightCue = id
         case .background: model.selectedBackgroundCue = id
         default: break
         }
@@ -1043,7 +1069,7 @@ struct StudioTimelineView: View {
         guard let row = row(at: point.y) else { return false }
         let rowY = laneTop(of: row)
         switch row {
-        case .image, .background:
+        case .image, .background, .light:
             return point.y >= rowY + presenceStripH && point.y <= rowY + presenceStripH + 16
         case .character:
             let zones = characterLaneZones(h: height(of: row))
@@ -1058,7 +1084,7 @@ struct StudioTimelineView: View {
         guard let row = row(at: point.y) else { return point }
         let rowY = laneTop(of: row)
         switch row {
-        case .image, .background:
+        case .image, .background, .light:
             return CGPoint(x: x(forTime: start) + 3, y: rowY + presenceStripH + 3)
         case .character:
             let zones = characterLaneZones(h: height(of: row))
@@ -1073,6 +1099,10 @@ struct StudioTimelineView: View {
         case .image(let i):
             if let cue = model.scene.imageTracks[i].cues.first(where: { $0.id == id }) {
                 return cue.label ?? assetName(cue.assetID)
+            }
+        case .light(let i):
+            if let cue = model.scene.lightTracks[i].cues.first(where: { $0.id == id }) {
+                return cue.label ?? "light"
             }
         case .background(let i):
             if let cue = model.scene.backgroundTracks[i].cues.first(where: { $0.id == id }) {
@@ -1161,6 +1191,10 @@ struct StudioTimelineView: View {
         switch row {
         case .image(let i):
             for cue in model.scene.imageTracks[i].cues where hit(cue.start, cue.dur) {
+                return (row, (cue.id, cue.start, cue.dur))
+            }
+        case .light(let i):
+            for cue in model.scene.lightTracks[i].cues where hit(cue.start, cue.dur) {
                 return (row, (cue.id, cue.start, cue.dur))
             }
         case .background(let i):

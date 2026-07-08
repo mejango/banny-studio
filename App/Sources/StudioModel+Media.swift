@@ -122,6 +122,11 @@ extension StudioModel {
                 scene.backgroundTracks[i].cues[ci].label = name
             }
         }
+        for i in scene.lightTracks.indices {
+            for ci in scene.lightTracks[i].cues.indices where scene.lightTracks[i].cues[ci].id == id {
+                scene.lightTracks[i].cues[ci].label = name
+            }
+        }
     }
 
     // MARK: - Asset bank

@@ -35,6 +35,7 @@ final class StudioModel {
     /// Image cue selected on the timeline (drag on stage repositions it).
     var selectedImageCue: String?
     var selectedBackgroundCue: String?
+    var selectedLightCue: String?
     private var markClipboard: [(character: Int, code: EventCode, start: Double, end: Double)] = []
 
     /// ⌘C: copy selected marks (times kept relative to the earliest mark).
@@ -86,6 +87,14 @@ final class StudioModel {
                 scene.backgroundTracks[i].cues.removeAll { $0.id == id }
             }
             selectedBackgroundCue = nil
+        }
+        if let id = selectedLightCue {
+            registerUndoSnapshot(label: "Delete Light Cue")
+            for i in scene.lightTracks.indices {
+                scene.lightTracks[i].cues.removeAll { $0.id == id }
+            }
+            scene.lightTracks.removeAll { $0.cues.isEmpty }
+            selectedLightCue = nil
         }
     }
 
@@ -329,6 +338,26 @@ final class StudioModel {
         cues.append(BackgroundCue(id: ShowDocumentFile.newID(), assetID: assetID,
                                   start: time, dur: end - time))
         scene.backgroundTracks[0].cues = cues.sorted { $0.start < $1.start }
+    }
+
+    func addLightTrack() {
+        registerUndoSnapshot(label: "Add Light")
+        let cue = LightCue(id: ShowDocumentFile.newID(), start: time,
+                           dur: max(10, scene.contentEnd - time),
+                           from: LightState())
+        scene.lightTracks.append(LightTrack(id: ShowDocumentFile.newID(),
+                                            name: "Light \(scene.lightTracks.count + 1)",
+                                            cues: [cue]))
+        selectedLightCue = cue.id
+    }
+
+    /// The selected light cue's track/cue indices, if any.
+    var selectedLightCuePath: (track: Int, cue: Int)? {
+        guard let id = selectedLightCue else { return nil }
+        for (ti, track) in scene.lightTracks.enumerated() {
+            if let ci = track.cues.firstIndex(where: { $0.id == id }) { return (ti, ci) }
+        }
+        return nil
     }
 
     // MARK: - Show playlist

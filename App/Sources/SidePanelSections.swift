@@ -161,6 +161,59 @@ struct ImageCueInspector: View {
     }
 }
 
+/// Position/intensity controls for the selected light cue.
+struct LightCueInspector: View {
+    @Bindable var model: StudioModel
+
+    var body: some View {
+        if let path = model.selectedLightCuePath {
+            let binding = Binding(
+                get: { model.scene.lightTracks[path.track].cues[path.cue] },
+                set: { model.scene.lightTracks[path.track].cues[path.cue] = $0 })
+            VStack(alignment: .leading, spacing: 6) {
+                Text("LIGHT CUE").font(.caption.bold()).foregroundStyle(.secondary)
+                Text("lights never show on screen — drag the yellow point on the stage to aim the shadows")
+                    .font(.caption2).foregroundStyle(.secondary)
+                HStack {
+                    Text("intensity").font(.caption2).frame(width: 60, alignment: .leading)
+                    Slider(value: Binding(
+                        get: { binding.wrappedValue.from.intensity },
+                        set: { v in
+                            var cue = binding.wrappedValue
+                            cue.from.intensity = v
+                            binding.wrappedValue = cue
+                        }), in: 0...1)
+                }
+                if binding.wrappedValue.to != nil {
+                    HStack {
+                        Text("end int.").font(.caption2).frame(width: 60, alignment: .leading)
+                        Slider(value: Binding(
+                            get: { binding.wrappedValue.to?.intensity ?? 1 },
+                            set: { v in
+                                var cue = binding.wrappedValue
+                                cue.to?.intensity = v
+                                binding.wrappedValue = cue
+                            }), in: 0...1)
+                    }
+                }
+                Toggle(isOn: Binding(
+                    get: { binding.wrappedValue.to != nil },
+                    set: { on in
+                        var cue = binding.wrappedValue
+                        cue.to = on ? cue.from : nil
+                        binding.wrappedValue = cue
+                    })) {
+                    Text("animate over time (drag the stage point in the cue's second half to set the end position)")
+                        .font(.caption2)
+                }
+                #if os(macOS)
+                .toggleStyle(.checkbox)
+                #endif
+            }
+        }
+    }
+}
+
 /// Script: one caption per line for the selected character (web SCRIPT box).
 struct ScriptSection: View {
     @Bindable var model: StudioModel
