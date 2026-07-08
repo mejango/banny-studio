@@ -291,8 +291,9 @@ struct MotionSection: View {
                 Slider(value: Binding(
                     get: { StudioModel.uiSpeed(model.scene.characters[safe: characterIndex]?.speed ?? 320) },
                     set: { if model.scene.characters.indices.contains(characterIndex) {
-                        model.scene.characters[characterIndex].speed = StudioModel.speed(fromUI: $0) } }),
-                    in: 1...10, step: 0.1)
+                        model.scene.characters[characterIndex].speed =
+                            StudioModel.speed(fromUI: ($0 * 10).rounded() / 10) } }),
+                    in: 1...10)
                 Text(String(format: "%.1f",
                             StudioModel.uiSpeed(model.scene.characters[safe: characterIndex]?.speed ?? 320)))
                     .font(.system(size: 9, design: .monospaced)).foregroundStyle(.secondary)
@@ -303,8 +304,9 @@ struct MotionSection: View {
                 Slider(value: Binding(
                     get: { StudioModel.uiWobble(model.scene.characters[safe: characterIndex]?.wobble ?? 7) },
                     set: { if model.scene.characters.indices.contains(characterIndex) {
-                        model.scene.characters[characterIndex].wobble = StudioModel.wobble(fromUI: $0) } }),
-                    in: 1...10, step: 0.1)
+                        model.scene.characters[characterIndex].wobble =
+                            StudioModel.wobble(fromUI: ($0 * 10).rounded() / 10) } }),
+                    in: 1...10)
                 Text(String(format: "%.1f",
                             StudioModel.uiWobble(model.scene.characters[safe: characterIndex]?.wobble ?? 7)))
                     .font(.system(size: 9, design: .monospaced)).foregroundStyle(.secondary)
