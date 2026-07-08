@@ -1854,7 +1854,9 @@ struct StudioTimelineView: View {
     /// Background cue boundaries: the show's scene-change anchor points.
     /// `excluding` skips a cue's own edges while dragging it.
     private func snapAnchors(excluding cueID: String? = nil) -> [Double] {
-        var ts: [Double] = [0, model.scene.contentEnd]
+        // NOT contentEnd: it's derived from the longest cue, so it would chase
+        // (and re-capture) the very edge being dragged.
+        var ts: [Double] = [0]
         for track in model.scene.backgroundTracks {
             for cue in track.cues where cue.id != cueID {
                 ts.append(cue.start)
