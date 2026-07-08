@@ -500,6 +500,11 @@ struct StudioTimelineView: View {
     private var interaction: some Gesture {
         DragGesture(minimumDistance: 0)
             .onChanged { value in
+                // A click anywhere on the timeline while renaming commits the edit.
+                if editingLabel != nil {
+                    commitLabelEdit()
+                    return
+                }
                 let y = value.startLocation.y
                 if resizingGutter {
                     laneLabelWidthStore = min(300, max(60, Double(value.location.x)))
