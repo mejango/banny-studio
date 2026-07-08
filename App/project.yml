@@ -14,6 +14,7 @@ settings:
   base:
     SWIFT_VERSION: "5.10"
     GENERATE_INFOPLIST_FILE: NO
+    ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
     CURRENT_PROJECT_VERSION: 1
     MARKETING_VERSION: 0.1.0
     DEVELOPMENT_TEAM: SY2W527QJA
@@ -27,6 +28,8 @@ targets:
       - path: Sources
       - path: Resources/BannyAssets
         type: folder
+        buildPhase: resources
+      - path: Resources/Assets.xcassets
         buildPhase: resources
     dependencies:
       - package: BannyStudioKit
@@ -52,6 +55,11 @@ targets:
           - UIInterfaceOrientationLandscapeRight
           - UIInterfaceOrientationPortrait
         NSMicrophoneUsageDescription: Record narration and voices directly onto a track.
+        NSUbiquitousContainers:
+          iCloud.com.banny.BannyStudio:
+            NSUbiquitousContainerIsDocumentScopePublic: true
+            NSUbiquitousContainerName: Banny Studio
+            NSUbiquitousContainerSupportedFolderLevels: Any
         CFBundleDocumentTypes:
           - CFBundleTypeName: Banny Show
             CFBundleTypeRole: Editor
@@ -71,6 +79,14 @@ targets:
         com.apple.security.app-sandbox: true
         com.apple.security.files.user-selected.read-write: true
         com.apple.security.device.audio-input: true
+        # iCloud Documents sync — uncomment after accepting the latest Apple
+        # Developer Program License Agreement at developer.apple.com (provisioning
+        # fails with "PLA Update available" until then):
+        # com.apple.developer.icloud-services: [CloudDocuments]
+        # com.apple.developer.icloud-container-identifiers:
+        #   - iCloud.com.banny.BannyStudio
+        # com.apple.developer.ubiquity-container-identifiers:
+        #   - iCloud.com.banny.BannyStudio
 
   BannyStudioUITests:
     type: bundle.ui-testing

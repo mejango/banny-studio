@@ -1,0 +1,78 @@
+# Banny Studio — native universal app
+
+Full native rewrite of the Banny playground web studio (`playground/index.html`)
+as one SwiftUI app for **macOS + iPadOS + iOS**. Same show-making functionality,
+deterministic to the pixel, App Store-ready structure.
+
+Spec: `docs/superpowers/specs/2026-07-07-banny-studio-native-design.md`
+
+## Layout
+
+| Path | What |
+|------|------|
+| `Sources/BannyCore` | Document model (schema v2), event semantics, deterministic simulator, legacy v1 importer, `.bannyshow` package I/O. Platform-free. |
+| `Sources/BannyRender` | Baked-asset catalog + pure `draw(t)` CoreGraphics frame compositor. Same code path for editor and export. |
+| `Sources/BannyMedia` | AVAudioEngine clip graph (EQ/pan/reverb, live + offline) and the offline mp4 exporter (AVAssetWriter, 30 fps, H.264+AAC). |
+| `Sources/banny-tool` | CLI: `import` (web JSON → .bannyshow), `info`, `ship` (headless mp4 export). |
+| `App/` | The universal SwiftUI app (XcodeGen project). Editor, timeline, wardrobe, performance deck, Ship. |
+| `App/Resources/BannyAssets` | Extracted + baked art (catalog.json, png/, svg/). |
+| `tools/` | `extract-assets.mjs` (pull art constants from index.html), `bake-assets.sh` (rasterize via headless Chrome), `gen-golden.mjs` (golden sim fixtures from the ORIGINAL JS math). |
+
+## Build
+
+```sh
+swift test                        # 24 unit/golden/snapshot tests
+cd App && xcodegen generate       # brew install xcodegen (once)
+xcodebuild -project BannyStudio.xcodeproj -scheme BannyStudio \
+  -destination 'platform=macOS' build          # or open in Xcode and Run
+```
+
+iOS: same scheme, destination `platform=iOS Simulator,name=iPhone 16 Pro`.
+UI smoke test: `xcodebuild … test` (on macOS it needs a one-time automation
+permission grant; on the iOS simulator it runs unattended).
+
+## CLI
+
+```sh
+swift run banny-tool import <staging.json> <out.bannyshow>   # web v1 → native
+swift run banny-tool info <show.bannyshow>
+swift run banny-tool ship <show.bannyshow> out.mp4 [--720|--1080|--4k]
+```
+
+`ep1-native-ship.mp4` in this folder is ep1 shipped natively (160.9 s,
+1280×720@30, H.264+AAC) from `show/ep1/beat1/staging/1.json`.
+
+## Determinism (the load-bearing idea)
+
+Stage state is a **pure function of (document, time)**: fixed 1/60 s integration,
+exact partial final step, identical math in live playback, scrubbing, and export.
+`tools/gen-golden.mjs` runs the *original webapp JS* on real ep1 event streams;
+Swift tests assert the port matches to 1e-9. Never break these tests.
+
+## Asset pipeline (regenerate when the web art changes)
+
+```sh
+node tools/extract-assets.mjs [path/to/index.html]
+./tools/bake-assets.sh          # needs Google Chrome installed
+```
+
+## Remaining owner actions (can't be automated)
+
+1. **iCloud sync**: accept the latest Apple Developer Program License Agreement
+   at developer.apple.com, then uncomment the iCloud entitlement block in
+   `App/project.yml`, `xcodegen generate`, rebuild. Documents then live in
+   iCloud Drive and sync/share across devices (system collaboration).
+2. **App Store**: create the app record in App Store Connect
+   (bundle id `com.banny.BannyStudio`), archive in Xcode (Product → Archive)
+   for macOS and iOS, upload, TestFlight.
+3. First local run: `open App/BannyStudio.xcodeproj`, select the BannyStudio
+   scheme, Run. File → Import Web Studio JSON… converts old staging files.
+
+## Known gaps vs the webapp (tracked, not blockers)
+
+- Timeline: copy/paste marks, ⌘-click split, box-select, and clip waveforms are
+  minimal or pending (delete/drag/select and crop→Show segments work).
+- Background video plays as a poster frame (image backgrounds full).
+- Audio clip import/mic recording UI not yet wired (imported clips play + ship).
+- iPhone Watch mode = the document player via Ship preview, not a separate
+  library UI yet.
