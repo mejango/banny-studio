@@ -473,7 +473,7 @@ public struct Character: Equatable, Sendable {
     public init(body: Body, x: Double = 0.5, depth: Double = 0, size: Double = 1, face: Int = 1,
                 baseOutfit: [Int: String] = [:], subs: [Subtitle] = [], clips: [AudioClip] = [],
                 events: [PerfEvent] = [], armedGroups: Set<EventGroup> = Set(EventGroup.allCases),
-                name: String = "", trackFx: Fx = .defaultTrack, recStart: StartPose? = nil,
+                name: String = "", trackFx: Fx = .defaultCharacterTrack, recStart: StartPose? = nil,
                 speed: Double = 320, wobble: Double = 7, hidden: Bool = false,
                 presence: [VisibilityEvent] = []) {
         self.body = body
@@ -516,7 +516,7 @@ extension Character: Codable {
         armedGroups = try c.decodeIfPresent(Set<EventGroup>.self, forKey: .armedGroups)
             ?? Set(EventGroup.allCases)
         name = try c.decodeIfPresent(String.self, forKey: .name) ?? ""
-        trackFx = try c.decodeIfPresent(Fx.self, forKey: .trackFx) ?? .defaultTrack
+        trackFx = try c.decodeIfPresent(Fx.self, forKey: .trackFx) ?? .defaultCharacterTrack
         recStart = try c.decodeIfPresent(StartPose.self, forKey: .recStart)
         speed = try c.decodeIfPresent(Double.self, forKey: .speed) ?? 320
         wobble = try c.decodeIfPresent(Double.self, forKey: .wobble) ?? 7
@@ -686,6 +686,8 @@ public struct Fx: Codable, Equatable, Sendable {
 
     public static let defaultClip = Fx(pan: .follow)
     public static let defaultTrack = Fx(pan: .narrow)
+    /// Character voices track the speaker by default.
+    public static let defaultCharacterTrack = Fx(pan: .follow)
 }
 
 /// Pan mode: named modes from the web app, or a fixed numeric pan -1..1.
