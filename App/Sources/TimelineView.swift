@@ -1611,10 +1611,10 @@ struct StudioTimelineView: View {
             return
         }
         if let dp = draggingPresence {
-            let t = max(0, time(forX: value.location.x))
+            let t = max(0, snapped(time(forX: value.location.x)))
             var events = presence(of: dp.row)
             guard events.indices.contains(dp.index) else { return }
-            events[dp.index].t = (t * 10).rounded() / 10
+            events[dp.index].t = (t * 1000).rounded() / 1000
             setPresence(dp.row, events)
             return
         }
@@ -1674,18 +1674,53 @@ struct StudioTimelineView: View {
         }
     }
 
+    /// Background cue boundaries: the show's scene-change anchor points.
+    /// `excluding` skips a cue's own edges while dragging it.
+    private func snapAnchors(excluding cueID: String? = nil) -> [Double] {
+        var ts: [Double] = [0, model.scene.contentEnd]
+        for track in model.scene.backgroundTracks {
+            for cue in track.cues where cue.id != cueID {
+                ts.append(cue.start)
+                ts.append(cue.start + cue.dur)
+            }
+        }
+        return ts
+    }
+
+    /// Snaps t to the nearest anchor within ~7px at the current zoom.
+    private func snapped(_ t: Double, excluding cueID: String? = nil) -> Double {
+        let tol = Double(7 / pxPerSecond)
+        var best = t
+        var bestD = tol
+        for a in snapAnchors(excluding: cueID) {
+            let d = abs(a - t)
+            if d < bestD {
+                bestD = d
+                best = a
+            }
+        }
+        return best
+    }
+
     private func applyCueDrag(_ dc: (row: TrackRow, cueID: String, baseStart: Double, baseDur: Double, edge: Int),
                               translation dt: Double) {
         func update(start: inout Double, dur: inout Double) {
             switch dc.edge {
             case -1:
-                let newStart = max(0, min(dc.baseStart + dt, dc.baseStart + dc.baseDur - 0.2))
+                let snappedStart = snapped(dc.baseStart + dt, excluding: dc.cueID)
+                let newStart = max(0, min(snappedStart, dc.baseStart + dc.baseDur - 0.2))
                 dur = dc.baseDur + (dc.baseStart - newStart)
                 start = newStart
             case 1:
-                dur = max(0.2, dc.baseDur + dt)
+                let end = snapped(dc.baseStart + dc.baseDur + dt, excluding: dc.cueID)
+                dur = max(0.2, end - dc.baseStart)
             default:
-                start = max(0, dc.baseStart + dt)
+                // Whole-cue move: snap whichever edge is closest to an anchor.
+                let s = dc.baseStart + dt
+                let snapS = snapped(s, excluding: dc.cueID)
+                let snapE = snapped(s + dc.baseDur, excluding: dc.cueID) - dc.baseDur
+                let s2 = abs(snapS - s) <= abs(snapE - s) ? snapS : snapE
+                start = max(0, s2)
             }
         }
         switch dc.row {
