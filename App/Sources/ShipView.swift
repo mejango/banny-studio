@@ -18,9 +18,17 @@ struct ShipButton: View {
         HStack(spacing: 8) {
             let hasRange = model.exportRange != nil
             Menu {
-                Button("Export media (mp4)…") { ship() }
-                    .disabled(compact && !hasRange)
-                Button("Export project (.bs)…") { exportProject() }
+                Button("Export media (mp4)…") {
+                    askSaveURL(suggested: "SHOW.mp4") { dest in
+                        if let dest { ship(to: dest) }
+                    }
+                }
+                .disabled(compact && !hasRange)
+                Button("Export project (.bs)…") {
+                    askSaveURL(suggested: "SHOW.bs") { dest in
+                        if let dest { exportProject(to: dest) }
+                    }
+                }
             } label: {
                 Text(shipping ? "Exporting… \(Int(progress * 100))%" : "Export")
                     .font(.system(size: compact ? 10 : 12, weight: compact ? .semibold : .bold))
@@ -47,31 +55,45 @@ struct ShipButton: View {
         }
     }
 
-    /// Save panel + reveal in Finder. Two stacked .fileExporter modifiers on
-    /// one view silently break each other, so exports go through NSSavePanel.
+    /// Asks for the destination BEFORE doing any work — as a window sheet, so
+    /// it can't be missed (a floating end-of-render panel could open unnoticed
+    /// behind the app, stranding finished exports in temp).
     @MainActor
-    private func saveExport(_ url: URL, suggested: String) {
+    private func askSaveURL(suggested: String, completion: @escaping (URL?) -> Void) {
         #if os(macOS)
         let panel = NSSavePanel()
         let project = NSDocumentController.shared.currentDocument?.displayName
         let base = (project as NSString?)?.deletingPathExtension ?? "banny-show"
         panel.nameFieldStringValue = suggested.replacingOccurrences(of: "SHOW", with: base)
-        panel.begin { response in
-            guard response == .OK, let dest = panel.url else { return }
-            do {
-                try? FileManager.default.removeItem(at: dest)
-                try FileManager.default.copyItem(at: url, to: dest)
-                NSWorkspace.shared.activateFileViewerSelecting([dest])
-            } catch {
-                exportError = error.localizedDescription
+        if let win = NSApp.keyWindow ?? NSApp.mainWindow {
+            panel.beginSheetModal(for: win) { r in
+                completion(r == .OK ? panel.url : nil)
             }
+        } else {
+            panel.begin { r in completion(r == .OK ? panel.url : nil) }
+        }
+        #else
+        completion(nil)
+        #endif
+    }
+
+    @MainActor
+    private func deliver(_ tmp: URL, to dest: URL) {
+        #if os(macOS)
+        do {
+            try? FileManager.default.removeItem(at: dest)
+            try FileManager.default.copyItem(at: tmp, to: dest)
+            NSWorkspace.shared.activateFileViewerSelecting([dest])
+        } catch {
+            exportError = error.localizedDescription
         }
         #endif
     }
 
     /// Packages the whole document as a single shareable .bs file (a zip of
     /// the .bannyshow package) that any Banny Studio can import.
-    private func exportProject() {
+    private func exportProject(to dest: URL) {
+        #if os(macOS)
         do {
             let wrapper = try file.projectFileWrapper()
             let dir = FileManager.default.temporaryDirectory
@@ -89,13 +111,14 @@ struct ShipButton: View {
                 exportError = "Could not package the project."
                 return
             }
-            saveExport(out, suggested: "SHOW.bs")
+            deliver(out, to: dest)
         } catch {
             exportError = String(describing: error)
         }
+        #endif
     }
 
-    private func ship() {
+    private func ship(to dest: URL) {
         model.pause()
         shipping = true
         progress = 0
@@ -134,7 +157,7 @@ struct ShipButton: View {
                     })
                 await MainActor.run {
                     shipping = false
-                    saveExport(out, suggested: "SHOW.mp4")
+                    deliver(out, to: dest)
                 }
             } catch {
                 await MainActor.run {

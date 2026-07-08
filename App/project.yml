@@ -16,7 +16,7 @@ settings:
     GENERATE_INFOPLIST_FILE: NO
     ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
     CURRENT_PROJECT_VERSION: 1
-    MARKETING_VERSION: 0.1.0
+    MARKETING_VERSION: 1.0.0
     DEVELOPMENT_TEAM: SY2W527QJA
     CODE_SIGN_STYLE: Automatic
 
@@ -30,6 +30,8 @@ targets:
         type: folder
         buildPhase: resources
       - path: Resources/Assets.xcassets
+        buildPhase: resources
+      - path: Resources/PrivacyInfo.xcprivacy
         buildPhase: resources
     dependencies:
       - package: BannyStudioKit
@@ -46,7 +48,9 @@ targets:
         CFBundleShortVersionString: $(MARKETING_VERSION)
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         LSMinimumSystemVersion: $(MACOSX_DEPLOYMENT_TARGET)
-        NSHumanReadableCopyright: ""
+        NSHumanReadableCopyright: "© 2026 jango"
+        LSApplicationCategoryType: public.app-category.graphics-design
+        ITSAppUsesNonExemptEncryption: false
         UILaunchScreen: {}
         UISupportsDocumentBrowser: true
         LSSupportsOpeningDocumentsInPlace: true

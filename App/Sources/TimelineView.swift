@@ -276,7 +276,9 @@ struct StudioTimelineView: View {
             }
             // Pinned gutter: never moves horizontally; tracks vertical scroll.
             ZStack(alignment: .topLeading) {
+                #if os(macOS)
                 GutterWheelRedirect(gutterWidth: laneLabelWidth)
+                #endif
                 gutterCanvas
                 // Every track's card: face + popover inspector (the old right panel).
                 ForEach(Array(rows.enumerated()), id: \.offset) { _, row in
