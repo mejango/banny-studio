@@ -142,7 +142,6 @@ struct StudioTimelineView: View {
     /// Preview slot (within the dragged row's group) while a row drag is live.
     @State private var dragPreviewIndex: Int?
     /// Which track's settings popover is open (row key).
-    @State private var settingsRowKey: String?
     @State private var peakCache = PeakCache()
     /// Per-track lane heights (session-scoped), keyed by TrackRow.key.
     @State private var trackHeights: [String: CGFloat] = [:]
@@ -217,8 +216,6 @@ struct StudioTimelineView: View {
             ZStack(alignment: .topLeading) {
                 GutterWheelRedirect(gutterWidth: laneLabelWidth)
                 gutterCanvas
-                gearButtons
-                    .offset(y: -scrollOffset.y)
                 newTrackRow
                     .offset(y: totalLaneHeight - scrollOffset.y)
             }
@@ -585,34 +582,6 @@ struct StudioTimelineView: View {
         }
     }
 
-
-    /// Per-row settings gear (a real button so the popover can anchor to it).
-    private var gearButtons: some View {
-        ZStack(alignment: .topLeading) {
-            ForEach(Array(rows.enumerated()), id: \.offset) { _, row in
-                let key = row.key(in: model.scene)
-                Button {
-                    settingsRowKey = settingsRowKey == key ? nil : key
-                } label: {
-                    Image(systemName: "gearshape.fill")
-                        .font(.system(size: 9))
-                        .foregroundStyle(theme.mutedText)
-                        .frame(width: 18, height: 18)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .position(x: laneLabelWidth - 36, y: laneTop(of: row) + presenceStripH / 2)
-                .popover(isPresented: Binding(
-                    get: { settingsRowKey == key },
-                    set: { if !$0 { settingsRowKey = nil } })) {
-                    TrackSettingsView(model: model, row: row)
-                        .environment(\.colorScheme, lightMode ? .light : .dark)
-                }
-            }
-        }
-        .frame(width: laneLabelWidth, alignment: .topLeading)
-        .frame(maxHeight: .infinity, alignment: .topLeading)
-    }
 
     private var gutterInteraction: some Gesture {
         DragGesture(minimumDistance: 0)
@@ -1516,6 +1485,10 @@ struct TransportBar: View {
                                     in: RoundedRectangle(cornerRadius: 4))
                 }
                 .help("Record the selected characters (⇧Space)")
+                Text(recTargetNames)
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundStyle(model.recording ? .red : .orange)
+                    .lineLimit(1)
                 ForEach(EventGroup.allCases, id: \.self) { group in
                     armChip(group)
                 }
@@ -1535,6 +1508,17 @@ struct TransportBar: View {
         .padding(.horizontal, 10)
         .padding(.vertical, 5)
         .background(theme.ruler)
+    }
+
+    /// Who REC will capture: the locked targets while recording, else the selection.
+    private var recTargetNames: String {
+        let indices = model.recording ? Array(model.recTargets).sorted()
+                                      : Array(model.selection).sorted()
+        let names = indices.compactMap { i -> String? in
+            guard let c = model.scene.characters[safe: i] else { return nil }
+            return c.name.isEmpty ? "banny \((i + 1) % 10)" : c.name
+        }
+        return names.isEmpty ? "—" : names.joined(separator: ", ")
     }
 
     private func chipTitle(_ group: EventGroup) -> String {
