@@ -195,9 +195,6 @@ struct StudioTimelineView: View {
                                                    value: geo.frame(in: .named("tlScroll")).origin)
                         }
                         timelineCanvas
-                            .dropDestination(for: URL.self) { urls, location in
-                                handleFileDrop(urls: urls, location: location)
-                            }
                         if let editing = editingLabel {
                             TextField("", text: $editingText)
                                 .textFieldStyle(.plain)
@@ -223,6 +220,13 @@ struct StudioTimelineView: View {
                 .frame(width: laneLabelWidth + max(600, contentWidth + 40),
                        height: totalLaneHeight + 34, alignment: .topLeading)
                 .id("tlContent")
+                // On the outer frame, NOT the canvas: dropDestination inside the
+                // measured ZStack corrupts the scroll-offset GeometryReader
+                // preference (band/gutter stop tracking native scrolls).
+                .dropDestination(for: URL.self) { urls, location in
+                    handleFileDrop(urls: urls,
+                                   location: CGPoint(x: location.x - laneLabelWidth, y: location.y))
+                }
             }
             .contentMargins(.leading, laneLabelWidth, for: .scrollIndicators)
             .coordinateSpace(name: "tlScroll")
