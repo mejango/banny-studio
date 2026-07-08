@@ -14,7 +14,7 @@ for svg in Assets/svg/*.svg; do
   png="Assets/png/$name.png"
   [ "$png" -nt "$svg" ] && continue  # incremental
   # width/height attrs are set by the extractor; read them for the window size.
-  dims=$(head -c 300 "$svg" | sed -n 's/.*width="\([0-9]*\)" height="\([0-9]*\)".*/\1,\2/p')
+  dims=$(head -c 300 "$svg" | sed -n 's/<svg[^>]* width="\([0-9]*\)" height="\([0-9]*\)".*/\1,\2/p')
   "$CHROME" --headless --disable-gpu --default-background-color=00000000 \
     --window-size="$dims" --screenshot="$png" "file://$PWD/$svg" 2>/dev/null
   count=$((count+1))

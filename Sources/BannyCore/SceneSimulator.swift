@@ -21,6 +21,27 @@ public struct CharacterPose: Equatable, Sendable {
     public struct JumpState: Equatable, Sendable {
         public var progress: Double
         public var height: Double
+
+        public init(progress: Double, height: Double) {
+            self.progress = progress
+            self.height = height
+        }
+    }
+
+    public init(x: Double, depth: Double, phase: Double, tilt: Double, face: Int,
+                eye: EyeExpression, talking: Bool, jump: JumpState?, outfit: [Int: String],
+                activeSubtitle: String?, moving: Bool) {
+        self.x = x
+        self.depth = depth
+        self.phase = phase
+        self.tilt = tilt
+        self.face = face
+        self.eye = eye
+        self.talking = talking
+        self.jump = jump
+        self.outfit = outfit
+        self.activeSubtitle = activeSubtitle
+        self.moving = moving
     }
 }
 
