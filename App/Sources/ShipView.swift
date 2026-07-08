@@ -18,7 +18,7 @@ struct ShipButton: View {
             Button {
                 ship()
             } label: {
-                Text(shipping ? "Shipping… \(Int(progress * 100))%" : "🚀 Ship")
+                Text(shipping ? "Exporting… \(Int(progress * 100))%" : "Export")
                     .font(.system(size: 12, weight: .bold))
             }
             .disabled(shipping)
