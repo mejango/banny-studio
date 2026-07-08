@@ -7,19 +7,23 @@ struct TrackSettingsView: View {
     @Bindable var model: StudioModel
     let row: TrackRow
     var initialExpanded: String? = nil
+    /// When set, the popover shows just this one value's editor.
+    var only: String? = nil
 
     @State private var expanded: String?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            nameField
+            if only == nil {
+                nameField
+            }
             if case .character(let i) = row, model.scene.characters.indices.contains(i) {
                 characterSettings(i)
             }
             if case .background = row {
                 backgroundSettings
             }
-            if canDelete {
+            if canDelete, only == nil {
                 Divider()
                 Button(role: .destructive) {
                     model.removeTrack(kind)
@@ -82,6 +86,7 @@ struct TrackSettingsView: View {
 
     @ViewBuilder
     private func characterSettings(_ i: Int) -> some View {
+        if only == nil || only == "speed" {
         valueRow(id: "speed", label: "speed",
                  value: String(format: "%.0f", model.scene.characters[i].speed)) {
             Slider(value: Binding(
@@ -89,6 +94,8 @@ struct TrackSettingsView: View {
                 set: { if model.scene.characters.indices.contains(i) { model.scene.characters[i].speed = $0 } }),
                 in: 40...600)
         }
+        }
+        if only == nil || only == "wobble" {
         valueRow(id: "wobble", label: "wobble",
                  value: String(format: "%.1f", model.scene.characters[i].wobble)) {
             Slider(value: Binding(
@@ -96,6 +103,8 @@ struct TrackSettingsView: View {
                 set: { if model.scene.characters.indices.contains(i) { model.scene.characters[i].wobble = $0 } }),
                 in: 0...16)
         }
+        }
+        if only == nil || only == "size" {
         HStack {
             Text("size").font(.caption2).frame(width: 56, alignment: .leading)
             ForEach([("Normal", 1.0), ("Small", 0.62), ("Baby", 0.38)], id: \.0) { name, value in
@@ -110,6 +119,7 @@ struct TrackSettingsView: View {
                 .buttonStyle(.bordered)
                 .tint(current ? .orange : .gray)
             }
+        }
         }
     }
 
