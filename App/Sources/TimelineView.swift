@@ -117,6 +117,8 @@ struct StudioTimelineView: View {
     @State private var draggingCue: (row: TrackRow, cueID: String, baseStart: Double, baseDur: Double, edge: Int)?
     @State private var draggingSub: (char: Int, index: Int, baseStart: Double, baseDur: Double, edge: Int)?
     @State private var draggingPresence: (row: TrackRow, index: Int)?
+    @State private var selectedPresence: (rowKey: String, index: Int)?
+    @State private var lastTap: (location: CGPoint, at: Date)?
     @State private var resizingTrack: (key: String, baseHeight: CGFloat, minHeight: CGFloat)?
     @State private var peakCache = PeakCache()
     /// Per-track lane heights (session-scoped), keyed by TrackRow.key.
@@ -423,12 +425,19 @@ struct StudioTimelineView: View {
                                  width: max(2, CGFloat(b - a) * pxPerSecond), height: presenceStripH - 4)),
                      with: .color(Color(red: 0.35, green: 0.75, blue: 0.5).opacity(0.35)))
         }
-        for ev in events {
+        let rowKey = row.key(in: model.scene)
+        for (i, ev) in events.enumerated() {
+            let px = x(forTime: ev.t)
+            if selectedPresence?.rowKey == rowKey, selectedPresence?.index == i {
+                ctx.stroke(Path(ellipseIn: CGRect(x: px - 7, y: y + presenceStripH / 2 - 7,
+                                                  width: 14, height: 14)),
+                           with: .color(.white), lineWidth: 1)
+            }
             ctx.draw(Text(Image(systemName: ev.visible ? "eye.fill" : "eye.slash.fill"))
                         .font(.system(size: 8))
                         .foregroundStyle(ev.visible ? Color(red: 0.5, green: 0.95, blue: 0.65)
                                                     : Color(red: 0.95, green: 0.5, blue: 0.45)),
-                     at: CGPoint(x: x(forTime: ev.t), y: y + presenceStripH / 2))
+                     at: CGPoint(x: px, y: y + presenceStripH / 2))
         }
     }
 
@@ -807,20 +816,32 @@ struct StudioTimelineView: View {
         if let row = row(at: y), y - laneTop(of: row) < presenceStripH, y >= headerHeight {
             var events = presence(of: row)
             let t = (time(forX: point.x) * 10).rounded() / 10
+            let isDoubleClick = lastTap.map {
+                Date().timeIntervalSince($0.at) < 0.45 && abs($0.location.x - point.x) < 6
+                    && abs($0.location.y - point.y) < 6
+            } ?? false
+            lastTap = (point, Date())
             if let idx = events.indices.first(where: { abs(x(forTime: events[$0].t) - point.x) < 8 }) {
-                if isCommandDown() {
+                let rowKey = row.key(in: model.scene)
+                let alreadySelected = selectedPresence?.rowKey == rowKey && selectedPresence?.index == idx
+                if isCommandDown() || (isDoubleClick && alreadySelected) {
                     model.registerUndoSnapshot(label: "Delete Presence Marker")
                     events.remove(at: idx)
                     setPresence(row, events)
+                    selectedPresence = nil
+                } else {
+                    selectedPresence = (rowKey, idx)
                 }
                 return
             }
+            selectedPresence = nil
             model.registerUndoSnapshot(label: "Toggle Presence")
             let visibleNow = events.isPresent(at: t)
             events.append(VisibilityEvent(t: t, visible: !visibleNow))
             setPresence(row, events)
             return
         }
+        lastTap = (point, Date())
         // Click on a clip/cue label → rename in place.
         if let c = clip(at: point), labelZone(forClipStart: c.start, at: point) {
             editingText = c.name
@@ -1022,6 +1043,18 @@ struct StudioTimelineView: View {
     }
 
     private func deleteSelection() {
+        if let sel = selectedPresence {
+            for row in rows where row.key(in: model.scene) == sel.rowKey {
+                var events = presence(of: row)
+                if events.indices.contains(sel.index) {
+                    model.registerUndoSnapshot(label: "Delete Presence Marker")
+                    events.remove(at: sel.index)
+                    setPresence(row, events)
+                }
+            }
+            selectedPresence = nil
+            return
+        }
         model.deleteTimelineSelection()
     }
 }
