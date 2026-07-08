@@ -202,13 +202,13 @@ struct StudioTimelineView: View {
                     }
                     .padding(.leading, laneLabelWidth)
                     gutterCanvas
-                        .frame(width: laneLabelWidth, height: totalLaneHeight + 20)
+                        .frame(width: laneLabelWidth, height: totalLaneHeight)
                         .offset(x: scrollOffset.x)
                     newTrackRow
-                        .offset(x: scrollOffset.x, y: totalLaneHeight + 20)
+                        .offset(x: scrollOffset.x, y: totalLaneHeight)
                 }
                 .frame(width: laneLabelWidth + max(600, contentWidth + 40),
-                       height: totalLaneHeight + 50, alignment: .topLeading)
+                       height: totalLaneHeight + 34, alignment: .topLeading)
             }
             .coordinateSpace(name: "tlScroll")
             .onPreferenceChange(TLOffsetKey.self) { origin in
@@ -441,18 +441,22 @@ struct StudioTimelineView: View {
                         .font(.system(size: 9, weight: .bold))
                     Text("New track")
                         .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(theme.labelText)
                 }
                 .padding(.leading, 12)
-                .frame(width: laneLabelWidth, height: 30, alignment: .leading)
+                .frame(width: laneLabelWidth, height: 34, alignment: .leading)
                 .contentShape(Rectangle())
             }
             .menuStyle(.button)
             .buttonStyle(.plain)
             .menuIndicator(.hidden)
-            .background(theme.newTrack)
+            .background(theme.gutterCell)
+            .overlay(alignment: .trailing) {
+                Rectangle().fill(theme.gutterDivider).frame(width: 1)
+            }
             Spacer()
         }
-        .frame(height: 30)
+        .frame(height: 34)
     }
 
     /// Pinned label gutter: names, eye toggles, track-height pills, width handle.
