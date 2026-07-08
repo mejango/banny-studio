@@ -402,9 +402,13 @@ struct StudioTimelineView: View {
 
     private func height(of row: TrackRow) -> CGFloat {
         var h = baseHeight(of: row) + rowStretch
-        // Room for the "Set start position" button when it's showing.
-        if case .character(let ci) = row, model.startPoseMismatch(characterIndex: ci) {
-            h += 26
+        // Room for the "Set start position" button when it's showing — grow
+        // enough that every readout line stays visible above it.
+        if case .character(let ci) = row, model.startPoseMismatch(characterIndex: ci),
+           let c = model.scene.characters[safe: ci] {
+            let lineCount = CGFloat(3 + mixReadout(c.trackFx).count)
+            let needed = presenceStripH + 13 + 13 * lineCount + 32 + wardrobeStripH
+            h = max(h + 26, needed)
         }
         return h
     }
