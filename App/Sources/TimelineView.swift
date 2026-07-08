@@ -503,7 +503,8 @@ struct StudioTimelineView: View {
             ctx.draw(Text(String(format: "%.1f / %.0fs", model.time, model.duration))
                         .font(.system(size: 10, weight: .medium, design: .monospaced))
                         .foregroundStyle(lightMode ? Color(red: 0, green: 0.45, blue: 0.1) : .green),
-                     at: CGPoint(x: size.width - 10, y: rulerHeight / 2 + 2), anchor: .trailing)
+                     at: CGPoint(x: size.width - 10, y: exportRowH + rulerHeight / 2 + 2),
+                     anchor: .trailing)
             ctx.draw(Text("Captions").font(.system(size: 10, weight: .semibold))
                         .foregroundStyle(theme.mutedText),
                      at: CGPoint(x: size.width - 10, y: captionsTop + captionsRowH / 2),
@@ -519,7 +520,6 @@ struct StudioTimelineView: View {
                 ShipButton(model: model, file: file, compact: true)
                     .padding(.trailing, 8)
                     .frame(height: exportRowH)
-                    .offset(y: headerHeight)
             }
         }
         .frame(width: laneLabelWidth, height: lanesTop)
@@ -583,7 +583,7 @@ struct StudioTimelineView: View {
                     applyExportDrag(de, value: value)
                     return
                 }
-                if value.startLocation.y >= headerHeight, value.startLocation.y < captionsTop {
+                if value.startLocation.y < exportRowH {
                     // Export row: grab a marker, slide the range, or drag out a new one.
                     let sx = value.startLocation.x + scrollOffset.x
                     let t0 = time(forX: sx)
@@ -1023,23 +1023,25 @@ struct StudioTimelineView: View {
     // MARK: - Drawing
 
     private func drawRuler(ctx: GraphicsContext, size: CGSize) {
-        ctx.fill(Path(CGRect(x: 0, y: 0, width: size.width, height: rulerHeight)),
+        let top = exportRowH  // export row sits above the time row
+        ctx.fill(Path(CGRect(x: 0, y: top, width: size.width, height: rulerHeight)),
                  with: .color(theme.ruler))
         let step: Double = zoom >= 8 ? 1 : zoom >= 3 ? 5 : 10
         var t: Double = 0
         while t <= model.duration {
             let px = x(forTime: t)
-            ctx.stroke(Path { $0.move(to: CGPoint(x: px, y: 10)); $0.addLine(to: CGPoint(x: px, y: rulerHeight)) },
+            ctx.stroke(Path { $0.move(to: CGPoint(x: px, y: top + 10))
+                              $0.addLine(to: CGPoint(x: px, y: top + rulerHeight)) },
                        with: .color(.gray), lineWidth: 1)
             ctx.draw(Text("\(Int(t))s").font(.system(size: 9)).foregroundStyle(theme.mutedText),
-                     at: CGPoint(x: px + 12, y: 7))
+                     at: CGPoint(x: px + 12, y: top + 7))
             t += step
         }
     }
 
     /// Export range row: green brackets bound what ships; empty ships everything.
     private func drawExportRow(ctx: GraphicsContext, size: CGSize) {
-        let y = headerHeight
+        let y: CGFloat = 0
         ctx.fill(Path(CGRect(x: 0, y: y, width: size.width, height: exportRowH)),
                  with: .color(theme.ccRow.opacity(0.6)))
         ctx.stroke(Path { p in
