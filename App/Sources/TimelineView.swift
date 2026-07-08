@@ -146,7 +146,7 @@ struct StudioTimelineView: View {
             ScrollView(.vertical) {
                 HStack(alignment: .top, spacing: 0) {
                     gutterCanvas
-                        .frame(width: laneLabelWidth, height: headerHeight + totalLaneHeight + 20)
+                        .frame(width: laneLabelWidth, height: lanesTop + totalLaneHeight + 20)
                     ScrollView(.horizontal) {
                         ZStack(alignment: .topLeading) {
                             timelineCanvas
@@ -171,7 +171,7 @@ struct StudioTimelineView: View {
                             }
                         }
                         .frame(width: max(600, contentWidth + 40),
-                               height: headerHeight + totalLaneHeight + 20, alignment: .topLeading)
+                               height: lanesTop + totalLaneHeight + 20, alignment: .topLeading)
                     }
                 }
             }
@@ -198,15 +198,18 @@ struct StudioTimelineView: View {
     }
 
     private var headerHeight: CGFloat { rulerHeight + scrubHeight }
+    /// Global closed-caption strip: one row above all tracks.
+    private let captionsRowH: CGFloat = 22
+    private var lanesTop: CGFloat { headerHeight + captionsRowH }
 
     private func minHeight(of row: TrackRow) -> CGFloat {
-        if case .character = row { return 78 }   // presence + captions + audio + 7 event rows
+        if case .character = row { return 64 }   // presence + audio + 7 event rows
         return 44
     }
 
     private func height(of row: TrackRow) -> CGFloat {
         let base: CGFloat
-        if case .character = row { base = 84 } else { base = defaultLaneHeight }
+        if case .character = row { base = 72 } else { base = defaultLaneHeight }
         return max(minHeight(of: row), trackHeights[row.key(in: model.scene)] ?? base)
     }
 
@@ -215,7 +218,7 @@ struct StudioTimelineView: View {
     }
 
     private func laneTop(of row: TrackRow) -> CGFloat {
-        var y = headerHeight
+        var y = lanesTop
         for r in rows {
             if r == row { return y }
             y += height(of: r)
@@ -224,7 +227,7 @@ struct StudioTimelineView: View {
     }
 
     private func row(at y: CGFloat) -> TrackRow? {
-        var top = headerHeight
+        var top = lanesTop
         for r in rows {
             let h = height(of: r)
             if y >= top && y < top + h { return r }
@@ -243,6 +246,13 @@ struct StudioTimelineView: View {
         Canvas { ctx, size in
             ctx.fill(Path(CGRect(origin: .zero, size: size)),
                      with: .color(Color(red: 0.045, green: 0.045, blue: 0.07)))
+            ctx.draw(Text("CC").font(.system(size: 9, weight: .bold))
+                        .foregroundStyle(Color(red: 0.85, green: 0.8, blue: 0.6)),
+                     at: CGPoint(x: 8, y: headerHeight + 6), anchor: .topLeading)
+            ctx.stroke(Path { p in
+                p.move(to: CGPoint(x: 0, y: lanesTop))
+                p.addLine(to: CGPoint(x: size.width, y: lanesTop))
+            }, with: .color(.black), lineWidth: 1)
             ctx.stroke(Path { p in
                 p.move(to: CGPoint(x: size.width - 0.5, y: 0))
                 p.addLine(to: CGPoint(x: size.width - 0.5, y: size.height))
@@ -311,6 +321,7 @@ struct StudioTimelineView: View {
     private var timelineCanvas: some View {
         Canvas { ctx, size in
             drawRuler(ctx: ctx, size: size)
+            drawCaptionsRow(ctx: ctx, size: size)
             for row in rows { drawLane(row, ctx: ctx, size: size) }
             drawPlayhead(ctx: ctx, size: size)
         }
@@ -415,11 +426,48 @@ struct StudioTimelineView: View {
     /// the seven event sub-lanes. Everything gets its own band — no overlap.
     private func characterLaneZones(h: CGFloat) -> (clipTop: CGFloat, clipH: CGFloat,
                                                     eventTop: CGFloat, subH: CGFloat) {
-        let clipH: CGFloat = min(26, max(14, (h - presenceStripH - captionStripH - 20) * 0.4))
-        let clipTop = presenceStripH + captionStripH + 2
+        let clipH: CGFloat = min(26, max(14, (h - presenceStripH - 8) * 0.4))
+        let clipTop = presenceStripH + 2
         let eventTop = clipTop + clipH + 2
         let subH = max(2, (h - eventTop - 4) / 7)
         return (clipTop, clipH, eventTop, subH)
+    }
+
+    /// The global CC strip: every character's captions, tinted per speaker body color.
+    private func drawCaptionsRow(ctx: GraphicsContext, size: CGSize) {
+        let y = headerHeight
+        ctx.fill(Path(CGRect(x: 0, y: y, width: size.width, height: captionsRowH)),
+                 with: .color(Color(red: 0.09, green: 0.085, blue: 0.06)))
+        ctx.stroke(Path { p in
+            p.move(to: CGPoint(x: 0, y: y + captionsRowH))
+            p.addLine(to: CGPoint(x: size.width, y: y + captionsRowH))
+        }, with: .color(.black), lineWidth: 1)
+        for (ci, character) in model.scene.characters.enumerated() {
+            let tint = bodyTint(character.body)
+            for (si, sub) in character.subs.enumerated() {
+                let rect = CGRect(x: x(forTime: sub.start), y: y + 2,
+                                  width: max(8, CGFloat(sub.dur) * pxPerSecond), height: captionsRowH - 4)
+                let selected = draggingSub?.char == ci && draggingSub?.index == si
+                ctx.fill(Path(roundedRect: rect, cornerRadius: 3),
+                         with: .color(tint.opacity(selected ? 0.95 : 0.7)))
+                if rect.width > 30 {
+                    var clipped = ctx
+                    clipped.clip(to: Path(rect.insetBy(dx: 3, dy: 0)))
+                    clipped.draw(Text(sub.text).font(.system(size: 9, weight: .medium))
+                                    .foregroundStyle(Color(red: 0.08, green: 0.08, blue: 0.04)),
+                                 at: CGPoint(x: rect.minX + 4, y: rect.minY + 3.5), anchor: .topLeading)
+                }
+            }
+        }
+    }
+
+    private func bodyTint(_ body: BannyCore.Body) -> Color {
+        switch body {
+        case .orange: return Color(red: 1, green: 0.72, blue: 0.45)
+        case .original: return Color(red: 1, green: 0.88, blue: 0.5)
+        case .pink: return Color(red: 1, green: 0.72, blue: 0.78)
+        case .alien: return Color(red: 0.62, green: 0.9, blue: 0.55)
+        }
     }
 
     /// Contiguous [from, to) spans where the track is visible.
@@ -484,20 +532,6 @@ struct StudioTimelineView: View {
         }
         for clip in character.clips {
             drawClip(clip, top: y + zones.clipTop, height: zones.clipH, ctx: ctx)
-        }
-        for (si, sub) in character.subs.enumerated() {
-            let rect = CGRect(x: x(forTime: sub.start), y: y + presenceStripH + 1,
-                              width: max(8, CGFloat(sub.dur) * pxPerSecond), height: captionStripH - 2)
-            let selected = draggingSub?.char == i && draggingSub?.index == si
-            ctx.fill(Path(roundedRect: rect, cornerRadius: 2),
-                     with: .color(Color(red: 1, green: 0.97, blue: 0.9).opacity(selected ? 0.75 : 0.5)))
-            if rect.width > 30 {
-                var clipped = ctx
-                clipped.clip(to: Path(rect.insetBy(dx: 3, dy: 0)))
-                clipped.draw(Text(sub.text).font(.system(size: 8, weight: .medium))
-                                .foregroundStyle(Color(red: 0.1, green: 0.1, blue: 0.05)),
-                             at: CGPoint(x: rect.minX + 4, y: rect.minY + 1.5), anchor: .topLeading)
-            }
         }
     }
 
@@ -735,7 +769,8 @@ struct StudioTimelineView: View {
             return
         }
         if dragStartMarks == nil {
-            if let row = row(at: value.startLocation.y),
+            if value.startLocation.y >= lanesTop,
+               let row = row(at: value.startLocation.y),
                value.startLocation.y - laneTop(of: row) < presenceStripH {
                 // Grab an existing marker if close; the tap handler adds new ones.
                 let events = presence(of: row)
@@ -830,7 +865,7 @@ struct StudioTimelineView: View {
 
     private func handleTap(at point: CGPoint) {
         let y = point.y
-        if let row = row(at: y), y - laneTop(of: row) < presenceStripH, y >= headerHeight {
+        if let row = row(at: y), y - laneTop(of: row) < presenceStripH, y >= lanesTop {
             var events = presence(of: row)
             let t = (time(forX: point.x) * 10).rounded() / 10
             let isDoubleClick = lastTap.map {
@@ -984,16 +1019,15 @@ struct StudioTimelineView: View {
         return nil
     }
 
-    /// Caption bar under the pointer (top strip of a character lane).
+    /// Caption bar under the pointer (the global CC strip above the lanes).
     private func subtitle(at point: CGPoint) -> (char: Int, index: Int, sub: Subtitle)? {
-        guard case .character(let i) = row(at: point.y) else { return nil }
-        let rowY = laneTop(of: .character(i))
-        guard point.y >= rowY + presenceStripH,
-              point.y <= rowY + presenceStripH + captionStripH else { return nil }
-        for (si, sub) in model.scene.characters[i].subs.enumerated() {
-            let rect = CGRect(x: x(forTime: sub.start), y: rowY + presenceStripH + 1,
-                              width: max(8, CGFloat(sub.dur) * pxPerSecond), height: captionStripH - 2)
-            if rect.insetBy(dx: -2, dy: 0).contains(point) { return (i, si, sub) }
+        guard point.y >= headerHeight, point.y < lanesTop else { return nil }
+        for (ci, character) in model.scene.characters.enumerated().reversed() {
+            for (si, sub) in character.subs.enumerated() {
+                let rect = CGRect(x: x(forTime: sub.start), y: headerHeight + 2,
+                                  width: max(8, CGFloat(sub.dur) * pxPerSecond), height: captionsRowH - 4)
+                if rect.insetBy(dx: -2, dy: 0).contains(point) { return (ci, si, sub) }
+            }
         }
         return nil
     }
