@@ -393,9 +393,12 @@ struct StudioTimelineView: View {
     private func keepTime(_ t: Double, atViewX vx: CGFloat, fy: CGFloat) {
         guard let proxy = tlProxy, tlViewport.width > 0 else { return }
         let contentW = laneLabelWidth + max(600, contentWidth + 40)
+        let maxScroll = max(0, contentW - tlViewport.width)
         // Whole device pixels: subpixel scroll positions shimmer the canvas.
-        let target = (max(0, x(forTime: t) - (vx - laneLabelWidth)) * 2).rounded() / 2
-        let fx = min(1, max(0, target / max(1, contentW - tlViewport.width)))
+        // Clamp to what the scroll view can actually reach — recording an
+        // unreachable target desyncs the pinned band until the next scroll.
+        let target = min(maxScroll, (max(0, x(forTime: t) - (vx - laneLabelWidth)) * 2).rounded() / 2)
+        let fx = maxScroll > 0 ? target / maxScroll : 0
         proxy.scrollTo("tlContent", anchor: UnitPoint(x: fx, y: fy))
         offsets.x = target
     }
