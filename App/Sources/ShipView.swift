@@ -12,8 +12,6 @@ struct ShipButton: View {
 
     @State private var shipping = false
     @State private var progress: Double = 0
-    @State private var exportedURL: URL?
-    @State private var exportedProjectURL: URL?
     @State private var exportError: String?
 
     var body: some View {
@@ -47,15 +45,27 @@ struct ShipButton: View {
         } message: {
             Text(exportError ?? "")
         }
+    }
+
+    /// Save panel + reveal in Finder. Two stacked .fileExporter modifiers on
+    /// one view silently break each other, so exports go through NSSavePanel.
+    @MainActor
+    private func saveExport(_ url: URL, suggested: String) {
         #if os(macOS)
-        .fileExporter(isPresented: .init(get: { exportedURL != nil },
-                                         set: { if !$0 { exportedURL = nil } }),
-                      item: exportedURL.map(ShippedVideo.init),
-                      defaultFilename: "banny-show.mp4") { _ in exportedURL = nil }
-        .fileExporter(isPresented: .init(get: { exportedProjectURL != nil },
-                                         set: { if !$0 { exportedProjectURL = nil } }),
-                      item: exportedProjectURL.map(ShippedProject.init),
-                      defaultFilename: "banny-project.bs") { _ in exportedProjectURL = nil }
+        let panel = NSSavePanel()
+        let project = NSDocumentController.shared.currentDocument?.displayName
+        let base = (project as NSString?)?.deletingPathExtension ?? "banny-show"
+        panel.nameFieldStringValue = suggested.replacingOccurrences(of: "SHOW", with: base)
+        panel.begin { response in
+            guard response == .OK, let dest = panel.url else { return }
+            do {
+                try? FileManager.default.removeItem(at: dest)
+                try FileManager.default.copyItem(at: url, to: dest)
+                NSWorkspace.shared.activateFileViewerSelecting([dest])
+            } catch {
+                exportError = error.localizedDescription
+            }
+        }
         #endif
     }
 
@@ -79,7 +89,7 @@ struct ShipButton: View {
                 exportError = "Could not package the project."
                 return
             }
-            exportedProjectURL = out
+            saveExport(out, suggested: "SHOW.bs")
         } catch {
             exportError = String(describing: error)
         }
@@ -124,7 +134,7 @@ struct ShipButton: View {
                     })
                 await MainActor.run {
                     shipping = false
-                    exportedURL = out
+                    saveExport(out, suggested: "SHOW.mp4")
                 }
             } catch {
                 await MainActor.run {
@@ -136,24 +146,3 @@ struct ShipButton: View {
     }
 }
 
-/// Shareable project archive (.bs — a zipped .bannyshow package).
-struct ShippedProject: Transferable {
-    let url: URL
-
-    static var transferRepresentation: some TransferRepresentation {
-        FileRepresentation(exportedContentType: .data) { project in
-            SentTransferredFile(project.url)
-        }
-    }
-}
-
-/// Transferable wrapper so the exported mp4 flows into fileExporter/share sheets.
-struct ShippedVideo: Transferable {
-    let url: URL
-
-    static var transferRepresentation: some TransferRepresentation {
-        FileRepresentation(exportedContentType: .mpeg4Movie) { video in
-            SentTransferredFile(video.url)
-        }
-    }
-}

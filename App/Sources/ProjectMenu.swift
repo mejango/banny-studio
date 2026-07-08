@@ -4,6 +4,7 @@ import UniformTypeIdentifiers
 /// Header project dropdown: rename the current project, spin up a new one,
 /// or import a shared .bs archive (zipped .bannyshow package).
 struct ProjectMenu: View {
+    @State private var projectName = ""
     @State private var renaming = false
     @State private var newName = ""
     @State private var importing = false
@@ -26,14 +27,23 @@ struct ProjectMenu: View {
             Divider()
             Button("Import .bs file…") { importing = true }
         } label: {
-            Image(systemName: "folder.fill")
-                .font(.system(size: 12))
-                .foregroundStyle(Color(white: 0.6))
+            HStack(spacing: 4) {
+                Text(projectName.isEmpty ? "Untitled" : projectName)
+                    .font(.system(size: 12, weight: .semibold))
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 8, weight: .bold))
+            }
+            .foregroundStyle(Color(white: 0.6))
         }
         .menuStyle(.button)
         .buttonStyle(.plain)
         .menuIndicator(.hidden)
         .fixedSize()
+        .onAppear { refreshName() }
+        #if os(macOS)
+        .onReceive(NotificationCenter.default.publisher(
+            for: NSWindow.didBecomeKeyNotification)) { _ in refreshName() }
+        #endif
         #if os(macOS)
         .focusEffectDisabled()
         #endif
@@ -58,6 +68,14 @@ struct ProjectMenu: View {
         }
     }
 
+    private func refreshName() {
+        #if os(macOS)
+        if let n = NSDocumentController.shared.currentDocument?.displayName {
+            projectName = (n as NSString).deletingPathExtension
+        }
+        #endif
+    }
+
     private func rename() {
         #if os(macOS)
         guard let doc = NSDocumentController.shared.currentDocument else { return }
@@ -74,6 +92,7 @@ struct ProjectMenu: View {
         guard dest != current else { return }
         doc.move(to: dest) { error in
             if let error { importError = error.localizedDescription }
+            refreshName()
         }
         #endif
     }
