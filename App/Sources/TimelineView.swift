@@ -294,12 +294,19 @@ struct StudioTimelineView: View {
                     }
                 }
             } label: {
-                Label("New track", systemImage: "plus")
-                    .font(.system(size: 11, weight: .semibold))
+                HStack(spacing: 5) {
+                    Image(systemName: "plus")
+                        .font(.system(size: 9, weight: .bold))
+                    Text("New track")
+                        .font(.system(size: 10, weight: .semibold))
+                }
+                .padding(.leading, 12)
+                .frame(width: laneLabelWidth, height: 30, alignment: .leading)
+                .contentShape(Rectangle())
             }
-            .menuStyle(.borderlessButton)
-            .padding(.leading, 12)
-            .frame(width: laneLabelWidth, height: 30, alignment: .leading)
+            .menuStyle(.button)
+            .buttonStyle(.plain)
+            .menuIndicator(.hidden)
             .background(theme.newTrack)
             Spacer()
         }
