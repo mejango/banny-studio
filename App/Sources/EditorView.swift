@@ -87,7 +87,7 @@ struct WideEditor: View {
                 .scaledToFit()
                 .frame(height: 18)
             Text("BANNY STUDIO")
-                .font(.system(size: 13, weight: .heavy, design: .rounded))
+                .font(.system(size: 17, weight: .heavy, design: .rounded))
                 .kerning(2)
                 .foregroundStyle(Color(red: 1, green: 0.54, blue: 0))
             ThemeToggle()
