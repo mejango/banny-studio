@@ -179,6 +179,8 @@ struct StudioTimelineView: View {
     @State private var autoScrollTimer: Timer?
     /// Anchor a drag is currently snapped to (draws a guide line).
     @State private var snapGuide: Double?
+    /// Whole-chain light drag: (track, [id: base start], run start).
+    @State private var runDrag: (track: Int, base: [(id: String, start: Double)], runStart: Double)?
     /// Group-drag base positions for selected clips.
     @State private var dragStartClips: [String: Double]?
     /// Pointer position over the lanes (content coords) for context menus.
@@ -1808,7 +1810,8 @@ struct StudioTimelineView: View {
                     handleTap(at: value.location)
                 }
                 if dragStartMarks != nil || resizing != nil || draggingClip != nil
-                    || draggingCue != nil || draggingSub != nil || draggingPresence != nil {
+                    || draggingCue != nil || draggingSub != nil || draggingPresence != nil
+                    || runDrag != nil {
                     model.registerUndoSnapshot(label: "Edit Timeline")
                 }
                 stopAutoScroll()
@@ -1823,6 +1826,7 @@ struct StudioTimelineView: View {
                 dragStartClips = nil
                 dragStartMarks = nil
                 resizing = nil
+                runDrag = nil
                 draggingClip = nil
                 draggingCue = nil
                 draggingSub = nil
@@ -1876,6 +1880,15 @@ struct StudioTimelineView: View {
         updateAutoScroll(pointerContentX: value.location.x)
         if marquee != nil {
             marquee = (marquee!.start, value.location)
+            return
+        }
+        if let rd = runDrag {
+            let dt = Double(value.translation.width / pxPerSecond)
+            let newStart = max(0, snapped(rd.runStart + dt))
+            let shift = newStart - rd.runStart
+            for (id, s) in rd.base {
+                model.setLightCueStart(track: rd.track, id: id, start: s + shift)
+            }
             return
         }
         if let dc = draggingCue {
@@ -1973,9 +1986,40 @@ struct StudioTimelineView: View {
                 let edge = 7.0
                 let startX = x(forTime: cue.start)
                 let endX = x(forTime: cue.start + cue.dur)
-                let e = abs(value.startLocation.x - startX) < edge ? -1
+                var e = abs(value.startLocation.x - startX) < edge ? -1
                     : abs(value.startLocation.x - endX) < edge ? 1 : 0
-                dlog("grab cue row=\(row) id=\(cue.id.prefix(5)) e=\(abs(value.startLocation.x - startX) < edge ? -1 : abs(value.startLocation.x - endX) < edge ? 1 : 0) sx=\(Int(value.startLocation.x)) startX=\(Int(startX)) endX=\(Int(endX))")
+                // Light CHAINS move as one: only the run's outer edges resize;
+                // grabbing anywhere else drags the whole take.
+                if case .light(let li) = row {
+                    let run = StudioModel.lightRun(in: model.scene.lightTracks[li].cues,
+                                                   containing: cue.id)
+                    if run.count > 1 {
+                        let runStartX = x(forTime: run[0].start)
+                        let runEndX = x(forTime: run[run.count - 1].start + run[run.count - 1].dur)
+                        e = abs(value.startLocation.x - runStartX) < edge ? -1
+                            : abs(value.startLocation.x - runEndX) < edge ? 1 : 0
+                        if e == 0 {
+                            var ids = run.map(\.id)
+                            #if os(macOS)
+                            if NSEvent.modifierFlags.contains(.command),
+                               let copies = model.duplicateLightRun(track: li, containing: cue.id) {
+                                ids = copies
+                            }
+                            #endif
+                            let base = ids.compactMap { id -> (String, Double)? in
+                                model.scene.lightTracks[li].cues.first { $0.id == id }
+                                    .map { (id, $0.start) }
+                            }
+                            runDrag = (li, base, run[0].start)
+                            selectCue(row: row, id: ids.first ?? cue.id)
+                            return
+                        }
+                        let target = e == -1 ? run[0] : run[run.count - 1]
+                        draggingCue = (row, target.id, target.start, target.dur, e)
+                        selectCue(row: row, id: target.id)
+                        return
+                    }
+                }
                 var cueID = cue.id
                 #if os(macOS)
                 // ⌘-drag duplicates the cue and drags the copy.
