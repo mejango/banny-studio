@@ -40,27 +40,37 @@ struct WideEditor: View {
     @State private var dividerDragBase: Double?
 
     var body: some View {
-        HStack(spacing: 0) {
-            VStack(spacing: 0) {
-                StageView(model: model, file: file)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .overlay(alignment: .bottom) {
-                        if showDeck {
-                            PerformanceDeck(model: model)
+        GeometryReader { geo in
+            // Stage never letterboxes vertically: it takes exactly its 16:9 height
+            // for the available width, and the timeline absorbs all remaining space.
+            let stageWidth = Double(max(200, geo.size.width - 300))
+            let requestedTL = min(max(120, timelineHeight), Double(geo.size.height) - 140)
+            let stageH = min(stageWidth * 9.0 / 16.0, Double(geo.size.height) - 6 - requestedTL)
+            let tlH = max(120, Double(geo.size.height) - 6 - stageH)
+            HStack(spacing: 0) {
+                VStack(spacing: 0) {
+                    StageView(model: model, file: file)
+                        .frame(width: CGFloat(stageWidth), height: CGFloat(stageH))
+                        .overlay(alignment: .bottom) {
+                            if showDeck {
+                                PerformanceDeck(model: model)
+                            }
                         }
-                    }
-                divider
-                StudioTimelineView(model: model, file: file)
-                    .frame(height: CGFloat(timelineHeight))
+                    divider(maxHeight: Double(geo.size.height) - 140)
+                    StudioTimelineView(model: model, file: file)
+                        .frame(height: CGFloat(tlH))
+                }
+                Divider()
+                SidePanel(model: model, file: file)
+                    .frame(width: 300)
             }
-            Divider()
-            SidePanel(model: model, file: file)
-                .frame(width: 300)
         }
     }
 
     /// Drag up to grow the timeline (shrinking the stage), down to shrink it.
-    private var divider: some View {
+    /// Global coordinates: the divider itself moves during the drag, so local
+    /// translation would feed back and oscillate.
+    private func divider(maxHeight: Double) -> some View {
         Rectangle()
             .fill(Color(red: 0.16, green: 0.16, blue: 0.22))
             .frame(height: 6)
@@ -70,11 +80,11 @@ struct WideEditor: View {
                 if inside { NSCursor.resizeUpDown.push() } else { NSCursor.pop() }
             }
             #endif
-            .gesture(DragGesture(minimumDistance: 1)
+            .gesture(DragGesture(minimumDistance: 1, coordinateSpace: .global)
                 .onChanged { value in
                     let base = dividerDragBase ?? timelineHeight
                     dividerDragBase = base
-                    timelineHeight = min(700, max(120, base - Double(value.translation.height)))
+                    timelineHeight = min(max(200, maxHeight), max(120, base - Double(value.translation.height)))
                 }
                 .onEnded { _ in dividerDragBase = nil })
     }

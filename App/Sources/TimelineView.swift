@@ -265,6 +265,19 @@ struct StudioTimelineView: View {
         ctx.stroke(Path { $0.move(to: CGPoint(x: 0, y: y + h)); $0.addLine(to: CGPoint(x: size.width, y: y + h)) },
                    with: .color(.black), lineWidth: 1)
 
+        // Gutter: its own strip, divided from the track content.
+        ctx.fill(Path(CGRect(x: 0, y: y, width: laneLabelWidth, height: h)),
+                 with: .color(Color(red: 0.045, green: 0.045, blue: 0.07)))
+        ctx.stroke(Path { p in
+            p.move(to: CGPoint(x: laneLabelWidth - 0.5, y: y))
+            p.addLine(to: CGPoint(x: laneLabelWidth - 0.5, y: y + h))
+        }, with: .color(Color(red: 0.24, green: 0.24, blue: 0.33)), lineWidth: 1)
+        // Grab pill on the lane's bottom edge (drag to grow/shrink this track).
+        let pillActive = resizingTrack?.key == row.key(in: model.scene)
+        ctx.fill(Path(roundedRect: CGRect(x: laneLabelWidth / 2 - 16, y: y + h - 4.5,
+                                          width: 32, height: 3), cornerRadius: 1.5),
+                 with: .color(Color(white: pillActive ? 0.8 : 0.4)))
+
         var labelCtx = ctx
         if hidden { labelCtx.opacity = 0.35 }
         labelCtx.draw(Text(label(for: row)).font(.system(size: 10, weight: .semibold))
@@ -273,7 +286,7 @@ struct StudioTimelineView: View {
         ctx.draw(Text(Image(systemName: hidden ? "eye.slash" : "eye"))
                     .font(.system(size: 9))
                     .foregroundStyle(hidden ? Color.gray : Color(white: 0.55)),
-                 at: CGPoint(x: laneLabelWidth - 12, y: y + 12))
+                 at: CGPoint(x: laneLabelWidth - 14, y: y + 12))
 
         var content = ctx
         if hidden { content.opacity = 0.3 }
