@@ -103,3 +103,43 @@ final class PeakCache {
         return out
     }
 }
+
+/// Small tiled thumbnails for timeline cue bars (video assets get a poster frame).
+@Observable
+final class CueThumbCache {
+    private var cache: [String: CGImage] = [:]
+    private var pending: Set<String> = []
+    private var failed: Set<String> = []
+
+    func thumb(assetID: String, file: ShowDocumentFile?) -> CGImage? {
+        if let hit = cache[assetID] { return hit }
+        guard let file, !failed.contains(assetID), !pending.contains(assetID),
+              let media = file.assetsMedia[assetID] else { return nil }
+        pending.insert(assetID)
+        let isVideo = ["mp4", "mov", "webm", "m4v"].contains(media.ext)
+        Task.detached(priority: .utility) { [weak self] in
+            var img: CGImage?
+            if isVideo {
+                let url = FileManager.default.temporaryDirectory
+                    .appendingPathComponent("cuethumb-\(assetID).\(media.ext)")
+                if !FileManager.default.fileExists(atPath: url.path) {
+                    try? media.data.write(to: url)
+                }
+                let gen = AVAssetImageGenerator(asset: AVURLAsset(url: url))
+                gen.appliesPreferredTrackTransform = true
+                gen.maximumSize = CGSize(width: 160, height: 160)
+                img = try? gen.copyCGImage(at: CMTime(seconds: 0.1, preferredTimescale: 600), actualTime: nil)
+            } else if let src = CGImageSourceCreateWithData(media.data as CFData, nil) {
+                img = CGImageSourceCreateThumbnailAtIndex(src, 0, [
+                    kCGImageSourceCreateThumbnailFromImageAlways: true,
+                    kCGImageSourceThumbnailMaxPixelSize: 160,
+                ] as CFDictionary)
+            }
+            await MainActor.run { [weak self] in
+                if let img { self?.cache[assetID] = img } else { self?.failed.insert(assetID) }
+                self?.pending.remove(assetID)
+            }
+        }
+        return nil
+    }
+}

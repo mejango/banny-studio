@@ -166,15 +166,18 @@ public struct ImageCue: Codable, Equatable, Identifiable, Sendable {
     public var from: ImagePlacement
     /// Placement at cue end; nil = static. Linear interpolation between.
     public var to: ImagePlacement?
+    /// Display label; nil falls back to the asset's name.
+    public var label: String?
 
     public init(id: String, assetID: String, start: Double, dur: Double,
-                from: ImagePlacement, to: ImagePlacement? = nil) {
+                from: ImagePlacement, to: ImagePlacement? = nil, label: String? = nil) {
         self.id = id
         self.assetID = assetID
         self.start = start
         self.dur = dur
         self.from = from
         self.to = to
+        self.label = label
     }
 
     /// Interpolated placement at absolute time t (clamped to the cue).
@@ -230,13 +233,17 @@ public struct BackgroundCue: Codable, Equatable, Identifiable, Sendable {
     public var start: Double
     public var dur: Double
     public var crop: Crop
+    /// Display label; nil falls back to the asset's name.
+    public var label: String?
 
-    public init(id: String, assetID: String, start: Double, dur: Double, crop: Crop = .cover) {
+    public init(id: String, assetID: String, start: Double, dur: Double, crop: Crop = .cover,
+                label: String? = nil) {
         self.id = id
         self.assetID = assetID
         self.start = start
         self.dur = dur
         self.crop = crop
+        self.label = label
     }
 }
 

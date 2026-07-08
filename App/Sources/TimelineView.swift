@@ -121,6 +121,13 @@ struct StudioTimelineView: View {
     /// Per-track lane heights (session-scoped), keyed by TrackRow.key.
     @State private var trackHeights: [String: CGFloat] = [:]
 
+    /// In-place label editing over the canvas.
+    enum LabelKind { case clip, cue }
+    @State private var editingLabel: (kind: LabelKind, id: String, origin: CGPoint)?
+    @State private var editingText = ""
+    @FocusState private var labelFocused: Bool
+    @State private var cueThumbs = CueThumbCache()
+
     private let laneLabelWidth: CGFloat = 96
     private let rulerHeight: CGFloat = 18
     private let scrubHeight: CGFloat = 16
@@ -131,9 +138,30 @@ struct StudioTimelineView: View {
         VStack(spacing: 0) {
             TransportBar(model: model, file: file)
             ScrollView([.horizontal, .vertical]) {
-                timelineCanvas
-                    .frame(width: max(600, laneLabelWidth + contentWidth),
-                           height: headerHeight + totalLaneHeight + 20)
+                ZStack(alignment: .topLeading) {
+                    timelineCanvas
+                    if let editing = editingLabel {
+                        TextField("", text: $editingText)
+                            .textFieldStyle(.plain)
+                            .font(.system(size: 9, weight: .medium))
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, 3)
+                            .frame(width: 110)
+                            .background(Color.black.opacity(0.75), in: RoundedRectangle(cornerRadius: 3))
+                            .focused($labelFocused)
+                            .onSubmit { commitLabelEdit() }
+                            #if os(macOS)
+                            .onExitCommand { editingLabel = nil }
+                            #endif
+                            .offset(x: editing.origin.x, y: editing.origin.y)
+                            .onAppear { labelFocused = true }
+                            .onChange(of: labelFocused) { _, focused in
+                                if !focused { commitLabelEdit() }
+                            }
+                    }
+                }
+                .frame(width: max(600, laneLabelWidth + contentWidth),
+                       height: headerHeight + totalLaneHeight + 20, alignment: .topLeading)
             }
             .background(Color(red: 0.078, green: 0.078, blue: 0.11))
         }
@@ -278,7 +306,8 @@ struct StudioTimelineView: View {
             for cue in model.scene.imageTracks[i].cues {
                 drawCueBar(start: cue.start, dur: cue.dur, y: y, h: h,
                            color: Color(red: 0.85, green: 0.6, blue: 0.25),
-                           label: assetName(cue.assetID),
+                           label: cue.label ?? assetName(cue.assetID),
+                           assetID: cue.assetID,
                            selected: model.selectedImageCue == cue.id,
                            animated: cue.to != nil, ctx: content)
             }
@@ -286,7 +315,8 @@ struct StudioTimelineView: View {
             for cue in model.scene.backgroundTracks[i].cues {
                 drawCueBar(start: cue.start, dur: cue.dur, y: y, h: h,
                            color: Color(red: 0.45, green: 0.4, blue: 0.85),
-                           label: assetName(cue.assetID),
+                           label: cue.label ?? assetName(cue.assetID),
+                           assetID: cue.assetID,
                            selected: model.selectedBackgroundCue == cue.id,
                            animated: false, ctx: content)
             }
@@ -360,15 +390,36 @@ struct StudioTimelineView: View {
     }
 
     private func drawCueBar(start: Double, dur: Double, y: CGFloat, h: CGFloat, color: Color,
-                            label: String, selected: Bool, animated: Bool, ctx: GraphicsContext) {
+                            label: String, assetID: String, selected: Bool, animated: Bool,
+                            ctx: GraphicsContext) {
         let rect = CGRect(x: x(forTime: start), y: y + 6,
                           width: max(6, CGFloat(dur) * pxPerSecond), height: h - 12)
         ctx.fill(Path(roundedRect: rect, cornerRadius: 4), with: .color(color.opacity(0.55)))
+        // Tile the asset's image across the band.
+        if let thumb = cueThumbs.thumb(assetID: assetID, file: file) {
+            var tiled = ctx
+            tiled.clip(to: Path(roundedRect: rect, cornerRadius: 4))
+            tiled.opacity = 0.85
+            let tileH = rect.height
+            let tileW = tileH * CGFloat(thumb.width) / CGFloat(max(1, thumb.height))
+            var tx = rect.minX
+            while tx < rect.maxX {
+                tiled.draw(Image(decorative: thumb, scale: 1),
+                           in: CGRect(x: tx, y: rect.minY, width: tileW, height: tileH))
+                tx += tileW
+            }
+        }
         ctx.stroke(Path(roundedRect: rect, cornerRadius: 4),
                    with: .color(selected ? .white : color), lineWidth: selected ? 1.5 : 1)
-        ctx.draw(Text(label + (animated ? " →" : "")).font(.system(size: 9, weight: .medium))
-                    .foregroundStyle(.white),
-                 at: CGPoint(x: rect.minX + 5, y: rect.minY + 3), anchor: .topLeading)
+        // Label chip stays readable over the artwork.
+        let text = Text(label + (animated ? " →" : "")).font(.system(size: 9, weight: .medium))
+            .foregroundStyle(.white)
+        let size = ctx.resolve(text).measure(in: CGSize(width: 200, height: 20))
+        ctx.fill(Path(roundedRect: CGRect(x: rect.minX + 3, y: rect.minY + 2,
+                                          width: size.width + 6, height: size.height + 2),
+                      cornerRadius: 2),
+                 with: .color(.black.opacity(0.45)))
+        ctx.draw(text, at: CGPoint(x: rect.minX + 6, y: rect.minY + 3), anchor: .topLeading)
     }
 
     private func drawPlayhead(ctx: GraphicsContext, size: CGSize) {
@@ -614,6 +665,18 @@ struct StudioTimelineView: View {
             }
             return
         }
+        // Click on a clip/cue label → rename in place.
+        if let c = clip(at: point), labelZone(forClipStart: c.start, at: point) {
+            editingText = c.name
+            editingLabel = (.clip, c.id, labelOrigin(forStart: c.start, at: point))
+            return
+        }
+        if let (row, cueHit) = cue(at: point), labelZone(forClipStart: cueHit.start, at: point) {
+            editingText = currentCueLabel(row: row, id: cueHit.id)
+            editingLabel = (.cue, cueHit.id, labelOrigin(forStart: cueHit.start, at: point))
+            selectCue(row: row, id: cueHit.id)
+            return
+        }
         let splitting = isCommandDown()
         if let hit = mark(at: point) {
             if splitting {
@@ -652,6 +715,52 @@ struct StudioTimelineView: View {
         events.append(.key(t: ((t + 0.02) * 1000).rounded() / 1000, code: mark.code, down: true))
         events.sort { $0.t < $1.t }
         model.scene.characters[mark.character].events = events
+    }
+
+    /// The top-left strip of a clip/cue where its name is drawn.
+    private func labelZone(forClipStart start: Double, at point: CGPoint) -> Bool {
+        let lx = x(forTime: start)
+        guard point.x >= lx, point.x <= lx + 76 else { return false }
+        guard let row = row(at: point.y) else { return false }
+        let rowY = laneTop(of: row)
+        switch row {
+        case .image, .background:
+            return point.y <= rowY + 22
+        default:
+            // Clips sit at the lane bottom; their label is the top strip of the clip.
+            let h = height(of: row)
+            let clipH = min(max(10, h - 36), h - 6)
+            let clipTop = rowY + h - clipH - 2
+            return point.y >= clipTop && point.y <= clipTop + 14
+        }
+    }
+
+    private func labelOrigin(forStart start: Double, at point: CGPoint) -> CGPoint {
+        guard let row = row(at: point.y) else { return point }
+        let rowY = laneTop(of: row)
+        switch row {
+        case .image, .background:
+            return CGPoint(x: x(forTime: start) + 3, y: rowY + 7)
+        default:
+            let h = height(of: row)
+            let clipH = min(max(10, h - 36), h - 6)
+            return CGPoint(x: x(forTime: start) + 3, y: rowY + h - clipH - 1)
+        }
+    }
+
+    private func currentCueLabel(row: TrackRow, id: String) -> String {
+        switch row {
+        case .image(let i):
+            if let cue = model.scene.imageTracks[i].cues.first(where: { $0.id == id }) {
+                return cue.label ?? assetName(cue.assetID)
+            }
+        case .background(let i):
+            if let cue = model.scene.backgroundTracks[i].cues.first(where: { $0.id == id }) {
+                return cue.label ?? assetName(cue.assetID)
+            }
+        default: break
+        }
+        return ""
     }
 
     private func isCommandDown() -> Bool {
@@ -719,6 +828,17 @@ struct StudioTimelineView: View {
         default: break
         }
         return nil
+    }
+
+    private func commitLabelEdit() {
+        guard let editing = editingLabel else { return }
+        editingLabel = nil
+        let name = editingText.trimmingCharacters(in: .whitespaces)
+        guard !name.isEmpty else { return }
+        switch editing.kind {
+        case .clip: model.renameClip(id: editing.id, to: name)
+        case .cue: model.renameCue(id: editing.id, to: name)
+        }
     }
 
     private func deleteSelection() {

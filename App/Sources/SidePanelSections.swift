@@ -53,12 +53,15 @@ struct AssetBankSection: View {
                 Text("Assets you add live with the show and can back any number of background or image cues.")
                     .font(.caption2).foregroundStyle(.secondary)
             }
-            ForEach(model.document.assets) { asset in
+            ForEach(Array(model.document.assets.enumerated()), id: \.element.id) { i, asset in
                 HStack(spacing: 6) {
                     AssetThumb(assetID: asset.id, file: file)
                         .frame(width: 34, height: 24)
                     VStack(alignment: .leading, spacing: 1) {
-                        Text(asset.name).font(.caption2.bold()).lineLimit(1)
+                        TextField("name", text: Binding(
+                            get: { model.document.assets[safe: i]?.name ?? "" },
+                            set: { if model.document.assets.indices.contains(i) { model.document.assets[i].name = $0 } }))
+                            .textFieldStyle(.plain).font(.caption2.bold())
                         Text(asset.kind.rawValue).font(.system(size: 8)).foregroundStyle(.secondary)
                     }
                     Spacer()

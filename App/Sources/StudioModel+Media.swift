@@ -94,6 +94,36 @@ extension StudioModel {
         for i in scene.audioTracks.indices { move(&scene.audioTracks[i].clips) }
     }
 
+    // MARK: - Renames
+
+    func renameClip(id: String, to name: String) {
+        registerUndoSnapshot(label: "Rename Clip")
+        for i in scene.characters.indices {
+            for ci in scene.characters[i].clips.indices where scene.characters[i].clips[ci].id == id {
+                scene.characters[i].clips[ci].name = name
+            }
+        }
+        for i in scene.audioTracks.indices {
+            for ci in scene.audioTracks[i].clips.indices where scene.audioTracks[i].clips[ci].id == id {
+                scene.audioTracks[i].clips[ci].name = name
+            }
+        }
+    }
+
+    func renameCue(id: String, to name: String) {
+        registerUndoSnapshot(label: "Rename Cue")
+        for i in scene.imageTracks.indices {
+            for ci in scene.imageTracks[i].cues.indices where scene.imageTracks[i].cues[ci].id == id {
+                scene.imageTracks[i].cues[ci].label = name
+            }
+        }
+        for i in scene.backgroundTracks.indices {
+            for ci in scene.backgroundTracks[i].cues.indices where scene.backgroundTracks[i].cues[ci].id == id {
+                scene.backgroundTracks[i].cues[ci].label = name
+            }
+        }
+    }
+
     // MARK: - Asset bank
 
     /// Imports an image/video file into the bank and returns the new asset.
