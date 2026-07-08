@@ -80,7 +80,7 @@ struct WideEditor: View {
     }
 
     private var header: some View {
-        HStack {
+        HStack(spacing: 10) {
             Image(lightMode ? "HeaderLogo" : "HeaderLogoDark")
                 .resizable()
                 .interpolation(.none)
@@ -93,7 +93,6 @@ struct WideEditor: View {
                 .foregroundStyle(lightMode ? Color.black
                                            : Color(red: 0.92, green: 0.92, blue: 0.92))
             ThemeToggle()
-                .padding(.leading, 6)
             Spacer()
             ShipButton(model: model, file: file)
         }
