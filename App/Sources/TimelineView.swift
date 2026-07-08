@@ -167,6 +167,7 @@ struct StudioTimelineView: View {
     /// values fed an oscillation (the "shake" while zooming).
     @State private var pinchAnchor: (t: Double, vx: CGFloat, fy: CGFloat)?
     @State private var lastGutterTap: (key: String, at: Date)?
+    @State private var editorOpenedAt = Date.distantPast
     /// Lanes viewport scroll offset. An observable holder (not view @State) so
     /// scrolling re-renders ONLY the pinned overlays that read it — the heavy
     /// lanes canvas is untouched by scroll ticks.
@@ -498,7 +499,12 @@ struct StudioTimelineView: View {
     private var headerInteraction: some Gesture {
         DragGesture(minimumDistance: 0)
             .onChanged { value in
-                if editingLabel != nil { commitLabelEdit(); return }
+                if editingLabel != nil {
+                    // The second click of a double-click must not commit-and-
+                    // reopen (the chips resort and the strip appears to jump).
+                    if Date().timeIntervalSince(editorOpenedAt) > 0.5 { commitLabelEdit() }
+                    return
+                }
                 let cx = value.location.x + scrollOffset.x
                 if let ds = draggingSub {
                     applySubDrag(ds, translation: Double(value.translation.width / pxPerSecond))
@@ -572,6 +578,7 @@ struct StudioTimelineView: View {
                     if let st = subtitleAt(contentX: cx) {
                         // Click a caption → edit its text in place.
                         editingText = st.sub.text
+                        editorOpenedAt = Date()
                         editingLabel = (.caption, "\(st.char)-\(st.index)",
                                         CGPoint(x: x(forTime: st.sub.start), y: 0))
                     } else if !model.scene.characters.isEmpty {
@@ -583,6 +590,7 @@ struct StudioTimelineView: View {
                         model.scene.characters[ci].subs.sort { $0.start < $1.start }
                         if let si = model.scene.characters[ci].subs.firstIndex(where: { $0.start == t }) {
                             editingText = ""
+                            editorOpenedAt = Date()
                             editingLabel = (.caption, "\(ci)-\(si)", CGPoint(x: x(forTime: t), y: 0))
                         }
                     }
@@ -756,7 +764,12 @@ struct StudioTimelineView: View {
     private var gutterInteraction: some Gesture {
         DragGesture(minimumDistance: 0)
             .onChanged { value in
-                if editingLabel != nil { commitLabelEdit(); return }
+                if editingLabel != nil {
+                    // The second click of a double-click must not commit-and-
+                    // reopen (the chips resort and the strip appears to jump).
+                    if Date().timeIntervalSince(editorOpenedAt) > 0.5 { commitLabelEdit() }
+                    return
+                }
                 if resizingGutter {
                     laneLabelWidthStore = min(300, max(60, Double(value.location.x)))
                     return
@@ -1479,11 +1492,13 @@ struct StudioTimelineView: View {
         // Click on a clip/cue label → rename in place.
         if let c = clip(at: point), labelZone(forClipStart: c.start, at: point) {
             editingText = c.name
+            editorOpenedAt = Date()
             editingLabel = (.clip, c.id, labelOrigin(forStart: c.start, at: point))
             return
         }
         if let (row, cueHit) = cue(at: point), labelZone(forClipStart: cueHit.start, at: point) {
             editingText = currentCueLabel(row: row, id: cueHit.id)
+            editorOpenedAt = Date()
             editingLabel = (.cue, cueHit.id, labelOrigin(forStart: cueHit.start, at: point))
             selectCue(row: row, id: cueHit.id)
             return

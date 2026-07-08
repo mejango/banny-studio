@@ -49,9 +49,9 @@ struct WideEditor: View {
             // for the available width, and the timeline absorbs all remaining space.
             let availH = Double(geo.size.height) - headerH
             let stageWidth = Double(max(200, geo.size.width))
-            let requestedTL = min(max(120, timelineHeight), availH - 140)
+            let requestedTL = min(max(0, timelineHeight), availH - 140)
             let stageH = min(stageWidth * 9.0 / 16.0, availH - 6 - requestedTL)
-            let tlH = max(120, availH - 6 - stageH)
+            let tlH = max(0, availH - 6 - stageH)
             VStack(spacing: 0) {
                 header
                 StageView(model: model, file: file)
@@ -110,7 +110,7 @@ struct WideEditor: View {
                 .onChanged { value in
                     let base = dividerDragBase ?? timelineHeight
                     dividerDragBase = base
-                    timelineHeight = min(max(200, maxHeight), max(120, base - Double(value.translation.height)))
+                    timelineHeight = min(max(200, maxHeight), max(0, base - Double(value.translation.height)))
                 }
                 .onEnded { _ in dividerDragBase = nil })
     }
