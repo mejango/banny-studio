@@ -355,7 +355,7 @@ struct StudioTimelineView: View {
             ctx.stroke(Path { p in
                 p.move(to: CGPoint(x: px, y: 0))
                 p.addLine(to: CGPoint(x: px, y: size.height))
-            }, with: .color(Color(red: 0.6, green: 1, blue: 0.6)), lineWidth: 1)
+            }, with: .color(theme.playhead), lineWidth: 1.5)
         }
         .clipped()
         .overlay(alignment: .topLeading) {
@@ -980,7 +980,7 @@ struct StudioTimelineView: View {
     private func drawPlayhead(ctx: GraphicsContext, size: CGSize) {
         let px = x(forTime: model.time)
         ctx.stroke(Path { $0.move(to: CGPoint(x: px, y: 0)); $0.addLine(to: CGPoint(x: px, y: size.height)) },
-                   with: .color(Color(red: 0.6, green: 1, blue: 0.6)), lineWidth: 1)
+                   with: .color(theme.playhead), lineWidth: 1.5)
     }
 
     // MARK: - Row helpers
