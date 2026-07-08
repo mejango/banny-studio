@@ -152,7 +152,7 @@ public enum ShowExporter {
         for segment in segments {
             let sim = SceneSimulator(state: segment.scene.state)
             _ = sim // simulator is constructed inside draw; kept for clarity
-            let bg: (CGImage, Crop)? = loadBackground(scene: segment.scene, backgroundURL: backgroundURL)
+            let bg = BackgroundSampler(scene: segment.scene, backgroundURL: backgroundURL)
             let segFrames = Int(((segment.to - segment.from) * Double(fps)).rounded(.up))
             for f in 0..<segFrames {
                 let t = segment.from + Double(f) / Double(fps)
@@ -170,7 +170,7 @@ public enum ShowExporter {
                                         bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue
                                             | CGBitmapInfo.byteOrder32Little.rawValue)!
                     renderer.draw(scene: segment.scene.state, at: t, size: options.size,
-                                  background: bg.map { (image: $0.0, crop: $0.1) },
+                                  background: bg.frame(at: t),
                                   flipped: true, in: ctx)
                     CVPixelBufferUnlockBaseAddress(pb, [])
                     pumpAudio(upTo: Double(frameIndex) / Double(fps))
@@ -287,18 +287,46 @@ public enum ShowExporter {
         return sample
     }
 
-    private static func loadBackground(scene: BannyCore.Scene,
-                                       backgroundURL: (String) -> URL?) -> (CGImage, Crop)? {
-        guard let spec = scene.state.background else { return nil }
-        let crop: Crop
-        switch spec {
-        case .image(_, let c): crop = c
-        case .video(_, let c): crop = c // poster-frame support only, matching the editor for now
+    /// Per-segment background source: static image, or video sampled
+    /// deterministically at t mod duration (the web bg <video> loops).
+    final class BackgroundSampler {
+        private let crop: Crop
+        private let still: CGImage?
+        private let generator: AVAssetImageGenerator?
+        private let videoDuration: Double
+
+        init(scene: BannyCore.Scene, backgroundURL: (String) -> URL?) {
+            guard let spec = scene.state.background, let url = backgroundURL(scene.id) else {
+                crop = .cover; still = nil; generator = nil; videoDuration = 0
+                return
+            }
+            switch spec {
+            case .image(_, let c):
+                crop = c
+                still = CGImageSourceCreateWithURL(url as CFURL, nil)
+                    .flatMap { CGImageSourceCreateImageAtIndex($0, 0, nil) }
+                generator = nil
+                videoDuration = 0
+            case .video(_, let c):
+                crop = c
+                still = nil
+                let asset = AVURLAsset(url: url)
+                let gen = AVAssetImageGenerator(asset: asset)
+                gen.requestedTimeToleranceBefore = CMTime(value: 1, timescale: 30)
+                gen.requestedTimeToleranceAfter = CMTime(value: 1, timescale: 30)
+                gen.appliesPreferredTrackTransform = true
+                generator = gen
+                videoDuration = CMTimeGetSeconds(asset.duration)
+            }
         }
-        guard case .image = spec,
-              let url = backgroundURL(scene.id),
-              let src = CGImageSourceCreateWithURL(url as CFURL, nil),
-              let img = CGImageSourceCreateImageAtIndex(src, 0, nil) else { return nil }
-        return (img, crop)
+
+        func frame(at t: Double) -> (image: CGImage, crop: Crop)? {
+            if let still { return (still, crop) }
+            guard let generator, videoDuration > 0 else { return nil }
+            let vt = t.truncatingRemainder(dividingBy: videoDuration)
+            guard let img = try? generator.copyCGImage(at: CMTime(seconds: vt, preferredTimescale: 600),
+                                                       actualTime: nil) else { return nil }
+            return (img, crop)
+        }
     }
 }

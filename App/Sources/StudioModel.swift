@@ -26,6 +26,49 @@ final class StudioModel {
     var activeSceneIndex: Int
     /// Held live keys → the codes currently down, per character (drives live sim while recording).
     private(set) var heldCodes: Set<EventCode> = []
+    /// Bumped whenever background media changes so caches invalidate.
+    var backgroundRevision = 0
+
+    // Timeline selection (shared with keyboard shortcuts).
+    var selectedMarks: Set<PerfMark> = []
+    var selectedClips: Set<String> = []
+    private var markClipboard: [(character: Int, code: EventCode, start: Double, end: Double)] = []
+
+    /// ⌘C: copy selected marks (times kept relative to the earliest mark).
+    func copySelectedMarks() {
+        guard !selectedMarks.isEmpty else { return }
+        let t0 = selectedMarks.map(\.start).min() ?? 0
+        markClipboard = selectedMarks.map { ($0.character, $0.code, $0.start - t0, $0.end - t0) }
+    }
+
+    /// ⌘V: paste the copied marks at the playhead onto their original characters.
+    func pasteMarks() {
+        guard !markClipboard.isEmpty else { return }
+        registerUndoSnapshot(label: "Paste Marks")
+        for m in markClipboard {
+            guard scene.characters.indices.contains(m.character) else { continue }
+            var events = scene.characters[m.character].events
+            events.append(.key(t: ((time + m.start) * 1000).rounded() / 1000, code: m.code, down: true))
+            events.append(.key(t: ((time + m.end) * 1000).rounded() / 1000, code: m.code, down: false))
+            events.sort { $0.t < $1.t }
+            scene.characters[m.character].events = events
+        }
+    }
+
+    /// Delete the timeline selection (anchors handled by the view).
+    func deleteTimelineSelection() {
+        if !selectedMarks.isEmpty {
+            registerUndoSnapshot(label: "Delete Marks")
+            for charIndex in Set(selectedMarks.map(\.character)) {
+                let charMarks = Set(selectedMarks.filter { $0.character == charIndex })
+                scene.characters[charIndex].events =
+                    TimelineMath.removeMarks(charMarks, from: scene.characters[charIndex].events)
+            }
+            selectedMarks = []
+        }
+        for id in selectedClips { removeClip(id: id) }
+        selectedClips = []
+    }
 
     init(document: ShowDocument) {
         self.document = document

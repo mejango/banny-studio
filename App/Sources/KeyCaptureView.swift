@@ -52,9 +52,19 @@ struct KeyCaptureView: NSViewRepresentable {
             // Don't steal keys from text fields.
             if let responder = NSApp.keyWindow?.firstResponder,
                responder is NSTextView || responder is NSText { return false }
-            guard !event.modifierFlags.contains(.command) else { return false }
 
             let down = event.type == .keyDown
+            if down, event.modifierFlags.contains(.command) {
+                if event.keyCode == 8, !model.selectedMarks.isEmpty {       // ⌘C
+                    model.copySelectedMarks()
+                    return true
+                }
+                if event.keyCode == 9 {                                     // ⌘V
+                    model.pasteMarks()
+                    return true
+                }
+                return false
+            }
             if event.isARepeat { return codeMap[event.keyCode] != nil } // swallow OS repeats
 
             if let code = codeMap[event.keyCode] {

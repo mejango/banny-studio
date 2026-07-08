@@ -1,5 +1,8 @@
 import SwiftUI
 import BannyCore
+#if os(macOS)
+import AppKit
+#endif
 
 /// Group colors from the web perfColor palette.
 extension EventGroup {
@@ -56,6 +59,22 @@ enum TimelineMath {
         }
     }
 
+    /// Resize one mark edge: move its down (leading) or up (trailing) event to newT.
+    static func resizeMark(_ mark: PerfMark, leading: Bool, to newT: Double,
+                           in events: [PerfEvent]) -> [PerfEvent] {
+        var out = events
+        for (i, ev) in out.enumerated() {
+            guard case .key(let t, let code, let down) = ev, code == mark.code else { continue }
+            if leading, down, abs(t - mark.start) < 1e-6 {
+                out[i] = .key(t: min(max(0, newT), mark.end - 0.04), code: code, down: true)
+            } else if !leading, !down, abs(t - mark.end) < 1e-6 {
+                out[i] = .key(t: max(newT, mark.start + 0.04), code: code, down: false)
+            }
+        }
+        out.sort { $0.t < $1.t }
+        return out
+    }
+
     /// Shift the events backing a set of marks by dt (drag-move selection).
     static func shiftMarks(_ marks: Set<PerfMark>, in events: [PerfEvent], by dt: Double) -> [PerfEvent] {
         var shifted = events.map { ev -> PerfEvent in
@@ -77,9 +96,11 @@ struct StudioTimelineView: View {
     @Bindable var model: StudioModel
     var file: ShowDocumentFile? = nil
     @State private var zoom: Double = 1
-    @State private var selectedMarks: Set<PerfMark> = []
     @State private var selectedAnchor: Int?
     @State private var dragStartMarks: [Int: [PerfEvent]]?
+    @State private var resizing: (mark: PerfMark, leading: Bool, baseEvents: [PerfEvent])?
+    @State private var draggingClip: (id: String, baseStart: Double)?
+    @State private var peakCache = PeakCache()
 
     private let laneLabelWidth: CGFloat = 96
     private let rulerHeight: CGFloat = 18
@@ -94,7 +115,8 @@ struct StudioTimelineView: View {
                 timelineCanvas
                     .frame(width: max(600, laneLabelWidth + contentWidth),
                            height: rulerHeight + scrubHeight + cropHeight
-                                 + laneHeight * CGFloat(max(1, model.scene.characters.count)))
+                                 + laneHeight * CGFloat(max(1, model.scene.characters.count
+                                                               + model.scene.audioTracks.count)))
             }
             .background(Color(red: 0.078, green: 0.078, blue: 0.11))
         }
@@ -104,7 +126,7 @@ struct StudioTimelineView: View {
         }
         #else
         .toolbar {
-            if !selectedMarks.isEmpty || selectedAnchor != nil {
+            if !model.selectedMarks.isEmpty || selectedAnchor != nil {
                 Button("Delete", role: .destructive) { deleteSelection() }
             }
         }
@@ -205,8 +227,8 @@ struct StudioTimelineView: View {
                                   width: max(2, CGFloat(mark.end - mark.start) * pxPerSecond),
                                   height: subH - 1)
                 ctx.fill(Path(rect), with: .color(mark.code.group.color.opacity(
-                    selectedMarks.contains(mark) ? 1 : 0.75)))
-                if selectedMarks.contains(mark) {
+                    model.selectedMarks.contains(mark) ? 1 : 0.75)))
+                if model.selectedMarks.contains(mark) {
                     ctx.stroke(Path(rect.insetBy(dx: -1, dy: -1)), with: .color(.white), lineWidth: 1)
                 }
             }
@@ -218,12 +240,9 @@ struct StudioTimelineView: View {
                 ctx.fill(Path(ellipseIn: CGRect(x: cx - 3, y: cy - 3, width: 6, height: 6)),
                          with: .color(.white))
             }
-            // Audio clips (thin bars until phase 4 waveforms).
+            // Audio clips with waveforms.
             for clip in character.clips {
-                let rect = CGRect(x: x(forTime: clip.start), y: y + laneHeight - 10,
-                                  width: CGFloat(clip.dur) * pxPerSecond, height: 8)
-                ctx.fill(Path(roundedRect: rect, cornerRadius: 2),
-                         with: .color(Color(red: 0.3, green: 0.65, blue: 0.55).opacity(0.8)))
+                drawClip(clip, laneY: y, ctx: ctx)
             }
             // Captions.
             for sub in character.subs {
@@ -233,6 +252,71 @@ struct StudioTimelineView: View {
                          with: .color(Color(red: 1, green: 0.97, blue: 0.9).opacity(0.35)))
             }
         }
+        // Standalone audio-track lanes below the characters.
+        for (j, track) in model.scene.audioTracks.enumerated() {
+            let y = top + CGFloat(model.scene.characters.count + j) * laneHeight
+            ctx.stroke(Path { $0.move(to: CGPoint(x: 0, y: y + laneHeight))
+                              $0.addLine(to: CGPoint(x: size.width, y: y + laneHeight)) },
+                       with: .color(.black), lineWidth: 1)
+            ctx.draw(Text(track.name).font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(Color(red: 0.45, green: 0.9, blue: 0.75)),
+                     at: CGPoint(x: laneLabelWidth / 2, y: y + 12))
+            for clip in track.clips {
+                drawClip(clip, laneY: y, ctx: ctx)
+            }
+        }
+    }
+
+    private func drawClip(_ clip: AudioClip, laneY y: CGFloat, ctx: GraphicsContext) {
+        let rect = CGRect(x: x(forTime: clip.start), y: y + laneHeight - 18,
+                          width: max(4, CGFloat(clip.dur) * pxPerSecond), height: 16)
+        let selected = model.selectedClips.contains(clip.id)
+        ctx.fill(Path(roundedRect: rect, cornerRadius: 3),
+                 with: .color(Color(red: 0.16, green: 0.38, blue: 0.33)))
+        if let file, let peaks = peakCache.peaks(for: clip.id, file: file), !peaks.isEmpty {
+            // Slice the source-file peak strip to this clip's offset window.
+            let perSec = Double(peaks.count) / max(0.001, clip.srcDur)
+            let start = Int(clip.offset * perSec)
+            let count = max(1, Int(clip.dur * perSec))
+            var wave = Path()
+            let cols = Int(rect.width)
+            for px in stride(from: 0, to: cols, by: 1) {
+                let idx = start + Int(Double(px) / Double(max(1, cols)) * Double(count))
+                guard peaks.indices.contains(idx) else { continue }
+                let h = CGFloat(peaks[idx]) * (rect.height - 3)
+                let cx = rect.minX + CGFloat(px)
+                wave.move(to: CGPoint(x: cx, y: rect.midY - h / 2))
+                wave.addLine(to: CGPoint(x: cx, y: rect.midY + h / 2))
+            }
+            ctx.stroke(wave, with: .color(Color(red: 0.45, green: 0.9, blue: 0.75)), lineWidth: 1)
+        }
+        if selected {
+            ctx.stroke(Path(roundedRect: rect.insetBy(dx: -1, dy: -1), cornerRadius: 3),
+                       with: .color(.white), lineWidth: 1.5)
+        }
+        ctx.draw(Text(clip.name).font(.system(size: 8)).foregroundStyle(.white.opacity(0.8)),
+                 at: CGPoint(x: rect.minX + 4, y: rect.minY + 4), anchor: .topLeading)
+    }
+
+    private func clip(at point: CGPoint) -> AudioClip? {
+        let laneTop = rulerHeight + scrubHeight + cropHeight
+        let row = Int((point.y - laneTop) / laneHeight)
+        let chars = model.scene.characters.count
+        let clips: [AudioClip]
+        if model.scene.characters.indices.contains(row) {
+            clips = model.scene.characters[row].clips
+        } else if model.scene.audioTracks.indices.contains(row - chars) {
+            clips = model.scene.audioTracks[row - chars].clips
+        } else {
+            return nil
+        }
+        let rowY = laneTop + CGFloat(row) * laneHeight
+        for clip in clips {
+            let rect = CGRect(x: x(forTime: clip.start), y: rowY + laneHeight - 18,
+                              width: max(4, CGFloat(clip.dur) * pxPerSecond), height: 16)
+            if rect.contains(point) { return clip }
+        }
+        return nil
     }
 
     private func drawPlayhead(ctx: GraphicsContext, size: CGSize) {
@@ -260,11 +344,14 @@ struct StudioTimelineView: View {
                 if value.translation.width.magnitude < 3, value.translation.height.magnitude < 3 {
                     handleTap(at: value.location)
                 }
-                if y >= rulerHeight + scrubHeight + cropHeight, dragStartMarks != nil {
-                    model.registerUndoSnapshot(label: "Move Marks")
+                if y >= rulerHeight + scrubHeight + cropHeight,
+                   dragStartMarks != nil || resizing != nil || draggingClip != nil {
+                    model.registerUndoSnapshot(label: "Edit Timeline")
                 }
                 dragStartMarks = nil
                 draggingAnchor = nil
+                resizing = nil
+                draggingClip = nil
             }
     }
 
@@ -287,19 +374,47 @@ struct StudioTimelineView: View {
     }
 
     private func handleLaneDrag(_ value: DragGesture.Value) {
-        guard !selectedMarks.isEmpty else { return }
         let laneTop = rulerHeight + scrubHeight + cropHeight
         guard value.startLocation.y >= laneTop else { return }
-        // Only drag when starting on a selected mark.
-        if dragStartMarks == nil {
-            guard let hit = mark(at: value.startLocation), selectedMarks.contains(hit) else { return }
-            dragStartMarks = Dictionary(uniqueKeysWithValues:
-                Set(selectedMarks.map(\.character)).map { ($0, model.scene.characters[$0].events) })
+
+        // Clip drag.
+        if let dragging = draggingClip {
+            let dt = Double(value.translation.width / pxPerSecond)
+            model.moveClip(id: dragging.id, toStart: dragging.baseStart + dt)
+            return
+        }
+        // Mark edge resize.
+        if let r = resizing {
+            let t = time(forX: value.location.x)
+            model.scene.characters[r.mark.character].events =
+                TimelineMath.resizeMark(r.mark, leading: r.leading, to: t, in: r.baseEvents)
+            return
+        }
+        if dragStartMarks == nil, resizing == nil, draggingClip == nil {
+            // Decide what this drag grabs, once.
+            if let hit = mark(at: value.startLocation) {
+                let edge = 4.0
+                let startX = x(forTime: hit.start)
+                let endX = x(forTime: hit.end)
+                if abs(value.startLocation.x - startX) < edge || abs(value.startLocation.x - endX) < edge {
+                    resizing = (hit, abs(value.startLocation.x - startX) < edge,
+                                model.scene.characters[hit.character].events)
+                    return
+                }
+                if model.selectedMarks.contains(hit) {
+                    dragStartMarks = Dictionary(uniqueKeysWithValues:
+                        Set(model.selectedMarks.map(\.character)).map { ($0, model.scene.characters[$0].events) })
+                }
+            } else if let c = clip(at: value.startLocation) {
+                draggingClip = (c.id, c.start)
+                model.selectedClips = [c.id]
+                return
+            }
         }
         guard let base = dragStartMarks else { return }
         let dt = Double(value.translation.width / pxPerSecond)
         for (charIndex, events) in base {
-            let charMarks = Set(selectedMarks.filter { $0.character == charIndex })
+            let charMarks = Set(model.selectedMarks.filter { $0.character == charIndex })
             model.scene.characters[charIndex].events =
                 TimelineMath.shiftMarks(charMarks, in: events, by: dt)
         }
@@ -324,16 +439,51 @@ struct StudioTimelineView: View {
             }
             return
         }
+        let splitting = isCommandDown()
         if let hit = mark(at: point) {
-            if selectedMarks.contains(hit) { selectedMarks.remove(hit) } else { selectedMarks.insert(hit) }
+            if splitting {
+                splitMark(hit, at: time(forX: point.x))
+            } else if model.selectedMarks.contains(hit) {
+                model.selectedMarks.remove(hit)
+            } else {
+                model.selectedMarks.insert(hit)
+            }
+        } else if let c = clip(at: point) {
+            if splitting {
+                model.splitClip(id: c.id, at: time(forX: point.x))
+            } else if model.selectedClips.contains(c.id) {
+                model.selectedClips.remove(c.id)
+            } else {
+                model.selectedClips = [c.id]
+            }
         } else if y >= cropTop + cropHeight {
-            selectedMarks = []
+            model.selectedMarks = []
+            model.selectedClips = []
             // Row click selects the character.
             let row = Int((y - cropTop - cropHeight) / laneHeight)
             if model.scene.characters.indices.contains(row) {
                 model.selection = [row]
             }
         }
+    }
+
+    /// ⌘-click a held segment: split it into two segments at t (web splitSegment).
+    private func splitMark(_ mark: PerfMark, at t: Double) {
+        guard t > mark.start + 0.05, t < mark.end - 0.05 else { return }
+        model.registerUndoSnapshot(label: "Split Mark")
+        var events = model.scene.characters[mark.character].events
+        events.append(.key(t: ((t - 0.02) * 1000).rounded() / 1000, code: mark.code, down: false))
+        events.append(.key(t: ((t + 0.02) * 1000).rounded() / 1000, code: mark.code, down: true))
+        events.sort { $0.t < $1.t }
+        model.scene.characters[mark.character].events = events
+    }
+
+    private func isCommandDown() -> Bool {
+        #if os(macOS)
+        NSEvent.modifierFlags.contains(.command)
+        #else
+        false
+        #endif
     }
 
     private func mark(at point: CGPoint) -> PerfMark? {
@@ -360,14 +510,7 @@ struct StudioTimelineView: View {
             selectedAnchor = nil
             return
         }
-        guard !selectedMarks.isEmpty else { return }
-        model.registerUndoSnapshot(label: "Delete Marks")
-        for charIndex in Set(selectedMarks.map(\.character)) {
-            let charMarks = Set(selectedMarks.filter { $0.character == charIndex })
-            model.scene.characters[charIndex].events =
-                TimelineMath.removeMarks(charMarks, from: model.scene.characters[charIndex].events)
-        }
-        selectedMarks = []
+        model.deleteTimelineSelection()
     }
 }
 

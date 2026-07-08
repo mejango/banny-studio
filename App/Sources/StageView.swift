@@ -1,5 +1,6 @@
 import SwiftUI
 import ImageIO
+import AVFoundation
 import BannyCore
 import BannyRender
 
@@ -22,7 +23,8 @@ struct StageView: View {
                 file.audioEngine?.tick(model: model)
                 let scene = model.scene
                 let sceneID = model.document.scenes[model.activeSceneIndex].id
-                let bg = bgCache.image(for: sceneID, spec: scene.background, file: file)
+                let bg = bgCache.image(for: sceneID, revision: model.backgroundRevision,
+                                       at: model.time, spec: scene.background, file: file)
                 context.withCGContext { cg in
                     FrameRenderer(assets: SharedAssets.catalog).draw(
                         scene: scene, at: model.time, size: size,
@@ -83,23 +85,74 @@ struct StageView: View {
 final class BackgroundCache {
     private var cache: [String: (image: CGImage, crop: Crop)] = [:]
     private var failed: Set<String> = []
+    private var revision = -1
+    // Video preview state: throttled async frame generation (~7 fps preview;
+    // export samples exactly).
+    private var videoGen: [String: (gen: AVAssetImageGenerator, duration: Double, url: URL)] = [:]
+    private var videoFrame: [String: (image: CGImage, t: Double)] = [:]
+    private var videoBusy: Set<String> = []
 
-    func image(for sceneID: String, spec: BackgroundSpec?, file: ShowDocumentFile) -> (image: CGImage, crop: Crop)? {
+    func image(for sceneID: String, revision: Int, at t: Double, spec: BackgroundSpec?,
+               file: ShowDocumentFile) -> (image: CGImage, crop: Crop)? {
+        if revision != self.revision {
+            cache = [:]
+            failed = []
+            videoGen = [:]
+            videoFrame = [:]
+            self.revision = revision
+        }
         guard let spec else { return nil }
-        let crop: Crop
         switch spec {
-        case .image(_, let c): crop = c
-        case .video(_, let c): crop = c // static poster frame for now; video bg is a later polish
+        case .image(_, let crop):
+            if let hit = cache[sceneID] { return (hit.image, crop) }
+            guard !failed.contains(sceneID),
+                  let media = file.backgrounds[sceneID],
+                  let src = CGImageSourceCreateWithData(media.data as CFData, nil),
+                  let img = CGImageSourceCreateImageAtIndex(src, 0, nil) else {
+                failed.insert(sceneID)
+                return nil
+            }
+            cache[sceneID] = (img, crop)
+            return (img, crop)
+        case .video(_, let crop):
+            return (videoPreviewFrame(sceneID: sceneID, at: t, file: file)).map { ($0, crop) }
         }
-        if let hit = cache[sceneID] { return (hit.image, crop) }
-        guard !failed.contains(sceneID), case .image = spec,
-              let media = file.backgrounds[sceneID],
-              let src = CGImageSourceCreateWithData(media.data as CFData, nil),
-              let img = CGImageSourceCreateImageAtIndex(src, 0, nil) else {
-            failed.insert(sceneID)
-            return nil
+    }
+
+    private func videoPreviewFrame(sceneID: String, at t: Double, file: ShowDocumentFile) -> CGImage? {
+        guard !failed.contains(sceneID) else { return nil }
+        if videoGen[sceneID] == nil {
+            guard let media = file.backgrounds[sceneID] else { failed.insert(sceneID); return nil }
+            let url = FileManager.default.temporaryDirectory
+                .appendingPathComponent("bgvid-\(sceneID).\(media.ext)")
+            if !FileManager.default.fileExists(atPath: url.path) {
+                try? media.data.write(to: url)
+            }
+            let asset = AVURLAsset(url: url)
+            let gen = AVAssetImageGenerator(asset: asset)
+            gen.requestedTimeToleranceBefore = CMTime(value: 1, timescale: 10)
+            gen.requestedTimeToleranceAfter = CMTime(value: 1, timescale: 10)
+            gen.appliesPreferredTrackTransform = true
+            gen.maximumSize = CGSize(width: 1280, height: 720)
+            let dur = CMTimeGetSeconds(asset.duration)
+            guard dur > 0 else { failed.insert(sceneID); return nil }
+            videoGen[sceneID] = (gen, dur, url)
         }
-        cache[sceneID] = (img, crop)
-        return (img, crop)
+        guard let entry = videoGen[sceneID] else { return nil }
+        let vt = t.truncatingRemainder(dividingBy: entry.duration)
+        let current = videoFrame[sceneID]
+        if current == nil || abs(current!.t - vt) > 0.15, !videoBusy.contains(sceneID) {
+            videoBusy.insert(sceneID)
+            let gen = entry.gen
+            Task.detached(priority: .userInitiated) { [weak self] in
+                let img = try? gen.copyCGImage(at: CMTime(seconds: vt, preferredTimescale: 600),
+                                               actualTime: nil)
+                await MainActor.run { [weak self] in
+                    if let img { self?.videoFrame[sceneID] = (img, vt) }
+                    self?.videoBusy.remove(sceneID)
+                }
+            }
+        }
+        return current?.image
     }
 }

@@ -70,9 +70,8 @@ node tools/extract-assets.mjs [path/to/index.html]
 
 ## Known gaps vs the webapp (tracked, not blockers)
 
-- Timeline: copy/paste marks, ⌘-click split, box-select, and clip waveforms are
-  minimal or pending (delete/drag/select and crop→Show segments work).
-- Background video plays as a poster frame (image backgrounds full).
-- Audio clip import/mic recording UI not yet wired (imported clips play + ship).
-- iPhone Watch mode = the document player via Ship preview, not a separate
-  library UI yet.
+- Timeline box-select (rubber band) not yet wired; single/⇧ selection, drag,
+  edge-resize, ⌘-click split, ⌘C/⌘V, and delete all work.
+- Editor previews video backgrounds at ~7 fps (export samples exact frames).
+- No in-app player/library screen yet; watching = Ship or QuickTime.
+- Scene-preset backgrounds (web SCENES) were empty in the source build — n/a.

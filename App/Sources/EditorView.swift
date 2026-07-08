@@ -53,7 +53,7 @@ struct WideEditor: View {
                     .frame(height: 230)
             }
             Divider()
-            SidePanel(model: model)
+            SidePanel(model: model, file: file)
                 .frame(width: 300)
         }
     }
@@ -93,7 +93,7 @@ struct CompactEditor: View {
                     .frame(height: 180)
                 StudioTimelineView(model: model, file: file)
             case .wardrobe:
-                SidePanel(model: model)
+                SidePanel(model: model, file: file)
             }
         }
     }
@@ -133,17 +133,24 @@ struct SceneTabsView: View {
     }
 }
 
-/// Right panel: cast, wardrobe, scene physics, show playlist.
+/// Right panel: cast, wardrobe, audio, background, script, physics, show playlist.
 struct SidePanel: View {
     @Bindable var model: StudioModel
+    var file: ShowDocumentFile? = nil
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
                 castSection
                 if let i = model.selection.first, model.scene.characters.indices.contains(i) {
+                    MotionSection(model: model, characterIndex: i)
+                    ScriptSection(model: model, characterIndex: i)
                     WardrobePanel(model: model, characterIndex: i)
                 }
+                if let file {
+                    AudioSection(model: model, file: file)
+                }
+                BackgroundSection(model: model)
                 physicsSection
                 showSection
             }
