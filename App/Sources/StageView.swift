@@ -30,7 +30,16 @@ struct StageView: View {
                 model.freeformNudge(dt: 1 / 60)
                 model.lightTick(dt: 1 / 60)
                 file.audioEngine?.tick(model: model)
-                let scene = model.scene
+                var scene = model.scene
+                // Live shadows while drawing a light: the pen stands in for
+                // the track's cues so position/intensity/size show immediately.
+                if let li = model.lightRecordTrack, let pen = model.lightPenNow,
+                   scene.lightTracks.indices.contains(li) {
+                    scene.lightTracks[li].cues = [LightCue(
+                        id: "live-pen", start: 0, dur: .greatestFiniteMagnitude,
+                        from: LightState(x: pen.x, y: pen.y,
+                                         intensity: pen.intensity, size: pen.size))]
+                }
                 let bg = scene.activeBackgroundCue(at: model.time).flatMap {
                     media.background(cue: $0, at: model.time, playing: model.playing,
                                      revision: model.backgroundRevision,
