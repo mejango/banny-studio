@@ -116,6 +116,7 @@ struct StudioTimelineView: View {
     @State private var draggingClip: (id: String, baseStart: Double)?
     @State private var draggingCue: (row: TrackRow, cueID: String, baseStart: Double, baseDur: Double, edge: Int)?
     @State private var draggingSub: (char: Int, index: Int, baseStart: Double, baseDur: Double, edge: Int)?
+    @State private var draggingPresence: (row: TrackRow, index: Int)?
     @State private var resizingTrack: (key: String, baseHeight: CGFloat, minHeight: CGFloat)?
     @State private var peakCache = PeakCache()
     /// Per-track lane heights (session-scoped), keyed by TrackRow.key.
@@ -197,13 +198,13 @@ struct StudioTimelineView: View {
     private var headerHeight: CGFloat { rulerHeight + scrubHeight }
 
     private func minHeight(of row: TrackRow) -> CGFloat {
-        if case .character = row { return 66 }   // captions + audio + 7 event rows
-        return 32
+        if case .character = row { return 78 }   // presence + captions + audio + 7 event rows
+        return 44
     }
 
     private func height(of row: TrackRow) -> CGFloat {
         let base: CGFloat
-        if case .character = row { base = 72 } else { base = defaultLaneHeight }
+        if case .character = row { base = 84 } else { base = defaultLaneHeight }
         return max(minHeight(of: row), trackHeights[row.key(in: model.scene)] ?? base)
     }
 
@@ -348,6 +349,8 @@ struct StudioTimelineView: View {
         ctx.stroke(Path { $0.move(to: CGPoint(x: 0, y: y + h)); $0.addLine(to: CGPoint(x: size.width, y: y + h)) },
                    with: .color(.black), lineWidth: 1)
 
+        drawPresenceStrip(row, y: y, ctx: ctx)
+
         var content = ctx
         if hidden { content.opacity = 0.3 }
         switch row {
@@ -355,7 +358,7 @@ struct StudioTimelineView: View {
             drawCharacterLane(i, y: y, h: h, ctx: content)
         case .audio(let i):
             for clip in model.scene.audioTracks[i].clips {
-                drawClip(clip, top: y + 4, height: h - 8, ctx: content)
+                drawClip(clip, top: y + presenceStripH + 2, height: h - presenceStripH - 6, ctx: content)
             }
         case .image(let i):
             for cue in model.scene.imageTracks[i].cues {
@@ -379,16 +382,54 @@ struct StudioTimelineView: View {
     }
 
     private let captionStripH: CGFloat = 13
+    /// Per-lane presence strip (eye markers) at the top of every row.
+    private let presenceStripH: CGFloat = 12
 
     /// Character lane vertical layout: captions strip, then audio clips, then
     /// the seven event sub-lanes. Everything gets its own band — no overlap.
     private func characterLaneZones(h: CGFloat) -> (clipTop: CGFloat, clipH: CGFloat,
                                                     eventTop: CGFloat, subH: CGFloat) {
-        let clipH: CGFloat = min(26, max(14, (h - captionStripH - 20) * 0.4))
-        let clipTop = captionStripH + 2
+        let clipH: CGFloat = min(26, max(14, (h - presenceStripH - captionStripH - 20) * 0.4))
+        let clipTop = presenceStripH + captionStripH + 2
         let eventTop = clipTop + clipH + 2
         let subH = max(2, (h - eventTop - 4) / 7)
         return (clipTop, clipH, eventTop, subH)
+    }
+
+    /// Presence strip: tinted spans while visible, eye/eye-slash markers at toggles.
+    private func drawPresenceStrip(_ row: TrackRow, y: CGFloat, ctx: GraphicsContext) {
+        let events = presence(of: row).sorted { $0.t < $1.t }
+        let stripRect = CGRect(x: 0, y: y, width: contentWidth + 40, height: presenceStripH)
+        ctx.fill(Path(stripRect), with: .color(Color.white.opacity(0.025)))
+        // Visible spans.
+        var spanStart: Double? = events.first?.visible == false || events.isEmpty || events[0].t > 0 ? 0 : nil
+        var cursorVisible = true
+        var segments: [(Double, Double)] = []
+        var last = 0.0
+        for ev in events {
+            if cursorVisible, ev.visible == false, let s0 = spanStart {
+                segments.append((s0, ev.t))
+                spanStart = nil
+            } else if !cursorVisible, ev.visible {
+                spanStart = ev.t
+            }
+            cursorVisible = ev.visible
+            last = ev.t
+        }
+        if let s0 = spanStart { segments.append((s0, model.duration)) }
+        _ = last
+        for (a, b) in segments {
+            ctx.fill(Path(CGRect(x: x(forTime: a), y: y + 2,
+                                 width: max(2, CGFloat(b - a) * pxPerSecond), height: presenceStripH - 4)),
+                     with: .color(Color(red: 0.35, green: 0.75, blue: 0.5).opacity(0.35)))
+        }
+        for ev in events {
+            ctx.draw(Text(Image(systemName: ev.visible ? "eye.fill" : "eye.slash.fill"))
+                        .font(.system(size: 8))
+                        .foregroundStyle(ev.visible ? Color(red: 0.5, green: 0.95, blue: 0.65)
+                                                    : Color(red: 0.95, green: 0.5, blue: 0.45)),
+                     at: CGPoint(x: x(forTime: ev.t), y: y + presenceStripH / 2))
+        }
     }
 
     private func drawCharacterLane(_ i: Int, y: CGFloat, h: CGFloat, ctx: GraphicsContext) {
@@ -416,7 +457,7 @@ struct StudioTimelineView: View {
             drawClip(clip, top: y + zones.clipTop, height: zones.clipH, ctx: ctx)
         }
         for (si, sub) in character.subs.enumerated() {
-            let rect = CGRect(x: x(forTime: sub.start), y: y + 2,
+            let rect = CGRect(x: x(forTime: sub.start), y: y + presenceStripH + 1,
                               width: max(8, CGFloat(sub.dur) * pxPerSecond), height: captionStripH - 2)
             let selected = draggingSub?.char == i && draggingSub?.index == si
             ctx.fill(Path(roundedRect: rect, cornerRadius: 2),
@@ -464,8 +505,8 @@ struct StudioTimelineView: View {
     private func drawCueBar(start: Double, dur: Double, y: CGFloat, h: CGFloat, color: Color,
                             label: String, assetID: String, selected: Bool, animated: Bool,
                             ctx: GraphicsContext) {
-        let rect = CGRect(x: x(forTime: start), y: y + 6,
-                          width: max(6, CGFloat(dur) * pxPerSecond), height: h - 12)
+        let rect = CGRect(x: x(forTime: start), y: y + presenceStripH + 2,
+                          width: max(6, CGFloat(dur) * pxPerSecond), height: h - presenceStripH - 6)
         ctx.fill(Path(roundedRect: rect, cornerRadius: 4), with: .color(color.opacity(0.55)))
         // Tile the asset's image across the band.
         if let thumb = cueThumbs.thumb(assetID: assetID, file: file) {
@@ -528,6 +569,26 @@ struct StudioTimelineView: View {
         return false
     }
 
+    private func presence(of row: TrackRow) -> [VisibilityEvent] {
+        switch row {
+        case .character(let i): return model.scene.characters[i].presence
+        case .audio(let i): return model.scene.audioTracks[i].presence
+        case .image(let i): return model.scene.imageTracks[i].presence
+        case .background(let i): return model.scene.backgroundTracks[i].presence
+        }
+    }
+
+    private func setPresence(_ row: TrackRow, _ events: [VisibilityEvent]) {
+        let sorted = events.sorted { $0.t < $1.t }
+        switch row {
+        case .character(let i): model.scene.characters[i].presence = sorted
+        case .audio(let i): model.scene.audioTracks[i].presence = sorted
+        case .image(let i): model.scene.imageTracks[i].presence = sorted
+        case .background(let i): model.scene.backgroundTracks[i].presence = sorted
+        }
+        model.backgroundRevision += 1
+    }
+
     private func isHidden(_ row: TrackRow) -> Bool {
         switch row {
         case .character(let i): return model.scene.characters[i].hidden
@@ -581,7 +642,7 @@ struct StudioTimelineView: View {
                     handleTap(at: value.location)
                 }
                 if dragStartMarks != nil || resizing != nil || draggingClip != nil
-                    || draggingCue != nil || draggingSub != nil {
+                    || draggingCue != nil || draggingSub != nil || draggingPresence != nil {
                     model.registerUndoSnapshot(label: "Edit Timeline")
                 }
                 dragStartMarks = nil
@@ -589,6 +650,7 @@ struct StudioTimelineView: View {
                 draggingClip = nil
                 draggingCue = nil
                 draggingSub = nil
+                draggingPresence = nil
                 scrubZoomBase = nil
             }
     }
@@ -637,7 +699,27 @@ struct StudioTimelineView: View {
             model.scene.characters[ds.char].subs = subs
             return
         }
+        if let dp = draggingPresence {
+            let t = max(0, time(forX: value.location.x))
+            var events = presence(of: dp.row)
+            guard events.indices.contains(dp.index) else { return }
+            events[dp.index].t = (t * 10).rounded() / 10
+            setPresence(dp.row, events)
+            return
+        }
         if dragStartMarks == nil {
+            if let row = row(at: value.startLocation.y),
+               value.startLocation.y - laneTop(of: row) < presenceStripH {
+                // Grab an existing marker if close; the tap handler adds new ones.
+                let events = presence(of: row)
+                if let idx = events.indices.min(by: {
+                    abs(x(forTime: events[$0].t) - value.startLocation.x)
+                        < abs(x(forTime: events[$1].t) - value.startLocation.x)
+                }), abs(x(forTime: events[idx].t) - value.startLocation.x) < 8 {
+                    draggingPresence = (row, idx)
+                }
+                return
+            }
             if let st = subtitle(at: value.startLocation) {
                 let edge = 4.0
                 let startX = x(forTime: st.sub.start)
@@ -722,6 +804,23 @@ struct StudioTimelineView: View {
 
     private func handleTap(at point: CGPoint) {
         let y = point.y
+        if let row = row(at: y), y - laneTop(of: row) < presenceStripH, y >= headerHeight {
+            var events = presence(of: row)
+            let t = (time(forX: point.x) * 10).rounded() / 10
+            if let idx = events.indices.first(where: { abs(x(forTime: events[$0].t) - point.x) < 8 }) {
+                if isCommandDown() {
+                    model.registerUndoSnapshot(label: "Delete Presence Marker")
+                    events.remove(at: idx)
+                    setPresence(row, events)
+                }
+                return
+            }
+            model.registerUndoSnapshot(label: "Toggle Presence")
+            let visibleNow = events.isPresent(at: t)
+            events.append(VisibilityEvent(t: t, visible: !visibleNow))
+            setPresence(row, events)
+            return
+        }
         // Click on a clip/cue label → rename in place.
         if let c = clip(at: point), labelZone(forClipStart: c.start, at: point) {
             editingText = c.name
@@ -782,13 +881,13 @@ struct StudioTimelineView: View {
         let rowY = laneTop(of: row)
         switch row {
         case .image, .background:
-            return point.y <= rowY + 22
+            return point.y >= rowY + presenceStripH && point.y <= rowY + presenceStripH + 16
         case .character:
             let zones = characterLaneZones(h: height(of: row))
             let clipTop = rowY + zones.clipTop
             return point.y >= clipTop && point.y <= clipTop + 14
         default:
-            return point.y >= rowY + 4 && point.y <= rowY + 18
+            return point.y >= rowY + presenceStripH + 2 && point.y <= rowY + presenceStripH + 16
         }
     }
 
@@ -797,12 +896,12 @@ struct StudioTimelineView: View {
         let rowY = laneTop(of: row)
         switch row {
         case .image, .background:
-            return CGPoint(x: x(forTime: start) + 3, y: rowY + 7)
+            return CGPoint(x: x(forTime: start) + 3, y: rowY + presenceStripH + 3)
         case .character:
             let zones = characterLaneZones(h: height(of: row))
             return CGPoint(x: x(forTime: start) + 3, y: rowY + zones.clipTop + 1)
         default:
-            return CGPoint(x: x(forTime: start) + 3, y: rowY + 5)
+            return CGPoint(x: x(forTime: start) + 3, y: rowY + presenceStripH + 3)
         }
     }
 
@@ -851,9 +950,10 @@ struct StudioTimelineView: View {
     private func subtitle(at point: CGPoint) -> (char: Int, index: Int, sub: Subtitle)? {
         guard case .character(let i) = row(at: point.y) else { return nil }
         let rowY = laneTop(of: .character(i))
-        guard point.y >= rowY + 1, point.y <= rowY + captionStripH + 1 else { return nil }
+        guard point.y >= rowY + presenceStripH,
+              point.y <= rowY + presenceStripH + captionStripH else { return nil }
         for (si, sub) in model.scene.characters[i].subs.enumerated() {
-            let rect = CGRect(x: x(forTime: sub.start), y: rowY + 2,
+            let rect = CGRect(x: x(forTime: sub.start), y: rowY + presenceStripH + 1,
                               width: max(8, CGFloat(sub.dur) * pxPerSecond), height: captionStripH - 2)
             if rect.insetBy(dx: -2, dy: 0).contains(point) { return (i, si, sub) }
         }
@@ -875,8 +975,8 @@ struct StudioTimelineView: View {
             clipH = zones.clipH
         case .audio(let i):
             clips = model.scene.audioTracks[i].clips
-            top = rowY + 4
-            clipH = h - 8
+            top = rowY + presenceStripH + 2
+            clipH = h - presenceStripH - 6
         default: return nil
         }
         for clip in clips {
@@ -892,8 +992,9 @@ struct StudioTimelineView: View {
         let rowY = laneTop(of: row)
         let h = height(of: row)
         func hit(_ start: Double, _ dur: Double) -> Bool {
-            CGRect(x: x(forTime: start), y: rowY + 6,
-                   width: max(6, CGFloat(dur) * pxPerSecond), height: h - 12).contains(point)
+            CGRect(x: x(forTime: start), y: rowY + presenceStripH + 2,
+                   width: max(6, CGFloat(dur) * pxPerSecond),
+                   height: h - presenceStripH - 6).contains(point)
         }
         switch row {
         case .image(let i):

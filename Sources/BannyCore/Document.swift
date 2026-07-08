@@ -116,6 +116,28 @@ extension ShowDocument: Codable {
     }
 }
 
+/// A visibility toggle on a track's timeline: the track shows/hides from t onward.
+public struct VisibilityEvent: Codable, Equatable, Sendable {
+    public var t: Double
+    public var visible: Bool
+
+    public init(t: Double, visible: Bool) {
+        self.t = t
+        self.visible = visible
+    }
+}
+
+public extension Array where Element == VisibilityEvent {
+    /// Presence at time t: last toggle at or before t wins; default visible.
+    func isPresent(at t: Double) -> Bool {
+        var visible = true
+        for ev in self.sorted(by: { $0.t < $1.t }) {
+            if ev.t <= t { visible = ev.visible } else { break }
+        }
+        return visible
+    }
+}
+
 /// A reusable set asset (image or video) stored in the package's assets/ folder.
 public struct Asset: Codable, Equatable, Identifiable, Sendable {
     public enum Kind: String, Codable, Sendable { case image, video }
@@ -139,21 +161,25 @@ public struct ImageTrack: Codable, Equatable, Identifiable, Sendable {
     public var name: String
     public var hidden: Bool
     public var cues: [ImageCue]
+    public var presence: [VisibilityEvent]
 
-    public init(id: String, name: String, hidden: Bool = false, cues: [ImageCue] = []) {
+    public init(id: String, name: String, hidden: Bool = false, cues: [ImageCue] = [],
+                presence: [VisibilityEvent] = []) {
         self.id = id
         self.name = name
         self.hidden = hidden
         self.cues = cues
+        self.presence = presence
     }
 
-    private enum CodingKeys: String, CodingKey { case id, name, hidden, cues }
+    private enum CodingKeys: String, CodingKey { case id, name, hidden, cues, presence }
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         id = try c.decode(String.self, forKey: .id)
         name = try c.decode(String.self, forKey: .name)
         hidden = try c.decodeIfPresent(Bool.self, forKey: .hidden) ?? false
         cues = try c.decodeIfPresent([ImageCue].self, forKey: .cues) ?? []
+        presence = try c.decodeIfPresent([VisibilityEvent].self, forKey: .presence) ?? []
     }
 }
 
@@ -209,21 +235,25 @@ public struct BackgroundTrack: Codable, Equatable, Identifiable, Sendable {
     public var name: String
     public var hidden: Bool
     public var cues: [BackgroundCue]
+    public var presence: [VisibilityEvent]
 
-    public init(id: String, name: String, hidden: Bool = false, cues: [BackgroundCue] = []) {
+    public init(id: String, name: String, hidden: Bool = false, cues: [BackgroundCue] = [],
+                presence: [VisibilityEvent] = []) {
         self.id = id
         self.name = name
         self.hidden = hidden
         self.cues = cues
+        self.presence = presence
     }
 
-    private enum CodingKeys: String, CodingKey { case id, name, hidden, cues }
+    private enum CodingKeys: String, CodingKey { case id, name, hidden, cues, presence }
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         id = try c.decode(String.self, forKey: .id)
         name = try c.decode(String.self, forKey: .name)
         hidden = try c.decodeIfPresent(Bool.self, forKey: .hidden) ?? false
         cues = try c.decodeIfPresent([BackgroundCue].self, forKey: .cues) ?? []
+        presence = try c.decodeIfPresent([VisibilityEvent].self, forKey: .presence) ?? []
     }
 }
 
@@ -350,7 +380,7 @@ public struct SceneState: Equatable, Sendable {
 
     /// The backdrop to paint at time t: last visible background track's active cue wins.
     public func activeBackgroundCue(at t: Double) -> BackgroundCue? {
-        for track in backgroundTracks.reversed() where !track.hidden {
+        for track in backgroundTracks.reversed() where !track.hidden && track.presence.isPresent(at: t) {
             if let cue = track.cues.last(where: { t >= $0.start && t < $0.start + $0.dur }) {
                 return cue
             }
@@ -409,12 +439,15 @@ public struct Character: Equatable, Sendable {
     public var wobble: Double
     /// Hidden tracks stay in the document but don't render, play, or ship.
     public var hidden: Bool
+    /// Timed show/hide toggles (presence on stage over the timeline).
+    public var presence: [VisibilityEvent]
 
     public init(body: Body, x: Double = 0.5, depth: Double = 0, size: Double = 1, face: Int = 1,
                 baseOutfit: [Int: String] = [:], subs: [Subtitle] = [], clips: [AudioClip] = [],
                 events: [PerfEvent] = [], armedGroups: Set<EventGroup> = Set(EventGroup.allCases),
                 name: String = "", trackFx: Fx = .defaultTrack, recStart: StartPose? = nil,
-                speed: Double = 320, wobble: Double = 7, hidden: Bool = false) {
+                speed: Double = 320, wobble: Double = 7, hidden: Bool = false,
+                presence: [VisibilityEvent] = []) {
         self.body = body
         self.x = x
         self.depth = depth
@@ -431,13 +464,14 @@ public struct Character: Equatable, Sendable {
         self.speed = speed
         self.wobble = wobble
         self.hidden = hidden
+        self.presence = presence
     }
 }
 
 extension Character: Codable {
     private enum CodingKeys: String, CodingKey {
         case body, x, depth, size, face, baseOutfit, subs, clips, events,
-             armedGroups, name, trackFx, recStart, speed, wobble, hidden
+             armedGroups, name, trackFx, recStart, speed, wobble, hidden, presence
     }
 
     public init(from decoder: Decoder) throws {
@@ -459,6 +493,7 @@ extension Character: Codable {
         speed = try c.decodeIfPresent(Double.self, forKey: .speed) ?? 320
         wobble = try c.decodeIfPresent(Double.self, forKey: .wobble) ?? 7
         hidden = try c.decodeIfPresent(Bool.self, forKey: .hidden) ?? false
+        presence = try c.decodeIfPresent([VisibilityEvent].self, forKey: .presence) ?? []
     }
 }
 
@@ -548,17 +583,19 @@ public struct AudioTrack: Codable, Equatable, Sendable {
     public var fx: Fx
     public var clips: [AudioClip]
     public var hidden: Bool
+    public var presence: [VisibilityEvent]
 
     public init(id: String, name: String, fx: Fx = .defaultTrack, clips: [AudioClip] = [],
-                hidden: Bool = false) {
+                hidden: Bool = false, presence: [VisibilityEvent] = []) {
         self.id = id
         self.name = name
         self.fx = fx
         self.clips = clips
         self.hidden = hidden
+        self.presence = presence
     }
 
-    private enum CodingKeys: String, CodingKey { case id, name, fx, clips, hidden }
+    private enum CodingKeys: String, CodingKey { case id, name, fx, clips, hidden, presence }
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         id = try c.decode(String.self, forKey: .id)
@@ -566,6 +603,7 @@ public struct AudioTrack: Codable, Equatable, Sendable {
         fx = try c.decodeIfPresent(Fx.self, forKey: .fx) ?? .defaultTrack
         clips = try c.decodeIfPresent([AudioClip].self, forKey: .clips) ?? []
         hidden = try c.decodeIfPresent(Bool.self, forKey: .hidden) ?? false
+        presence = try c.decodeIfPresent([VisibilityEvent].self, forKey: .presence) ?? []
     }
 }
 

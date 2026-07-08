@@ -48,7 +48,8 @@ struct StageView: View {
     private func drawSelectionTags(context: GraphicsContext, size: CGSize, scene: SceneState) {
         let W = Double(size.width)
         let sim = model.simulator
-        for i in scene.characters.indices where !scene.characters[i].hidden {
+        for i in scene.characters.indices
+            where !scene.characters[i].hidden && scene.characters[i].presence.isPresent(at: model.time) {
             let pose = sim.pose(characterIndex: i, at: model.time)
             let label = Text("\((i + 1) % 10)")
                 .font(.system(size: 11, weight: .bold, design: .monospaced))

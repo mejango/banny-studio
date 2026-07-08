@@ -59,7 +59,7 @@ public struct FrameRenderer: Sendable {
 
         // Image cues (between backdrop and characters).
         if let imageAsset {
-            for track in scene.imageTracks where !track.hidden {
+            for track in scene.imageTracks where !track.hidden && track.presence.isPresent(at: t) {
                 for cue in track.cues where t >= cue.start && t < cue.start + cue.dur {
                     guard let img = imageAsset(cue.assetID) else { continue }
                     let p = cue.placement(at: t)
@@ -73,7 +73,8 @@ public struct FrameRenderer: Sendable {
 
         // Poses + placements for every character, painter-sorted by depth.
         var entries: [(index: Int, pose: CharacterPose, placement: StageLayout.Placement)] = []
-        for i in scene.characters.indices where !scene.characters[i].hidden {
+        for i in scene.characters.indices
+            where !scene.characters[i].hidden && scene.characters[i].presence.isPresent(at: t) {
             let pose = sim.pose(characterIndex: i, at: t)
             let placement = StageLayout.place(pose: pose, character: scene.characters[i],
                                               scene: scene, stageWidth: W, virtualHeight: H)
