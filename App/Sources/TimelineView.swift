@@ -137,6 +137,7 @@ struct StudioTimelineView: View {
     private var laneLabelWidth: CGFloat { CGFloat(laneLabelWidthStore) }
     @State private var resizingGutter = false
     @State private var scrubZoomBase: Double?
+    @State private var pinchZoomBase: Double?
     private let rulerHeight: CGFloat = 18
     private let scrubHeight: CGFloat = 16
     private let defaultLaneHeight: CGFloat = 52
@@ -177,6 +178,14 @@ struct StudioTimelineView: View {
                 }
             }
             .background(Color(red: 0.078, green: 0.078, blue: 0.11))
+            .simultaneousGesture(
+                MagnifyGesture()
+                    .onChanged { g in
+                        let base = pinchZoomBase ?? zoom
+                        pinchZoomBase = base
+                        zoom = min(16, max(1, base * g.magnification))
+                    }
+                    .onEnded { _ in pinchZoomBase = nil })
         }
         #if os(macOS)
         .onDeleteCommand { deleteSelection() }
@@ -410,9 +419,6 @@ struct StudioTimelineView: View {
             drawPlayhead(ctx: ctx, size: size)
         }
         .gesture(interaction)
-        .simultaneousGesture(MagnifyGesture().onChanged { g in
-            zoom = min(16, max(1, zoom * g.velocity / 60 + zoom))
-        })
     }
 
     // MARK: - Drawing
