@@ -115,6 +115,7 @@ struct StudioTimelineView: View {
     @State private var resizing: (mark: PerfMark, leading: Bool, baseEvents: [PerfEvent])?
     @State private var draggingClip: (id: String, baseStart: Double)?
     @State private var draggingCue: (row: TrackRow, cueID: String, baseStart: Double, baseDur: Double, edge: Int)?
+    @State private var draggingSub: (char: Int, index: Int, baseStart: Double, baseDur: Double, edge: Int)?
     @State private var resizingTrack: (key: String, baseHeight: CGFloat)?
     @State private var peakCache = PeakCache()
     /// Per-track lane heights (session-scoped), keyed by TrackRow.key.
@@ -318,12 +319,14 @@ struct StudioTimelineView: View {
         }
     }
 
+    private let captionStripH: CGFloat = 13
+
     private func drawCharacterLane(_ i: Int, y: CGFloat, h: CGFloat, ctx: GraphicsContext) {
         let character = model.scene.characters[i]
-        let clipZone: CGFloat = h >= 44 ? 18 : 0
-        let subH = (h - 14 - clipZone) / 7
+        let clipZone: CGFloat = h >= 48 ? 18 : 0
+        let subH = (h - captionStripH - 6 - clipZone) / 7
         for mark in TimelineMath.marks(for: character.events, character: i, duration: model.duration) {
-            let my = y + 12 + CGFloat(mark.code.group.laneIndex) * subH + 2
+            let my = y + captionStripH + 3 + CGFloat(mark.code.group.laneIndex) * subH + 2
             let rect = CGRect(x: x(forTime: mark.start), y: my,
                               width: max(2, CGFloat(mark.end - mark.start) * pxPerSecond),
                               height: max(2, subH - 1))
@@ -336,7 +339,7 @@ struct StudioTimelineView: View {
         for ev in character.events {
             guard case .outfit(let t, _, _) = ev else { continue }
             let cx = x(forTime: t)
-            let cy = y + 12 + 6 * subH + subH / 2
+            let cy = y + captionStripH + 3 + 6 * subH + subH / 2
             ctx.fill(Path(ellipseIn: CGRect(x: cx - 3, y: cy - 3, width: 6, height: 6)),
                      with: .color(.white))
         }
@@ -345,11 +348,19 @@ struct StudioTimelineView: View {
                 drawClip(clip, laneY: y, laneH: h, ctx: ctx)
             }
         }
-        for sub in character.subs {
+        for (si, sub) in character.subs.enumerated() {
             let rect = CGRect(x: x(forTime: sub.start), y: y + 2,
-                              width: CGFloat(sub.dur) * pxPerSecond, height: 8)
+                              width: max(8, CGFloat(sub.dur) * pxPerSecond), height: captionStripH - 2)
+            let selected = draggingSub?.char == i && draggingSub?.index == si
             ctx.fill(Path(roundedRect: rect, cornerRadius: 2),
-                     with: .color(Color(red: 1, green: 0.97, blue: 0.9).opacity(0.35)))
+                     with: .color(Color(red: 1, green: 0.97, blue: 0.9).opacity(selected ? 0.75 : 0.5)))
+            if rect.width > 30 {
+                var clipped = ctx
+                clipped.clip(to: Path(rect.insetBy(dx: 3, dy: 0)))
+                clipped.draw(Text(sub.text).font(.system(size: 8, weight: .medium))
+                                .foregroundStyle(Color(red: 0.1, green: 0.1, blue: 0.05)),
+                             at: CGPoint(x: rect.minX + 4, y: rect.minY + 1.5), anchor: .topLeading)
+            }
         }
     }
 
@@ -512,13 +523,15 @@ struct StudioTimelineView: View {
                 if value.translation.width.magnitude < 3, value.translation.height.magnitude < 3 {
                     handleTap(at: value.location)
                 }
-                if dragStartMarks != nil || resizing != nil || draggingClip != nil || draggingCue != nil {
+                if dragStartMarks != nil || resizing != nil || draggingClip != nil
+                    || draggingCue != nil || draggingSub != nil {
                     model.registerUndoSnapshot(label: "Edit Timeline")
                 }
                 dragStartMarks = nil
                 resizing = nil
                 draggingClip = nil
                 draggingCue = nil
+                draggingSub = nil
                 resizingTrack = nil
                 resizingGutter = false
             }
@@ -551,7 +564,33 @@ struct StudioTimelineView: View {
             applyCueDrag(dc, translation: Double(value.translation.width / pxPerSecond))
             return
         }
+        if let ds = draggingSub {
+            let dt = Double(value.translation.width / pxPerSecond)
+            var subs = model.scene.characters[ds.char].subs
+            guard subs.indices.contains(ds.index) else { return }
+            switch ds.edge {
+            case -1:
+                let newStart = max(0, min(ds.baseStart + dt, ds.baseStart + ds.baseDur - 0.2))
+                subs[ds.index].dur = ds.baseDur + (ds.baseStart - newStart)
+                subs[ds.index].start = newStart
+            case 1:
+                subs[ds.index].dur = max(0.2, ds.baseDur + dt)
+            default:
+                subs[ds.index].start = max(0, ds.baseStart + dt)
+            }
+            model.scene.characters[ds.char].subs = subs
+            return
+        }
         if dragStartMarks == nil {
+            if let st = subtitle(at: value.startLocation) {
+                let edge = 4.0
+                let startX = x(forTime: st.sub.start)
+                let endX = x(forTime: st.sub.start + st.sub.dur)
+                let e = abs(value.startLocation.x - startX) < edge ? -1
+                    : abs(value.startLocation.x - endX) < edge ? 1 : 0
+                draggingSub = (st.char, st.index, st.sub.start, st.sub.dur, e)
+                return
+            }
             if let hit = mark(at: value.startLocation) {
                 let edge = 4.0
                 let startX = x(forTime: hit.start)
@@ -748,14 +787,27 @@ struct StudioTimelineView: View {
         guard case .character(let i) = row(at: point.y) else { return nil }
         let rowY = laneTop(of: .character(i))
         let h = height(of: .character(i))
-        let clipZone: CGFloat = h >= 44 ? 18 : 0
-        let subH = (h - 14 - clipZone) / 7
+        let clipZone: CGFloat = h >= 48 ? 18 : 0
+        let subH = (h - captionStripH - 6 - clipZone) / 7
         for m in TimelineMath.marks(for: model.scene.characters[i].events, character: i,
                                     duration: model.duration) {
-            let my = rowY + 12 + CGFloat(m.code.group.laneIndex) * subH + 2
+            let my = rowY + captionStripH + 3 + CGFloat(m.code.group.laneIndex) * subH + 2
             let rect = CGRect(x: x(forTime: m.start), y: my,
                               width: max(6, CGFloat(m.end - m.start) * pxPerSecond), height: max(4, subH - 1))
             if rect.insetBy(dx: -2, dy: -2).contains(point) { return m }
+        }
+        return nil
+    }
+
+    /// Caption bar under the pointer (top strip of a character lane).
+    private func subtitle(at point: CGPoint) -> (char: Int, index: Int, sub: Subtitle)? {
+        guard case .character(let i) = row(at: point.y) else { return nil }
+        let rowY = laneTop(of: .character(i))
+        guard point.y >= rowY + 1, point.y <= rowY + captionStripH + 1 else { return nil }
+        for (si, sub) in model.scene.characters[i].subs.enumerated() {
+            let rect = CGRect(x: x(forTime: sub.start), y: rowY + 2,
+                              width: max(8, CGFloat(sub.dur) * pxPerSecond), height: captionStripH - 2)
+            if rect.insetBy(dx: -2, dy: 0).contains(point) { return (i, si, sub) }
         }
         return nil
     }
