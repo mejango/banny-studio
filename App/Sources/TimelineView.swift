@@ -889,7 +889,7 @@ struct StudioTimelineView: View {
                     return
                 }
                 if resizingGutter {
-                    laneLabelWidthStore = min(300, max(60, Double(value.location.x)))
+                    laneLabelWidthStore = min(300, max(max(60, neededGutterWidth), Double(value.location.x)))
                     return
                 }
                 if let tr = resizingTrack {
