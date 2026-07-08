@@ -96,6 +96,9 @@ struct WideEditor: View {
                 .foregroundStyle(lightMode ? Color.black
                                            : Color(red: 0.92, green: 0.92, blue: 0.92))
             ThemeToggle()
+                // kerning(2) trails the wordmark's last glyph; pull back so the
+                // icon sits at the same visual gap as logo-to-title.
+                .padding(.leading, -4)
             Spacer()
             SaveBadge(indicator: file.saveIndicator, lightMode: lightMode)
             ProjectMenu()
