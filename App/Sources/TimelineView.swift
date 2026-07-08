@@ -132,6 +132,7 @@ struct StudioTimelineView: View {
     @AppStorage("laneLabelWidth") private var laneLabelWidthStore: Double = 110
     private var laneLabelWidth: CGFloat { CGFloat(laneLabelWidthStore) }
     @State private var resizingGutter = false
+    @State private var scrubZoomBase: Double?
     private let rulerHeight: CGFloat = 18
     private let scrubHeight: CGFloat = 16
     private let defaultLaneHeight: CGFloat = 52
@@ -139,10 +140,14 @@ struct StudioTimelineView: View {
     var body: some View {
         VStack(spacing: 0) {
             TransportBar(model: model, file: file)
-            ScrollView([.horizontal, .vertical]) {
-                ZStack(alignment: .topLeading) {
-                    timelineCanvas
-                    if let editing = editingLabel {
+            ScrollView(.vertical) {
+                HStack(alignment: .top, spacing: 0) {
+                    gutterCanvas
+                        .frame(width: laneLabelWidth, height: headerHeight + totalLaneHeight + 20)
+                    ScrollView(.horizontal) {
+                        ZStack(alignment: .topLeading) {
+                            timelineCanvas
+                            if let editing = editingLabel {
                         TextField("", text: $editingText)
                             .textFieldStyle(.plain)
                             .font(.system(size: 9, weight: .medium))
@@ -155,15 +160,17 @@ struct StudioTimelineView: View {
                             #if os(macOS)
                             .onExitCommand { editingLabel = nil }
                             #endif
-                            .offset(x: editing.origin.x, y: editing.origin.y)
-                            .onAppear { labelFocused = true }
-                            .onChange(of: labelFocused) { _, focused in
-                                if !focused { commitLabelEdit() }
+                                    .offset(x: editing.origin.x, y: editing.origin.y)
+                                    .onAppear { labelFocused = true }
+                                    .onChange(of: labelFocused) { _, focused in
+                                        if !focused { commitLabelEdit() }
+                                    }
                             }
+                        }
+                        .frame(width: max(600, contentWidth + 40),
+                               height: headerHeight + totalLaneHeight + 20, alignment: .topLeading)
                     }
                 }
-                .frame(width: max(600, laneLabelWidth + contentWidth),
-                       height: headerHeight + totalLaneHeight + 20, alignment: .topLeading)
             }
             .background(Color(red: 0.078, green: 0.078, blue: 0.11))
         }
@@ -225,8 +232,78 @@ struct StudioTimelineView: View {
 
     private var pxPerSecond: CGFloat { 30 * zoom }
     private var contentWidth: CGFloat { CGFloat(model.duration) * pxPerSecond }
-    private func x(forTime t: Double) -> CGFloat { laneLabelWidth + CGFloat(t) * pxPerSecond }
-    private func time(forX x: CGFloat) -> Double { max(0, Double((x - laneLabelWidth) / pxPerSecond)) }
+    private func x(forTime t: Double) -> CGFloat { 4 + CGFloat(t) * pxPerSecond }
+    private func time(forX x: CGFloat) -> Double { max(0, Double((x - 4) / pxPerSecond)) }
+
+    /// Pinned label gutter: names, eye toggles, track-height pills, width handle.
+    private var gutterCanvas: some View {
+        Canvas { ctx, size in
+            ctx.fill(Path(CGRect(origin: .zero, size: size)),
+                     with: .color(Color(red: 0.045, green: 0.045, blue: 0.07)))
+            ctx.stroke(Path { p in
+                p.move(to: CGPoint(x: size.width - 0.5, y: 0))
+                p.addLine(to: CGPoint(x: size.width - 0.5, y: size.height))
+            }, with: .color(Color(red: 0.24, green: 0.24, blue: 0.33)), lineWidth: 1)
+            for row in rows {
+                let y = laneTop(of: row)
+                let h = height(of: row)
+                let hidden = isHidden(row)
+                ctx.stroke(Path { p in
+                    p.move(to: CGPoint(x: 0, y: y + h))
+                    p.addLine(to: CGPoint(x: size.width, y: y + h))
+                }, with: .color(.black), lineWidth: 1)
+                let pillActive = resizingTrack?.key == row.key(in: model.scene)
+                ctx.fill(Path(roundedRect: CGRect(x: size.width / 2 - 16, y: y + h - 4.5,
+                                                  width: 32, height: 3), cornerRadius: 1.5),
+                         with: .color(Color(white: pillActive ? 0.8 : 0.4)))
+                var labelCtx = ctx
+                if hidden { labelCtx.opacity = 0.35 }
+                labelCtx.draw(Text(label(for: row)).font(.system(size: 10, weight: .semibold))
+                                .foregroundStyle(labelColor(for: row)),
+                              at: CGPoint(x: 8, y: y + 6), anchor: .topLeading)
+                ctx.draw(Text(Image(systemName: hidden ? "eye.slash" : "eye"))
+                            .font(.system(size: 9))
+                            .foregroundStyle(hidden ? Color.gray : Color(white: 0.55)),
+                         at: CGPoint(x: size.width - 14, y: y + 12))
+            }
+        }
+        .gesture(gutterInteraction)
+    }
+
+    private var gutterInteraction: some Gesture {
+        DragGesture(minimumDistance: 0)
+            .onChanged { value in
+                if editingLabel != nil { commitLabelEdit(); return }
+                if resizingGutter {
+                    laneLabelWidthStore = min(300, max(60, Double(value.location.x)))
+                    return
+                }
+                if let tr = resizingTrack {
+                    let delta = value.location.y - value.startLocation.y
+                    trackHeights[tr.key] = min(220, max(tr.minHeight, tr.baseHeight + delta))
+                    return
+                }
+                if abs(value.startLocation.x - laneLabelWidth) < 6 {
+                    resizingGutter = true
+                    return
+                }
+                if let row = rowNearBottomEdge(of: value.startLocation.y) {
+                    resizingTrack = (row.key(in: model.scene), height(of: row), minHeight(of: row))
+                }
+            }
+            .onEnded { value in
+                if value.translation.width.magnitude < 3, value.translation.height.magnitude < 3,
+                   let row = row(at: value.location.y) {
+                    if value.location.x > laneLabelWidth - 24 {
+                        toggleHidden(row)
+                    } else if case .character(let i) = row {
+                        model.selection = [i]
+                    }
+                }
+                resizingTrack = nil
+                resizingGutter = false
+            }
+    }
 
     private var timelineCanvas: some View {
         Canvas { ctx, size in
@@ -245,8 +322,6 @@ struct StudioTimelineView: View {
     private func drawRuler(ctx: GraphicsContext, size: CGSize) {
         ctx.fill(Path(CGRect(x: 0, y: 0, width: size.width, height: rulerHeight)),
                  with: .color(Color(red: 0.055, green: 0.055, blue: 0.086)))
-        ctx.fill(Path(CGRect(x: 0, y: 0, width: laneLabelWidth, height: headerHeight)),
-                 with: .color(Color(red: 0.045, green: 0.045, blue: 0.07)))
         let step: Double = zoom >= 8 ? 1 : zoom >= 3 ? 5 : 10
         var t: Double = 0
         while t <= model.duration {
@@ -272,29 +347,6 @@ struct StudioTimelineView: View {
         }
         ctx.stroke(Path { $0.move(to: CGPoint(x: 0, y: y + h)); $0.addLine(to: CGPoint(x: size.width, y: y + h)) },
                    with: .color(.black), lineWidth: 1)
-
-        // Gutter: its own strip, divided from the track content.
-        ctx.fill(Path(CGRect(x: 0, y: y, width: laneLabelWidth, height: h)),
-                 with: .color(Color(red: 0.045, green: 0.045, blue: 0.07)))
-        ctx.stroke(Path { p in
-            p.move(to: CGPoint(x: laneLabelWidth - 0.5, y: y))
-            p.addLine(to: CGPoint(x: laneLabelWidth - 0.5, y: y + h))
-        }, with: .color(Color(red: 0.24, green: 0.24, blue: 0.33)), lineWidth: 1)
-        // Grab pill on the lane's bottom edge (drag to grow/shrink this track).
-        let pillActive = resizingTrack?.key == row.key(in: model.scene)
-        ctx.fill(Path(roundedRect: CGRect(x: laneLabelWidth / 2 - 16, y: y + h - 4.5,
-                                          width: 32, height: 3), cornerRadius: 1.5),
-                 with: .color(Color(white: pillActive ? 0.8 : 0.4)))
-
-        var labelCtx = ctx
-        if hidden { labelCtx.opacity = 0.35 }
-        labelCtx.draw(Text(label(for: row)).font(.system(size: 10, weight: .semibold))
-                        .foregroundStyle(labelColor(for: row)),
-                      at: CGPoint(x: 8, y: y + 6), anchor: .topLeading)
-        ctx.draw(Text(Image(systemName: hidden ? "eye.slash" : "eye"))
-                    .font(.system(size: 9))
-                    .foregroundStyle(hidden ? Color.gray : Color(white: 0.55)),
-                 at: CGPoint(x: laneLabelWidth - 14, y: y + 12))
 
         var content = ctx
         if hidden { content.opacity = 0.3 }
@@ -511,28 +563,14 @@ struct StudioTimelineView: View {
                     return
                 }
                 let y = value.startLocation.y
-                if resizingGutter {
-                    laneLabelWidthStore = min(300, max(60, Double(value.location.x)))
-                    return
-                }
-                if let tr = resizingTrack {
-                    let delta = value.location.y - value.startLocation.y
-                    trackHeights[tr.key] = min(220, max(tr.minHeight, tr.baseHeight + delta))
-                    return
-                }
-                if abs(value.startLocation.x - laneLabelWidth) < 5, resizingTrack == nil,
-                   dragStartMarks == nil, draggingClip == nil, draggingCue == nil, resizing == nil {
-                    resizingGutter = true
-                    return
-                }
                 if y < headerHeight {
+                    // Horizontal scrubs; vertical zooms (down = in, up = out, web-style).
                     model.seek(to: time(forX: value.location.x))
-                } else if value.startLocation.x < laneLabelWidth,
-                          dragStartMarks == nil, draggingClip == nil,
-                          draggingCue == nil, resizing == nil {
-                    // Near a lane bottom edge in the label column → resize that track.
-                    if let row = rowNearBottomEdge(of: y) {
-                        resizingTrack = (row.key(in: model.scene), height(of: row), minHeight(of: row))
+                    let base = scrubZoomBase ?? zoom
+                    scrubZoomBase = base
+                    let dy = Double(value.translation.height)
+                    if abs(dy) > 8 {
+                        zoom = min(16, max(1, base * pow(2, dy / 90)))
                     }
                 } else {
                     handleLaneDrag(value)
@@ -551,8 +589,7 @@ struct StudioTimelineView: View {
                 draggingClip = nil
                 draggingCue = nil
                 draggingSub = nil
-                resizingTrack = nil
-                resizingGutter = false
+                scrubZoomBase = nil
             }
     }
 
@@ -685,15 +722,6 @@ struct StudioTimelineView: View {
 
     private func handleTap(at point: CGPoint) {
         let y = point.y
-        if y >= headerHeight, point.x < laneLabelWidth {
-            guard let row = row(at: y) else { return }
-            if point.x > laneLabelWidth - 22 {
-                toggleHidden(row)
-            } else if case .character(let i) = row {
-                model.selection = [i]
-            }
-            return
-        }
         // Click on a clip/cue label → rename in place.
         if let c = clip(at: point), labelZone(forClipStart: c.start, at: point) {
             editingText = c.name
