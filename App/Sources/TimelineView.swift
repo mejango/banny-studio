@@ -190,6 +190,7 @@ struct StudioTimelineView: View {
     var body: some View {
         VStack(spacing: 0) {
             TransportBar(model: model, file: showShip ? file : nil)
+            VStack(spacing: 0) {
             HStack(spacing: 0) {
                 cornerCell
                 headerBand
@@ -309,6 +310,19 @@ struct StudioTimelineView: View {
             .frame(width: laneLabelWidth)
             .frame(maxHeight: .infinity, alignment: .topLeading)
             .clipped()
+            }
+            }
+            // ONE playhead line across the band and the lanes — a single view,
+            // so it cannot misalign with itself.
+            .overlay(alignment: .topLeading) {
+                let px = laneLabelWidth + x(forTime: model.time) - scrollOffset.x
+                Rectangle()
+                    .fill(theme.playhead)
+                    .frame(width: 1.5)
+                    .frame(maxHeight: .infinity)
+                    .offset(x: px - 0.75)
+                    .opacity(px >= laneLabelWidth ? 1 : 0)
+                    .allowsHitTesting(false)
             }
         }
         .background(theme.surface)
@@ -570,11 +584,6 @@ struct StudioTimelineView: View {
             drawRuler(ctx: ctx, size: CGSize(width: fullW, height: size.height))
             drawExportRow(ctx: ctx, size: CGSize(width: fullW, height: size.height))
             drawCaptionsRow(ctx: ctx, size: CGSize(width: fullW, height: size.height))
-            let px = x(forTime: model.time)
-            ctx.stroke(Path { p in
-                p.move(to: CGPoint(x: px, y: 0))
-                p.addLine(to: CGPoint(x: px, y: size.height))
-            }, with: .color(theme.playhead), lineWidth: 1.5)
         }
         .clipped()
         .overlay(alignment: .topLeading) {
@@ -1048,9 +1057,6 @@ struct StudioTimelineView: View {
     private var timelineCanvas: some View {
         Canvas { ctx, size in
             for row in rows { drawLane(row, ctx: ctx, size: size) }
-        }
-        .overlay(alignment: .topLeading) {
-            PlayheadOverlay(model: model, pxPerSecond: pxPerSecond, color: theme.playhead)
         }
         .gesture(interaction)
     }
@@ -1820,7 +1826,11 @@ struct StudioTimelineView: View {
                 model.selectedClips = [c.id]
             }
         } else if let (row, cue) = cue(at: point) {
-            selectCue(row: row, id: cue.id)
+            if splitting, case .background = row {
+                model.splitBackgroundCue(id: cue.id, at: time(forX: point.x))
+            } else {
+                selectCue(row: row, id: cue.id)
+            }
         } else {
             model.selectedMarks = []
             model.selectedClips = []
@@ -2258,23 +2268,4 @@ struct GutterWheelRedirect: NSViewRepresentable {
 final class TLOffsets {
     var x: CGFloat = 0
     var y: CGFloat = 0
-}
-
-/// The playhead as its own observer, so 60fps time updates during playback
-/// repaint one thin line instead of the whole lanes canvas.
-struct PlayheadOverlay: View {
-    let model: StudioModel
-    let pxPerSecond: CGFloat
-    let color: Color
-
-    var body: some View {
-        Rectangle()
-            .fill(color)
-            .frame(width: 1.5)
-            .frame(maxHeight: .infinity)
-            // Center on the time like the band's stroked line (else it sits
-            // half a linewidth right of the ruler playhead).
-            .offset(x: 1 + CGFloat(model.time) * pxPerSecond - 0.75)
-            .allowsHitTesting(false)
-    }
 }

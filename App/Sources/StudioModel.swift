@@ -552,6 +552,25 @@ final class StudioModel {
         selectedImageCue = cue.id
     }
 
+    /// ⌘-click on a background cue: split it at t (select the second half).
+    func splitBackgroundCue(id: String, at t: Double) {
+        for ti in scene.backgroundTracks.indices {
+            guard let ci = scene.backgroundTracks[ti].cues.firstIndex(where: { $0.id == id }) else { continue }
+            var first = scene.backgroundTracks[ti].cues[ci]
+            guard t > first.start + 0.1, t < first.start + first.dur - 0.1 else { return }
+            registerUndoSnapshot(label: "Split Background")
+            var second = first
+            second.id = ShowDocumentFile.newID()
+            second.start = t
+            second.dur = first.start + first.dur - t
+            first.dur = t - first.start
+            scene.backgroundTracks[ti].cues[ci] = first
+            scene.backgroundTracks[ti].cues.insert(second, at: ci + 1)
+            selectedBackgroundCue = second.id
+            return
+        }
+    }
+
     func addBackgroundCue(assetID: String, assetName: String, at startTime: Double? = nil) {
         let time = startTime ?? self.time
         registerUndoSnapshot(label: "Set Background")
