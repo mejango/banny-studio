@@ -1798,7 +1798,9 @@ struct TransportBar: View {
                 .padding(.trailing, 12)
                 Text(recTargetNames)
                     .font(.system(size: 10, weight: .bold))
-                    .foregroundStyle(model.recording ? .red : .orange)
+                    .foregroundStyle(model.recording ? Color.red
+                                     : lightMode ? Color(red: 0.68, green: 0.42, blue: 0)
+                                     : Color.orange)
                     .lineLimit(1)
                 let pose = livePose
                 ForEach(EventGroup.allCases, id: \.self) { group in
@@ -1903,12 +1905,14 @@ struct TransportBar: View {
                         }
                     }
                 }
-                .foregroundStyle(armed ? Color.black.opacity(0.85) : tint.opacity(0.9))
+                .foregroundStyle(armed ? Color.black.opacity(lightMode ? 0.95 : 0.85)
+                                        : tint.opacity(0.9))
                 .padding(.horizontal, 6).padding(.vertical, 3)
-                .background(armed ? tint : tint.opacity(active ? 0.3 : 0.12),
+                .background(armed ? tint.opacity(lightMode ? 0.42 : 1)
+                                  : tint.opacity(active ? 0.3 : 0.12),
                             in: RoundedRectangle(cornerRadius: 4))
                 .overlay(RoundedRectangle(cornerRadius: 4)
-                    .stroke(tint.opacity(armed ? 0 : 0.6), lineWidth: 1))
+                    .stroke(tint.opacity(armed ? (lightMode ? 0.8 : 0) : 0.6), lineWidth: 1))
                 .shadow(color: tint.opacity(active ? 0.85 : 0), radius: active ? 5 : 0)
                 .brightness(active ? 0.06 : 0)
                 .animation(.easeOut(duration: 0.12), value: active)
