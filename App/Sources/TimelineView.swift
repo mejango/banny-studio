@@ -183,7 +183,7 @@ struct StudioTimelineView: View {
     @State private var tlProxy: ScrollViewProxy?
     @State private var tlViewport: CGSize = .zero
     private var scrollOffset: CGPoint { CGPoint(x: offsets.x, y: offsets.y) }
-    private let rulerHeight: CGFloat = 22
+    private let rulerHeight: CGFloat = 30
     private let scrubHeight: CGFloat = 0
     private let defaultLaneHeight: CGFloat = 52
 
@@ -1043,11 +1043,11 @@ struct StudioTimelineView: View {
         var t: Double = 0
         while t <= model.duration {
             let px = x(forTime: t)
-            ctx.stroke(Path { $0.move(to: CGPoint(x: px, y: top + 10))
+            ctx.stroke(Path { $0.move(to: CGPoint(x: px, y: top + 16))
                               $0.addLine(to: CGPoint(x: px, y: top + rulerHeight)) },
                        with: .color(.gray), lineWidth: 1)
             ctx.draw(Text("\(Int(t))s").font(.system(size: 9)).foregroundStyle(theme.mutedText),
-                     at: CGPoint(x: px + 12, y: top + 7))
+                     at: CGPoint(x: px + 12, y: top + 10))
             t += step
         }
     }
