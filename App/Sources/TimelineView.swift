@@ -272,7 +272,9 @@ struct StudioTimelineView: View {
                         TrackCardButton(model: model, file: file, row: row, cardHeight: cardH)
                             .offset(x: 10, y: laneTop(of: row) + presenceStripH + 4 - scrollOffset.y)
                     }
-                    if case .character(let ci) = row, mismatch {
+                    if case .character(let ci) = row, mismatch,
+                       let c = model.scene.characters[safe: ci] {
+                        let lines = CGFloat(3 + mixReadout(c.trackFx).count)
                         Button("Set start position") { model.commitStartPose(characterIndex: ci) }
                             .buttonStyle(.plain)
                             .font(.system(size: 9, weight: .semibold))
@@ -282,7 +284,7 @@ struct StudioTimelineView: View {
                             .overlay(Capsule().stroke(Color.orange.opacity(0.55), lineWidth: 1))
                             .help("The character isn't at its saved start — save where it stands now")
                             .offset(x: 12 + (cardH * 30 / 54).rounded() + 10,
-                                    y: laneTop(of: row) + height(of: row) - wardrobeStripH - 24
+                                    y: laneTop(of: row) + presenceStripH + 13 + 13 * lines + 2
                                         - scrollOffset.y)
                     }
                 }
@@ -847,7 +849,7 @@ struct StudioTimelineView: View {
                 var readoutBottomPad: CGFloat = 6
                 if case .character(let ci) = row, let c = model.scene.characters[safe: ci] {
                     let mismatch = model.startPoseMismatch(characterIndex: ci)
-                    if mismatch { readoutBottomPad = 32 } // the button's strip
+                    if mismatch { readoutBottomPad = 30 } // the button's line
                     let available = h - presenceStripH - 16 - (mismatch ? 26 : 0)
                     if available >= 26, size.width >= 120 {
                         readoutX = 12 + (min(available, 160) * 30 / 54).rounded() + 10
