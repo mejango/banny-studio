@@ -116,7 +116,7 @@ struct StudioTimelineView: View {
     @State private var draggingClip: (id: String, baseStart: Double)?
     @State private var draggingCue: (row: TrackRow, cueID: String, baseStart: Double, baseDur: Double, edge: Int)?
     @State private var draggingSub: (char: Int, index: Int, baseStart: Double, baseDur: Double, edge: Int)?
-    @State private var resizingTrack: (key: String, baseHeight: CGFloat)?
+    @State private var resizingTrack: (key: String, baseHeight: CGFloat, minHeight: CGFloat)?
     @State private var peakCache = PeakCache()
     /// Per-track lane heights (session-scoped), keyed by TrackRow.key.
     @State private var trackHeights: [String: CGFloat] = [:]
@@ -189,8 +189,15 @@ struct StudioTimelineView: View {
 
     private var headerHeight: CGFloat { rulerHeight + scrubHeight }
 
+    private func minHeight(of row: TrackRow) -> CGFloat {
+        if case .character = row { return 66 }   // captions + audio + 7 event rows
+        return 32
+    }
+
     private func height(of row: TrackRow) -> CGFloat {
-        trackHeights[row.key(in: model.scene)] ?? defaultLaneHeight
+        let base: CGFloat
+        if case .character = row { base = 72 } else { base = defaultLaneHeight }
+        return max(minHeight(of: row), trackHeights[row.key(in: model.scene)] ?? base)
     }
 
     private var totalLaneHeight: CGFloat {
@@ -325,7 +332,7 @@ struct StudioTimelineView: View {
     /// the seven event sub-lanes. Everything gets its own band — no overlap.
     private func characterLaneZones(h: CGFloat) -> (clipTop: CGFloat, clipH: CGFloat,
                                                     eventTop: CGFloat, subH: CGFloat) {
-        let clipH: CGFloat = h >= 56 ? min(26, (h - captionStripH - 20) * 0.4) : 0
+        let clipH: CGFloat = min(26, max(14, (h - captionStripH - 20) * 0.4))
         let clipTop = captionStripH + 2
         let eventTop = clipTop + clipH + 2
         let subH = max(2, (h - eventTop - 4) / 7)
@@ -353,10 +360,8 @@ struct StudioTimelineView: View {
             ctx.fill(Path(ellipseIn: CGRect(x: cx - 3, y: cy - 3, width: 6, height: 6)),
                      with: .color(.white))
         }
-        if zones.clipH > 0 {
-            for clip in character.clips {
-                drawClip(clip, top: y + zones.clipTop, height: zones.clipH, ctx: ctx)
-            }
+        for clip in character.clips {
+            drawClip(clip, top: y + zones.clipTop, height: zones.clipH, ctx: ctx)
         }
         for (si, sub) in character.subs.enumerated() {
             let rect = CGRect(x: x(forTime: sub.start), y: y + 2,
@@ -512,7 +517,7 @@ struct StudioTimelineView: View {
                 }
                 if let tr = resizingTrack {
                     let delta = value.location.y - value.startLocation.y
-                    trackHeights[tr.key] = min(220, max(32, tr.baseHeight + delta))
+                    trackHeights[tr.key] = min(220, max(tr.minHeight, tr.baseHeight + delta))
                     return
                 }
                 if abs(value.startLocation.x - laneLabelWidth) < 5, resizingTrack == nil,
@@ -527,7 +532,7 @@ struct StudioTimelineView: View {
                           draggingCue == nil, resizing == nil {
                     // Near a lane bottom edge in the label column → resize that track.
                     if let row = rowNearBottomEdge(of: y) {
-                        resizingTrack = (row.key(in: model.scene), height(of: row))
+                        resizingTrack = (row.key(in: model.scene), height(of: row), minHeight(of: row))
                     }
                 } else {
                     handleLaneDrag(value)
@@ -752,7 +757,6 @@ struct StudioTimelineView: View {
             return point.y <= rowY + 22
         case .character:
             let zones = characterLaneZones(h: height(of: row))
-            guard zones.clipH > 0 else { return false }
             let clipTop = rowY + zones.clipTop
             return point.y >= clipTop && point.y <= clipTop + 14
         default:
@@ -839,7 +843,6 @@ struct StudioTimelineView: View {
         case .character(let i):
             clips = model.scene.characters[i].clips
             let zones = characterLaneZones(h: h)
-            guard zones.clipH > 0 else { return nil }
             top = rowY + zones.clipTop
             clipH = zones.clipH
         case .audio(let i):
