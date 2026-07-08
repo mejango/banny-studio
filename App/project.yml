@@ -33,6 +33,8 @@ targets:
         product: BannyCore
       - package: BannyStudioKit
         product: BannyRender
+      - package: BannyStudioKit
+        product: BannyMedia
     info:
       path: Info.plist
       properties:

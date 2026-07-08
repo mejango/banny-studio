@@ -19,6 +19,7 @@ struct StageView: View {
                 // Drive the clock from the render loop.
                 model.tick(now: Date.timeIntervalSinceReferenceDate)
                 model.freeformNudge(dt: 1 / 60)
+                file.audioEngine?.tick(model: model)
                 let scene = model.scene
                 let sceneID = model.document.scenes[model.activeSceneIndex].id
                 let bg = bgCache.image(for: sceneID, spec: scene.background, file: file)

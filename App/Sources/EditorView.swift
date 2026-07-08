@@ -13,7 +13,7 @@ struct EditorView: View {
                 SceneTabsView(model: model)
                 StageView(model: model, file: file)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
-                StudioTimelineView(model: model)
+                StudioTimelineView(model: model, file: file)
                     .frame(height: 230)
             }
             Divider()

@@ -75,6 +75,7 @@ enum TimelineMath {
 /// performance marks / clips / captions. Custom-drawn like the web timeline.
 struct StudioTimelineView: View {
     @Bindable var model: StudioModel
+    var file: ShowDocumentFile? = nil
     @State private var zoom: Double = 1
     @State private var selectedMarks: Set<PerfMark> = []
     @State private var selectedAnchor: Int?
@@ -88,7 +89,7 @@ struct StudioTimelineView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            TransportBar(model: model)
+            TransportBar(model: model, file: file)
             ScrollView([.horizontal, .vertical]) {
                 timelineCanvas
                     .frame(width: max(600, laneLabelWidth + contentWidth),
@@ -364,6 +365,7 @@ struct StudioTimelineView: View {
 
 struct TransportBar: View {
     @Bindable var model: StudioModel
+    var file: ShowDocumentFile? = nil
 
     var body: some View {
         HStack(spacing: 12) {
@@ -387,6 +389,9 @@ struct TransportBar: View {
             Spacer()
             ForEach(EventGroup.allCases, id: \.self) { group in
                 armDot(group)
+            }
+            if let file {
+                ShipButton(model: model, file: file)
             }
         }
         .buttonStyle(.borderless)

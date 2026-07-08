@@ -310,12 +310,7 @@ final class StudioModel {
     }
 }
 
-extension ShowDocumentFile {
-    /// Placeholder until phase 4 wires AVAudioEngine in.
-    var audioEngine: StudioAudioEngine? { nil }
-}
-
-/// Phase 4 fills this in; the model only needs a sync hook.
+/// The model only needs a sync hook; LiveAudioEngine implements it.
 protocol StudioAudioEngine {
     @MainActor func syncPlayback(_ model: StudioModel)
 }

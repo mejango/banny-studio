@@ -124,8 +124,9 @@ public enum ShowExporter {
         // must be appended alongside video (a starved input deadlocks the other).
         var audioQueue = audioBuffers
         var audioPos: AVAudioFramePosition = 0
+        var audioFinished = false
         func pumpAudio(upTo videoSeconds: Double) {
-            guard let audioInput else { return }
+            guard let audioInput, !audioFinished else { return }
             while let buffer = audioQueue.first,
                   Double(audioPos) / 44100.0 < videoSeconds + 1.0,
                   audioInput.isReadyForMoreMediaData {
@@ -134,6 +135,12 @@ public enum ShowExporter {
                 }
                 audioPos += AVAudioFramePosition(buffer.frameLength)
                 audioQueue.removeFirst()
+            }
+            // Once all audio is in, finish the input so the writer stops waiting
+            // for it to interleave and keeps accepting video.
+            if audioQueue.isEmpty {
+                audioInput.markAsFinished()
+                audioFinished = true
             }
         }
 
@@ -176,7 +183,7 @@ public enum ShowExporter {
         videoInput.markAsFinished()
 
         // Drain any remaining audio.
-        if let audioInput {
+        if let audioInput, !audioFinished {
             while let buffer = audioQueue.first {
                 while !audioInput.isReadyForMoreMediaData { Thread.sleep(forTimeInterval: 0.005) }
                 if let sample = makeSampleBuffer(from: buffer, at: audioPos) {

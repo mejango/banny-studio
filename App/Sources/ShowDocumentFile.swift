@@ -17,6 +17,14 @@ final class ShowDocumentFile: ReferenceFileDocument {
     var backgrounds: [String: (data: Data, ext: String)]
 
     @MainActor private var _model: StudioModel?
+    @MainActor private var _audioEngine: LiveAudioEngine?
+
+    @MainActor var audioEngine: LiveAudioEngine? {
+        if let e = _audioEngine { return e }
+        let e = LiveAudioEngine(file: self)
+        _audioEngine = e
+        return e
+    }
 
     /// Live editor state — main-actor, created on first access.
     @MainActor var model: StudioModel {
