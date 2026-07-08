@@ -9,19 +9,23 @@ struct WardrobePanel: View {
     let characterIndex: Int
 
     private static let outfitSlots = [2, 3, 4, 6, 8, 9, 10, 11, 12, 13]
-    private let columns = [GridItem(.adaptive(minimum: 64), spacing: 0)]
+    private let columns = Array(repeating: GridItem(.flexible(), spacing: 0), count: 3)
 
     /// Mannequin crop per slot, in the 400-box (webapp full thumb = 115,34,170,306).
     static func cropRegion(forSlot slot: Int) -> CGRect {
         switch slot {
-        case 4, 5, 6, 7:      // Head, Eyes, Glasses, Mouth → head only
+        case 4:               // Head → head with the full antenna
+            return CGRect(x: 118, y: 26, width: 168, height: 172)
+        case 5, 6, 7:         // Eyes, Glasses, Mouth → head only
             return CGRect(x: 122, y: 60, width: 160, height: 130)
-        case 8, 10:           // Legs, Suit bottom → bottom only
-            return CGRect(x: 115, y: 190, width: 170, height: 150)
-        case 3, 11, 12:       // Necklace, Suit top, Head top → torso up
-            return CGRect(x: 115, y: 34, width: 170, height: 190)
-        default:              // Backside, Suit, Hand → full body
-            return CGRect(x: 115, y: 34, width: 170, height: 306)
+        case 8:               // Legs → full legs
+            return CGRect(x: 115, y: 150, width: 170, height: 196)
+        case 3:               // Necklace → torso up
+            return CGRect(x: 115, y: 30, width: 170, height: 190)
+        case 12:              // Head top → torso up, centered on the head
+            return CGRect(x: 132, y: 26, width: 150, height: 196)
+        default:              // Backside, Suit, Suit top/bottom, Hand → full body
+            return CGRect(x: 115, y: 30, width: 170, height: 316)
         }
     }
 

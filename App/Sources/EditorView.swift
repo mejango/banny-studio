@@ -188,29 +188,28 @@ struct SidePanel: View {
             VStack(alignment: .leading, spacing: 14) {
                 switch target {
                 case .character(let i):
-                    header(model.scene.characters[safe: i]?.name.isEmpty == false
-                           ? model.scene.characters[i].name : "banny \((i + 1) % 10)")
+                    nameHeader(kind: .character(i))
                     MotionSection(model: model, characterIndex: i)
                     if let file {
                         AudioSection(model: model, file: file)
                     }
                     WardrobePanel(model: model, characterIndex: i)
                 case .audio(let i):
-                    header(model.scene.audioTracks[safe: i]?.name ?? "Audio")
+                    nameHeader(kind: .audio(i))
                     if let file {
                         AudioSection(model: model, file: file, audioTrackIndex: i)
                     }
                 case .image(let i):
-                    header(model.scene.imageTracks[safe: i]?.name ?? "Image")
+                    nameHeader(kind: .image(i))
                     ImageCueInspector(model: model)
                     if let file {
                         AssetBankSection(model: model, file: file)
                     }
                 case .light(let i):
-                    header(model.scene.lightTracks[safe: i]?.name ?? "Light")
+                    nameHeader(kind: .light(i))
                     LightCueInspector(model: model)
-                case .background:
-                    header("Background")
+                case .background(let i):
+                    nameHeader(kind: .background(i))
                     stageSection
                     if let file {
                         AssetBankSection(model: model, file: file)
@@ -227,8 +226,52 @@ struct SidePanel: View {
         .environment(\.colorScheme, lightMode ? .light : .dark)
     }
 
-    private func header(_ name: String) -> some View {
-        Text(name).font(.headline)
+    /// Editable track name + delete, replacing the old gear popover.
+    private func nameHeader(kind: TrackRowKind) -> some View {
+        HStack {
+            TextField("name", text: nameBinding(kind))
+                .textFieldStyle(.plain)
+                .font(.headline)
+            if case .background = kind {} else {
+                Button {
+                    model.removeTrack(kind)
+                    model.selectedTrackKey = nil
+                } label: {
+                    Image(systemName: "trash")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.red)
+                }
+                .buttonStyle(.plain)
+                .help("Delete this track")
+            }
+        }
+    }
+
+    private func nameBinding(_ kind: TrackRowKind) -> Binding<String> {
+        Binding(
+            get: {
+                switch kind {
+                case .character(let i): return model.scene.characters[safe: i]?.name ?? ""
+                case .audio(let i): return model.scene.audioTracks[safe: i]?.name ?? ""
+                case .image(let i): return model.scene.imageTracks[safe: i]?.name ?? ""
+                case .light(let i): return model.scene.lightTracks[safe: i]?.name ?? ""
+                case .background(let i): return model.scene.backgroundTracks[safe: i]?.name ?? ""
+                }
+            },
+            set: { name in
+                switch kind {
+                case .character(let i):
+                    if model.scene.characters.indices.contains(i) { model.scene.characters[i].name = name }
+                case .audio(let i):
+                    if model.scene.audioTracks.indices.contains(i) { model.scene.audioTracks[i].name = name }
+                case .image(let i):
+                    if model.scene.imageTracks.indices.contains(i) { model.scene.imageTracks[i].name = name }
+                case .light(let i):
+                    if model.scene.lightTracks.indices.contains(i) { model.scene.lightTracks[i].name = name }
+                case .background(let i):
+                    if model.scene.backgroundTracks.indices.contains(i) { model.scene.backgroundTracks[i].name = name }
+                }
+            })
     }
 
     private var stageSection: some View {

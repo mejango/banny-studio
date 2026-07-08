@@ -9,25 +9,14 @@ struct AudioSection: View {
     /// When set, clips land on this standalone audio track instead of a character.
     var audioTrackIndex: Int? = nil
     @State private var importing = false
-    @State private var mic = MicRecorder()
 
     private var target: Int? { audioTrackIndex == nil ? model.selection.first : nil }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             Text("AUDIO").font(.caption.bold()).foregroundStyle(.secondary)
-            HStack {
-                Button("＋ Import…") { importing = true }
-                    .font(.caption)
-                Button {
-                    mic.toggle(model: model, characterIndex: target)
-                } label: {
-                    Label(mic.isRecording ? "Stop" : "Mic",
-                          systemImage: mic.isRecording ? "stop.circle.fill" : "mic.fill")
-                        .font(.caption)
-                        .foregroundStyle(mic.isRecording ? .red : .primary)
-                }
-            }
+            Button("＋ Import…") { importing = true }
+                .font(.caption)
             Text(target.map { i in
                 "onto \(model.scene.characters[safe: i]?.name.isEmpty == false ? model.scene.characters[i].name : "banny \((i + 1) % 10)")'s track at the playhead"
             } ?? "onto this audio track at the playhead")
