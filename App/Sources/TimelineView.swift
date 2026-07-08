@@ -204,7 +204,8 @@ struct StudioTimelineView: View {
                 }
                 .coordinateSpace(name: "tlScroll")
                 .onPreferenceChange(TLOffsetKey.self) { origin in
-                    scrollOffset = CGPoint(x: -origin.x - laneLabelWidth, y: -origin.y)
+                    // origin.x includes the leading gutter padding at rest.
+                    scrollOffset = CGPoint(x: laneLabelWidth - origin.x, y: -origin.y)
                 }
                 gutterCanvas
                     .frame(width: laneLabelWidth)
