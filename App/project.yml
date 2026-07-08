@@ -55,9 +55,10 @@ targets:
         UISupportsDocumentBrowser: true
         LSSupportsOpeningDocumentsInPlace: true
         UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationPortraitUpsideDown
           - UIInterfaceOrientationLandscapeLeft
           - UIInterfaceOrientationLandscapeRight
-          - UIInterfaceOrientationPortrait
         NSMicrophoneUsageDescription: Record narration and voices directly onto a track.
         NSUbiquitousContainers:
           iCloud.com.banny.BannyStudio:
