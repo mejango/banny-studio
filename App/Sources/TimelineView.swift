@@ -164,8 +164,8 @@ struct StudioTimelineView: View {
     /// lanes canvas is untouched by scroll ticks.
     @State private var offsets = TLOffsets()
     private var scrollOffset: CGPoint { CGPoint(x: offsets.x, y: offsets.y) }
-    private let rulerHeight: CGFloat = 18
-    private let scrubHeight: CGFloat = 16
+    private let rulerHeight: CGFloat = 22
+    private let scrubHeight: CGFloat = 0
     private let defaultLaneHeight: CGFloat = 52
 
     var body: some View {
@@ -335,7 +335,7 @@ struct StudioTimelineView: View {
             ctx.fill(Path(CGRect(origin: .zero, size: size)), with: .color(theme.gutterBase))
             ctx.draw(Text("Captions").font(.system(size: 9, weight: .semibold))
                         .foregroundStyle(theme.mutedText),
-                     at: CGPoint(x: 12, y: 10), anchor: .leading)
+                     at: CGPoint(x: 12, y: headerHeight + captionsRowH / 2), anchor: .leading)
             ctx.stroke(Path { p in
                 p.move(to: CGPoint(x: size.width - 0.5, y: 0))
                 p.addLine(to: CGPoint(x: size.width - 0.5, y: size.height))
@@ -694,8 +694,6 @@ struct StudioTimelineView: View {
                      at: CGPoint(x: px + 12, y: 7))
             t += step
         }
-        ctx.fill(Path(CGRect(x: 0, y: rulerHeight, width: size.width, height: scrubHeight)),
-                 with: .color(theme.scrub))
     }
 
     private func drawLane(_ row: TrackRow, ctx: GraphicsContext, size: CGSize) {
