@@ -83,10 +83,8 @@ extension StudioModel {
         for i in scene.audioTracks.indices {
             scene.audioTracks[i].clips.removeAll { $0.id == id }
         }
-        // Source bytes stay in the package if another slice still references them.
-        let stillUsed = scene.characters.flatMap(\.clips).contains { $0.id == id }
-            || scene.audioTracks.flatMap(\.clips).contains { $0.id == id }
-        if !stillUsed { file?.audio.removeValue(forKey: id) }
+        // Media stays in the package: undo only restores the timeline, so
+        // deleting the bytes here would make a delete+undo silently lose audio.
     }
 
     func moveClip(id: String, toStart newStart: Double) {
@@ -155,7 +153,7 @@ extension StudioModel {
     func removeAsset(id: String) {
         registerUndoSnapshot(label: "Remove Asset")
         document.assets.removeAll { $0.id == id }
-        file?.assetsMedia.removeValue(forKey: id)
+        // assetsMedia bytes stay for undo-safety (see removeClip).
         for i in scene.imageTracks.indices {
             scene.imageTracks[i].cues.removeAll { $0.assetID == id }
         }
