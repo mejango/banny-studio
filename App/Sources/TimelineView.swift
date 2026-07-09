@@ -418,11 +418,12 @@ struct StudioTimelineView: View {
     // MARK: - Layout
 
     private var baseRows: [TrackRow] {
-        let typed = model.scene.characters.indices.map(TrackRow.character)
+        // Scenes lead by default; explicit rowOrder overrides.
+        let typed = model.scene.backgroundTracks.indices.map(TrackRow.background)
+            + model.scene.characters.indices.map(TrackRow.character)
             + model.scene.imageTracks.indices.map(TrackRow.image)
             + model.scene.audioTracks.indices.map(TrackRow.audio)
             + model.scene.lightTracks.indices.map(TrackRow.light)
-            + model.scene.backgroundTracks.indices.map(TrackRow.background)
         guard !model.scene.rowOrder.isEmpty else { return typed }
         let keyed = Dictionary(typed.map { ($0.key(in: model.scene), $0) },
                                uniquingKeysWith: { a, _ in a })
