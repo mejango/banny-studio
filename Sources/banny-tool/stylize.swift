@@ -17,6 +17,7 @@ func stylizeCommand(_ args: [String]) throws {
     }
     var opts = PixelStyler.Options()
     if args.count > 2, let g = Int(args[2]) { opts.gridWidth = g }
+    if args.count > 3, let d = Double(args[3]) { opts.dither = d }
     guard let styled = PixelStyler.stylize(img, palette: nil, options: opts) else {
         fatalError("stylize failed")
     }
