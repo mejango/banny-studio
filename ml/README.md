@@ -27,3 +27,11 @@ negative prompt in gen.py is load-bearing (grain + banana-character bleed).
    (`tools/svg-grid.py emit`, port to Swift with the prompt box) →
    bank asset or sparkle loop.
 3. Keep everything deterministic after the sampler (seeded).
+
+## FLUX LoRA (fal.ai) — the good one
+`ml/fal-lora/banny-flux-lora.safetensors` (89MB, local only; URL in
+fal-train-result.json). Trained 2026-07-09 on the 51 scenes only
+(fal-scenes.zip, trigger "bannyverse", 1000 steps, ~$3, ~5 min).
+Generate: `fal-gen.py out.png "beach with palm trees" 1024x576`
+(~$0.03/img hosted) then `banny-tool stylize`. Dramatically better
+than the local SD1.5 path — use this.

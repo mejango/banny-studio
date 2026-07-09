@@ -1,3 +1,5 @@
 .venv/
 lora-run/
 train_text_to_image_lora.py
+.fal-key
+fal-*/
