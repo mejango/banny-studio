@@ -48,7 +48,10 @@ struct StylizeSheet: View {
     @State private var name = "New backdrop"
     @State private var gridWidth = 480.0
     @State private var colors = 28.0
-    @State private var dither = 0.06
+    @State private var dither = 0.5
+    @State private var smooth = 2.0
+    @State private var flatness = 16.0
+    @State private var outline = true
     @State private var matchShow = true
     @State private var working = false
     @State private var stylePalette: [SIMD3<Float>]?
@@ -109,8 +112,15 @@ struct StylizeSheet: View {
                     Text("\(Int(colors))").font(.caption.monospacedDigit()).frame(width: 34)
                 }
                 HStack {
+                    Text("Smooth").font(.caption)
+                    Slider(value: $smooth, in: 0...4, step: 1)
+                    Text("Flat").font(.caption)
+                    Slider(value: $flatness, in: 0...40)
+                }
+                HStack {
                     Text("Dither").font(.caption)
-                    Slider(value: $dither, in: 0...0.16)
+                    Slider(value: $dither, in: 0...1)
+                    Toggle("Outline", isOn: $outline).font(.caption)
                 }
                 Toggle("Match show palette (learned from bank images)", isOn: $matchShow)
                     .font(.caption)
@@ -148,6 +158,9 @@ struct StylizeSheet: View {
         }
         .onChange(of: gridWidth) { _, _ in restyle() }
         .onChange(of: dither) { _, _ in restyle() }
+        .onChange(of: smooth) { _, _ in restyle() }
+        .onChange(of: flatness) { _, _ in restyle() }
+        .onChange(of: outline) { _, _ in restyle() }
         .onChange(of: colors) { _, _ in stylePalette = nil; restyle() }
         .onChange(of: matchShow) { _, _ in stylePalette = nil; restyle() }
     }
@@ -156,7 +169,8 @@ struct StylizeSheet: View {
         guard let source else { return }
         working = true
         let opts = PixelStyler.Options(gridWidth: Int(gridWidth), paletteSize: Int(colors),
-                                       dither: dither, scale: 2)
+                                       dither: dither, smooth: Int(smooth),
+                                       flatness: flatness, outline: outline, scale: 2)
         let refs = matchShow ? bankImages : []
         let cachedPalette = stylePalette
         let k = Int(colors)
