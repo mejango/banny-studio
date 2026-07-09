@@ -46,12 +46,12 @@ struct StylizeSheet: View {
     @State private var source: CGImage?
     @State private var preview: CGImage?
     @State private var name = "New backdrop"
-    @State private var gridWidth = 480.0
-    @State private var colors = 28.0
-    @State private var dither = 0.2
-    @State private var smooth = 2.0
-    @State private var flatness = 16.0
-    @State private var outline = true
+    private let gridWidth = 240.0
+    private let colors = 16.0
+    private let dither = 0.0
+    private let smooth = 3.0
+    private let flatness = 24.0
+    private let outline = true
     @State private var matchShow = true
     @State private var subjectAware = true
     @State private var working = false
@@ -104,35 +104,9 @@ struct StylizeSheet: View {
             if source != nil {
                 TextField("Backdrop name", text: $name)
                     .textFieldStyle(.roundedBorder)
-                HStack {
-                    Text("Pixels").font(.caption)
-                    Slider(value: $gridWidth, in: 160...720, step: 40)
-                    Text("\(Int(gridWidth))").font(.caption.monospacedDigit()).frame(width: 34)
-                }
-                HStack {
-                    Text("Colors").font(.caption)
-                    Slider(value: $colors, in: 8...48, step: 2)
-                    Text("\(Int(colors))").font(.caption.monospacedDigit()).frame(width: 34)
-                }
-                HStack {
-                    Text("Smooth").font(.caption)
-                    Slider(value: $smooth, in: 0...4, step: 1)
-                    Text("Flat").font(.caption)
-                    Slider(value: $flatness, in: 0...40)
-                }
-                HStack {
-                    Text("Dither").font(.caption)
-                    Slider(value: $dither, in: 0...1)
-                    Toggle("Outline", isOn: $outline).font(.caption)
-                }
-                HStack {
-                    Toggle("Match show palette (learned from bank images)", isOn: $matchShow)
-                        .font(.caption)
-                        .disabled(bankImages.isEmpty)
-                    Toggle("Subject aware", isOn: $subjectAware)
-                        .font(.caption)
-                        .help("Vision finds the subjects; they get detail and outlines while the backdrop stays flat")
-                }
+                Toggle("Match show palette (learned from bank images)", isOn: $matchShow)
+                    .font(.caption)
+                    .disabled(bankImages.isEmpty)
                 HStack {
                     Button("Different image…") { importing = true }
                     Spacer()
@@ -164,13 +138,6 @@ struct StylizeSheet: View {
                 restyle()
             }
         }
-        .onChange(of: gridWidth) { _, _ in fgMask = nil; restyle() }
-        .onChange(of: subjectAware) { _, _ in restyle() }
-        .onChange(of: dither) { _, _ in restyle() }
-        .onChange(of: smooth) { _, _ in restyle() }
-        .onChange(of: flatness) { _, _ in restyle() }
-        .onChange(of: outline) { _, _ in restyle() }
-        .onChange(of: colors) { _, _ in stylePalette = nil; restyle() }
         .onChange(of: matchShow) { _, _ in stylePalette = nil; restyle() }
     }
 
