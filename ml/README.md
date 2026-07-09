@@ -11,9 +11,17 @@ Goal: prompt → house-style pixel scene → normalized grid/palette → SVG.
   (parse → rect-run emit → re-rasterize → pixel-exact compare) and dumps
   `catalog-palette.json` (color → pixel count across the catalog).
 
+## Trained model
+`banny-lora.safetensors` — SD 1.5 LoRA (rank 16, 1500 steps @ 512px,
+~6h on M4 MPS, 2026-07-09). Trigger: "bannyverse pixel art scene, ...,
+flat colors". Generate with `gen.py out.png "beach with palm trees" 768x512`
+(venv: `.venv/`, torch+diffusers). IMPORTANT: raw diffusion output looks
+noisy — always judge after the normalize step (gen.py does both). The
+negative prompt in gen.py is load-bearing (grain + banana-character bleed).
+
 ## Steps
-1. LoRA fine-tune a small SD checkpoint on `dataset/` (MLX:
-   `mlx_lora` / diffusers kohya scripts; rank 16, ~2-3k steps).
+1. ~~LoRA fine-tune~~ DONE — see above. Retrain scenes-only if character
+   bleed ever becomes a problem (sprites are 70% of dataset).
 2. Inference in-app: prompt → 512px gen → PixelStyler normalize
    (grid ~240, palette from `catalog-palette.json`) → SVG emit
    (`tools/svg-grid.py emit`, port to Swift with the prompt box) →
