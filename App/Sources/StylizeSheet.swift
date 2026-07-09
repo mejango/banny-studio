@@ -112,6 +112,9 @@ struct StylizeSheet: View {
                     Spacer()
                     if working { ProgressView().controlSize(.small) }
                     Button("Cancel") { isPresented = false }
+                    Button("Add animated") { commitAnimated() }
+                        .disabled(preview == nil)
+                        .help("Point lights twinkle in an 8-frame loop, like the reference GIF backdrops")
                     Button("Add to bank") { commit() }
                         .keyboardShortcut(.defaultAction)
                         .disabled(preview == nil)
@@ -191,6 +194,27 @@ struct StylizeSheet: View {
                 fgMask = mask
                 preview = out
                 working = false
+            }
+        }
+    }
+
+    private func commitAnimated() {
+        guard let preview else { return }
+        working = true
+        let assetName = name
+        Task.detached(priority: .userInitiated) {
+            let frames = PixelStyler.sparkleFrames(preview, frames: 8, scale: 2)
+            let url = FileManager.default.temporaryDirectory
+                .appendingPathComponent("loop-\(UUID().uuidString).mp4")
+            // 3 cycles at 8fps -> smooth 3s loop; bg playback loops it anyway.
+            try? LoopEncoder.encode(frames: frames + frames + frames, fps: 8, to: url)
+            let data = try? Data(contentsOf: url)
+            await MainActor.run {
+                working = false
+                if let data, !data.isEmpty {
+                    _ = model.addAsset(data: data, ext: "mp4", name: assetName)
+                    isPresented = false
+                }
             }
         }
     }

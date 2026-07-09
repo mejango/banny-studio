@@ -374,3 +374,72 @@ public enum PixelStyler {
         return up.makeImage()
     }
 }
+
+// MARK: - Sparse loop animation (the house-GIF look)
+
+extension PixelStyler {
+    /// The reference backdrops animate by touching under 1% of pixels per
+    /// frame: point lights twinkle with staggered phases. This finds bright
+    /// isolated cells (stars, windows, LEDs, sparkles) on a stylized still
+    /// and returns N frames cycling them. Deterministic.
+    public static func sparkleFrames(_ still: CGImage, frames: Int = 8,
+                                     scale: Int = 2) -> [CGImage] {
+        let w = still.width, h = still.height
+        guard let base = rgba(of: still, width: w, height: h) else { return [still] }
+        let s = max(1, scale)
+        let gw = w / s, gh = h / s
+
+        func cellLum(_ x: Int, _ y: Int) -> Float {
+            let i = ((y * s) * w + (x * s)) * 4
+            return 0.299 * Float(base[i]) + 0.587 * Float(base[i+1]) + 0.114 * Float(base[i+2])
+        }
+        // Point lights: bright cells whose neighbors are clearly darker.
+        var lights: [(x: Int, y: Int, phase: Int)] = []
+        for y in 1..<(gh - 1) {
+            for x in 1..<(gw - 1) {
+                let l = cellLum(x, y)
+                guard l > 150 else { continue }
+                var darker = 0
+                for (dx, dy) in [(1, 0), (-1, 0), (0, 1), (0, -1)] {
+                    if cellLum(x + dx, y + dy) < l - 45 { darker += 1 }
+                }
+                if darker >= 3 {
+                    lights.append((x, y, (x &* 31 &+ y &* 17) % frames))
+                }
+            }
+        }
+        if lights.count > 600 {
+            lights = lights.enumerated().filter { $0.offset % (lights.count / 600 + 1) == 0 }
+                .map(\.element)
+        }
+        guard !lights.isEmpty else { return [still] }
+
+        var out: [CGImage] = []
+        for f in 0..<frames {
+            var px = base
+            for light in lights {
+                // Twinkle: dim through most of the cycle, pop on the phase frame.
+                let d = (f - light.phase + frames) % frames
+                let gain: Float = d == 0 ? 1.35 : (d == 1 || d == frames - 1 ? 1.0 : 0.62)
+                guard gain != 1.0 else { continue }
+                for yy in 0..<s {
+                    for xx in 0..<s {
+                        let i = ((light.y * s + yy) * w + (light.x * s + xx)) * 4
+                        px[i] = UInt8(min(255, Float(px[i]) * gain))
+                        px[i+1] = UInt8(min(255, Float(px[i+1]) * gain))
+                        px[i+2] = UInt8(min(255, Float(px[i+2]) * gain))
+                    }
+                }
+            }
+            if let img = px.withUnsafeMutableBytes({ raw -> CGImage? in
+                CGContext(data: raw.baseAddress, width: w, height: h,
+                          bitsPerComponent: 8, bytesPerRow: w * 4,
+                          space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                          bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)?.makeImage()
+            }) {
+                out.append(img)
+            }
+        }
+        return out.isEmpty ? [still] : out
+    }
+}
