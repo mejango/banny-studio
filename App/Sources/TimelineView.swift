@@ -191,8 +191,6 @@ struct StudioTimelineView: View {
     @State private var mediaAddAt: (trackIndex: Int, t: Double, x: CGFloat, y: CGFloat)?
     /// Collapsed scene sections (background cue ids) — folded to thin strips.
     @State private var collapsedSections: Set<String> = []
-    /// Backdrop stylizer sheet (gutter right-click on the Scenes row).
-    @State private var stylizeSheet = false
     @State private var imageImportAt: (trackIndex: Int, t: Double)?
     /// Wardrobe-strip click: add a timed outfit change here.
     @State private var outfitPopover: (char: Int, t: Double, x: CGFloat, y: CGFloat)?
@@ -1015,26 +1013,12 @@ struct StudioTimelineView: View {
         .gesture(gutterInteraction)
         .contextMenu {
             if let row = hoverGutterRow {
-                if case .background = row {
-                    Button("Stylize into backdrop…") {
-                        #if os(macOS)
-                        if let file { StylizeWindow.open(model: model, file: file) }
-                        #else
-                        stylizeSheet = true
-                        #endif
-                    }
-                }
                 Button("Duplicate \(label(for: row))") { model.duplicateTrack(kind(of: row)) }
                 Button("Rename") {
                     renamingText = label(for: row)
                     renamingRow = row
                 }
                 Button("Settings…") { model.inspectorRequest = row.key(in: model.scene) }
-            }
-        }
-        .sheet(isPresented: $stylizeSheet) {
-            if let file {
-                StylizeSheet(model: model, file: file, isPresented: $stylizeSheet)
             }
         }
         #if os(macOS)

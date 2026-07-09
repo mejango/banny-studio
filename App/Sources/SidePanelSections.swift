@@ -36,20 +36,11 @@ struct AssetBankSection: View {
     @Bindable var model: StudioModel
     let file: ShowDocumentFile
     @State private var importing = false
-    @State private var stylizing = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             Text("ASSET BANK").font(.caption.bold()).foregroundStyle(.secondary)
             Button("＋ Add image/video…") { importing = true }.font(.caption)
-            Button("✨ Stylize into backdrop…") {
-                #if os(macOS)
-                StylizeWindow.open(model: model, file: file)
-                #else
-                stylizing = true
-                #endif
-            }.font(.caption)
-                .help("Turn any image into a pixel backdrop on the show's palette")
             if model.document.assets.isEmpty {
                 Text("Assets you add live with the show and can back any number of background or image cues.")
                     .font(.caption2).foregroundStyle(.secondary)
@@ -86,9 +77,6 @@ struct AssetBankSection: View {
             if case .success(let url) = result {
                 model.addAsset(from: url)
             }
-        }
-        .sheet(isPresented: $stylizing) {
-            StylizeSheet(model: model, file: file, isPresented: $stylizing)
         }
     }
 }
