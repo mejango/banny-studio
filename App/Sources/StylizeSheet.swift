@@ -52,11 +52,14 @@ struct StylizeSheet: View {
         VStack(alignment: .leading, spacing: 10) {
             Text("Stylize into backdrop").font(.headline)
             if let preview {
+                // Bounded height: the controls below must always stay on
+                // screen (a sheet taller than the window just clips).
                 Image(decorative: preview, scale: 2)
                     .resizable()
                     .interpolation(.none)
                     .scaledToFit()
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 480)
                     .overlay(Rectangle().stroke(Color.primary.opacity(0.3), lineWidth: 1))
             } else {
                 Button("Choose an image…") { importing = true }
@@ -97,7 +100,7 @@ struct StylizeSheet: View {
             }
         }
         .padding(16)
-        .frame(minWidth: 1180, minHeight: 860)
+        .frame(minWidth: 1040)
         .fileImporter(isPresented: $importing,
                       allowedContentTypes: [.png, .jpeg, .heic, .gif, .webP, .tiff]) { result in
             guard case .success(let url) = result else { return }
