@@ -54,12 +54,13 @@ struct StylizeSheet: View {
             if let preview {
                 Image(decorative: preview, scale: 2)
                     .resizable()
+                    .interpolation(.none)
                     .scaledToFit()
-                    .frame(maxWidth: 560, maxHeight: 320)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .overlay(Rectangle().stroke(Color.primary.opacity(0.3), lineWidth: 1))
             } else {
                 Button("Choose an image…") { importing = true }
-                    .frame(maxWidth: .infinity, minHeight: 160)
+                    .frame(maxWidth: .infinity, minHeight: 420)
                     .background(Color.primary.opacity(0.05))
             }
             if source != nil {
@@ -96,7 +97,7 @@ struct StylizeSheet: View {
             }
         }
         .padding(16)
-        .frame(minWidth: 600)
+        .frame(minWidth: 1180, minHeight: 860)
         .fileImporter(isPresented: $importing,
                       allowedContentTypes: [.png, .jpeg, .heic, .gif, .webP, .tiff]) { result in
             guard case .success(let url) = result else { return }
