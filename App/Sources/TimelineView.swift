@@ -252,7 +252,7 @@ struct StudioTimelineView: View {
                     }
                     .padding(.leading, laneLabelWidth)
                 }
-                .frame(width: laneLabelWidth + max(600, contentWidth + 40),
+                .frame(width: laneLabelWidth + max(max(600, tlViewport.width - laneLabelWidth), contentWidth + 40),
                        height: totalLaneHeight + 34, alignment: .topLeading)
                 .id("tlContent")
                 // On the outer frame, NOT the canvas: dropDestination inside the
@@ -647,7 +647,7 @@ struct StudioTimelineView: View {
     /// desyncs SwiftUI's own scroll bookkeeping (band/gutter stop tracking).
     private func keepTime(_ t: Double, atViewX vx: CGFloat, fy: CGFloat) {
         guard let proxy = tlProxy, tlViewport.width > 0 else { return }
-        let contentW = laneLabelWidth + max(600, contentWidth + 40)
+        let contentW = laneLabelWidth + max(max(600, tlViewport.width - laneLabelWidth), contentWidth + 40)
         let maxScroll = max(0, contentW - tlViewport.width)
         // Whole device pixels: subpixel scroll positions shimmer the canvas.
         // Clamp to what the scroll view can actually reach — recording an
@@ -2196,7 +2196,7 @@ struct StudioTimelineView: View {
 
     private func autoScrollTick() {
         guard let proxy = tlProxy, dragOvershootX != 0 else { return }
-        let contentW = laneLabelWidth + max(600, contentWidth + 40)
+        let contentW = laneLabelWidth + max(max(600, tlViewport.width - laneLabelWidth), contentWidth + 40)
         let maxScroll = max(0, contentW - tlViewport.width)
         guard maxScroll > 0 else { return }
         let step = max(-60, min(60, dragOvershootX * 0.25))
