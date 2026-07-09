@@ -1015,7 +1015,13 @@ struct StudioTimelineView: View {
         .contextMenu {
             if let row = hoverGutterRow {
                 if case .background = row {
-                    Button("Stylize into backdrop…") { stylizeSheet = true }
+                    Button("Stylize into backdrop…") {
+                        #if os(macOS)
+                        if let file { StylizeWindow.open(model: model, file: file) }
+                        #else
+                        stylizeSheet = true
+                        #endif
+                    }
                 }
                 Button("Duplicate \(label(for: row))") { model.duplicateTrack(kind(of: row)) }
                 Button("Rename") {

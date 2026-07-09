@@ -4,6 +4,35 @@ import AVFoundation
 import UniformTypeIdentifiers
 import BannyRender
 
+#if os(macOS)
+/// The stylizer as a real window: movable, resizable, not glued to the
+/// titlebar like a sheet.
+@MainActor
+enum StylizeWindow {
+    private static var current: NSWindow?
+
+    static func open(model: StudioModel, file: ShowDocumentFile) {
+        if let w = current { w.makeKeyAndOrderFront(nil); return }
+        let dismiss = Binding<Bool>(get: { true },
+                                    set: { if !$0 { close() } })
+        let host = NSHostingController(rootView: StylizeSheet(
+            model: model, file: file, isPresented: dismiss))
+        let win = NSWindow(contentViewController: host)
+        win.title = "Stylize into backdrop"
+        win.styleMask = [.titled, .closable, .resizable]
+        win.isReleasedWhenClosed = false
+        win.center()
+        win.makeKeyAndOrderFront(nil)
+        current = win
+    }
+
+    static func close() {
+        current?.close()
+        current = nil
+    }
+}
+#endif
+
 /// Backdrop stylizer: import any image (photo, AI render, sketch) and land it
 /// on the show's pixel grid and palette. "Match show palette" quantizes to
 /// colors learned from the images already in the bank, so every new backdrop

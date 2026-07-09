@@ -42,7 +42,13 @@ struct AssetBankSection: View {
         VStack(alignment: .leading, spacing: 6) {
             Text("ASSET BANK").font(.caption.bold()).foregroundStyle(.secondary)
             Button("＋ Add image/video…") { importing = true }.font(.caption)
-            Button("✨ Stylize into backdrop…") { stylizing = true }.font(.caption)
+            Button("✨ Stylize into backdrop…") {
+                #if os(macOS)
+                StylizeWindow.open(model: model, file: file)
+                #else
+                stylizing = true
+                #endif
+            }.font(.caption)
                 .help("Turn any image into a pixel backdrop on the show's palette")
             if model.document.assets.isEmpty {
                 Text("Assets you add live with the show and can back any number of background or image cues.")
