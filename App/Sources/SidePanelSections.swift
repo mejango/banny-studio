@@ -1,4 +1,5 @@
 import SwiftUI
+import AVFoundation
 import UniformTypeIdentifiers
 import BannyCore
 
@@ -35,11 +36,14 @@ struct AssetBankSection: View {
     @Bindable var model: StudioModel
     let file: ShowDocumentFile
     @State private var importing = false
+    @State private var stylizing = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             Text("ASSET BANK").font(.caption.bold()).foregroundStyle(.secondary)
             Button("＋ Add image/video…") { importing = true }.font(.caption)
+            Button("✨ Stylize into backdrop…") { stylizing = true }.font(.caption)
+                .help("Turn any image into a pixel backdrop on the show's palette")
             if model.document.assets.isEmpty {
                 Text("Assets you add live with the show and can back any number of background or image cues.")
                     .font(.caption2).foregroundStyle(.secondary)
@@ -75,6 +79,66 @@ struct AssetBankSection: View {
                       allowedContentTypes: [.png, .jpeg, .gif, .webP, .svg, .mpeg4Movie, .quickTimeMovie]) { result in
             if case .success(let url) = result {
                 model.addAsset(from: url)
+            }
+        }
+        .sheet(isPresented: $stylizing) {
+            StylizeSheet(model: model, file: file, isPresented: $stylizing)
+        }
+    }
+}
+
+/// Animalese voice profile + caption voicing for one character.
+struct VoiceSection: View {
+    @Bindable var model: StudioModel
+    let characterIndex: Int
+    @State private var player: AVAudioPlayer?
+    @State private var lastCount: Int?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("VOICE").font(.caption.bold()).foregroundStyle(.secondary)
+            if let c = model.scene.characters[safe: characterIndex] {
+                HStack {
+                    Text("Pitch").font(.caption)
+                    Slider(value: Binding(
+                        get: { model.scene.characters[safe: characterIndex]?.voicePitch ?? 0 },
+                        set: { if model.scene.characters.indices.contains(characterIndex) {
+                            model.scene.characters[characterIndex].voicePitch = $0 } }),
+                        in: -12...12, step: 1)
+                    Text("\(Int(c.voicePitch))").font(.caption.monospacedDigit()).frame(width: 26)
+                }
+                HStack {
+                    Text("Speed").font(.caption)
+                    Slider(value: Binding(
+                        get: { model.scene.characters[safe: characterIndex]?.voiceSpeed ?? 1 },
+                        set: { if model.scene.characters.indices.contains(characterIndex) {
+                            model.scene.characters[characterIndex].voiceSpeed = $0 } }),
+                        in: 0.6...1.6)
+                    Text(String(format: "%.2f", c.voiceSpeed))
+                        .font(.caption.monospacedDigit()).frame(width: 34)
+                }
+                HStack {
+                    Button("▶ Preview") {
+                        if let data = model.animalesePreview(characterIndex: characterIndex) {
+                            player = try? AVAudioPlayer(data: data)
+                            player?.play()
+                        }
+                    }.font(.caption)
+                    Spacer()
+                    Button("Voice all captions") {
+                        lastCount = model.generateAnimalese(characterIndex: characterIndex)
+                    }
+                    .font(.caption.bold())
+                    .disabled(c.subs.isEmpty)
+                    .help("Generates a gibberish-speech clip for every caption; re-run any time — generated clips are replaced, imported ones untouched")
+                }
+                if let lastCount {
+                    Text("Voiced \(lastCount) caption\(lastCount == 1 ? "" : "s").")
+                        .font(.caption2).foregroundStyle(.secondary)
+                } else if c.subs.isEmpty {
+                    Text("Add captions first — each caption becomes a spoken clip.")
+                        .font(.caption2).foregroundStyle(.secondary)
+                }
             }
         }
     }

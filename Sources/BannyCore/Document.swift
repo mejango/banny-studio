@@ -457,6 +457,9 @@ public struct Character: Equatable, Sendable {
     /// Outfit at t=0: slot id → outfit name.
     public var baseOutfit: [Int: String]
     public var subs: [Subtitle]
+    /// Animalese voice profile: base pitch in semitones, speaking rate.
+    public var voicePitch: Double
+    public var voiceSpeed: Double
     public var clips: [AudioClip]
     public var events: [PerfEvent]
     public var armedGroups: Set<EventGroup>
@@ -474,6 +477,7 @@ public struct Character: Equatable, Sendable {
 
     public init(body: Body, x: Double = 0.5, depth: Double = 0, size: Double = 1, face: Int = 1,
                 baseOutfit: [Int: String] = [:], subs: [Subtitle] = [], clips: [AudioClip] = [],
+                voicePitch: Double = 0, voiceSpeed: Double = 1,
                 events: [PerfEvent] = [], armedGroups: Set<EventGroup> = Set(EventGroup.allCases),
                 name: String = "", trackFx: Fx = .defaultCharacterTrack, recStart: StartPose? = nil,
                 speed: Double = 320, wobble: Double = 7, hidden: Bool = false,
@@ -485,6 +489,8 @@ public struct Character: Equatable, Sendable {
         self.face = face
         self.baseOutfit = baseOutfit
         self.subs = subs
+        self.voicePitch = voicePitch
+        self.voiceSpeed = voiceSpeed
         self.clips = clips
         self.events = events
         self.armedGroups = armedGroups
@@ -501,7 +507,8 @@ public struct Character: Equatable, Sendable {
 extension Character: Codable {
     private enum CodingKeys: String, CodingKey {
         case body, x, depth, size, face, baseOutfit, subs, clips, events,
-             armedGroups, name, trackFx, recStart, speed, wobble, hidden, presence
+             armedGroups, name, trackFx, recStart, speed, wobble, hidden, presence,
+             voicePitch, voiceSpeed
     }
 
     public init(from decoder: Decoder) throws {
@@ -513,6 +520,8 @@ extension Character: Codable {
         face = try c.decodeIfPresent(Int.self, forKey: .face) ?? 1
         baseOutfit = try c.decodeIfPresent([Int: String].self, forKey: .baseOutfit) ?? [:]
         subs = try c.decodeIfPresent([Subtitle].self, forKey: .subs) ?? []
+        voicePitch = try c.decodeIfPresent(Double.self, forKey: .voicePitch) ?? 0
+        voiceSpeed = try c.decodeIfPresent(Double.self, forKey: .voiceSpeed) ?? 1
         clips = try c.decodeIfPresent([AudioClip].self, forKey: .clips) ?? []
         events = try c.decodeIfPresent([PerfEvent].self, forKey: .events) ?? []
         armedGroups = try c.decodeIfPresent(Set<EventGroup>.self, forKey: .armedGroups)

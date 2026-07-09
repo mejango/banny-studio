@@ -220,6 +220,7 @@ struct TrackInspector: View {
             switch kind {
             case .character(let i):
                 MotionSection(model: model, characterIndex: i)
+                VoiceSection(model: model, characterIndex: i)
                 MixSection(model: model, kind: kind)
                 // The card's wardrobe edits the character's START state; timed
                 // mid-show changes remain as recorded outfit events (white dots).
