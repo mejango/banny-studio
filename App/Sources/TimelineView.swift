@@ -1026,7 +1026,9 @@ struct StudioTimelineView: View {
             }
         }
         .sheet(isPresented: $stylizeSheet) {
-            StylizeSheet(model: model, file: file, isPresented: $stylizeSheet)
+            if let file {
+                StylizeSheet(model: model, file: file, isPresented: $stylizeSheet)
+            }
         }
         #if os(macOS)
         .onContinuousHover { phase in
