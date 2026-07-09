@@ -29,3 +29,36 @@ final class SmokeTests: XCTestCase {
         XCTAssertEqual(app.state, .runningForeground)
     }
 }
+
+extension SmokeTests {
+    /// Screenshot harness: open the seeded show (via BANNY_OPEN_DOC) and hold
+    /// it on screen while the host grabs simctl screenshots.
+    @MainActor
+    func testHoldSeededShow() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["-ApplePersistenceIgnoreState", "YES"]
+        if let doc = ProcessInfo.processInfo.environment["BANNY_OPEN_DOC"] {
+            app.launchEnvironment["BANNY_OPEN_DOC"] = doc
+        }
+        let isPad = UIDevice.current.userInterfaceIdiom == .pad
+        // Rotated remote-view taps are flaky on iPhone; shoot portrait there.
+        XCUIDevice.shared.orientation = isPad ? .landscapeLeft : .portrait
+        app.launch()
+        func tap(_ e: XCUIElement, _ t: TimeInterval = 5) -> Bool {
+            guard e.waitForExistence(timeout: t) else { return false }
+            e.tap(); return true
+        }
+        // iPad launch scene: big Create Document button. iPhone: open the
+        // seeded document through Browse (its + is unreliable to hit).
+        var opened = tap(app.buttons["Create Document"].firstMatch, 6)
+        if !opened {
+            _ = tap(app.buttons["Browse"].firstMatch)
+            _ = tap(app.staticTexts["On My iPhone"].firstMatch, 3)
+            _ = tap(app.staticTexts["Banny Studio"].firstMatch, 3)
+            opened = tap(app.staticTexts["ep1-beat1"].firstMatch, 5)
+            if !opened { print("BROWSER DUMP: \(app.debugDescription)") }
+        }
+        sleep(75)
+        XCTAssertEqual(app.state, .runningForeground)
+    }
+}

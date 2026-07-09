@@ -14,6 +14,8 @@ struct BannyStudioApp: App {
             EditorView(file: config.document)
                 #if os(macOS)
                 .background(SnapshotOnLaunch())
+                #else
+                .background(DebugDocOpener(file: config.document))
                 #endif
         }
         #if os(macOS)
@@ -28,6 +30,56 @@ struct BannyStudioApp: App {
         #endif
     }
 }
+
+#if !os(macOS)
+/// Screenshot-harness hook: when BANNY_OPEN_DOC names a .bannyshow path, load
+/// its contents into the open (untitled) document — iOS has no programmatic
+/// document-open, and UI tests can't drive the system browser reliably.
+private struct DebugDocOpener: View {
+    let file: ShowDocumentFile
+
+    var body: some View {
+        Color.clear.task {
+            let docs = FileManager.default.urls(for: .documentDirectory,
+                                                in: .userDomainMask)[0]
+            let env = ProcessInfo.processInfo.environment["BANNY_OPEN_DOC"]
+            guard let p = env, !p.isEmpty else { return }
+            try? ("editor open, env=\(p)\n")
+                .write(to: docs.appendingPathComponent("debug-editor.log"),
+                       atomically: true, encoding: .utf8)
+            // A bare name resolves inside our own Documents (the container
+            // UUID changes on reinstall, so absolute host paths go stale).
+            let root = p.contains("/") ? URL(fileURLWithPath: p)
+                                       : docs.appendingPathComponent(p)
+            func dlog(_ m: String) {
+                let f = docs.appendingPathComponent("debug-open.log")
+                let line = m + "\n"
+                if let h = try? FileHandle(forWritingTo: f) {
+                    h.seekToEndOfFile(); h.write(line.data(using: .utf8)!); try? h.close()
+                } else { try? line.write(to: f, atomically: true, encoding: .utf8) }
+            }
+            dlog("hook fired, root=\(root.path), exists=\(FileManager.default.fileExists(atPath: root.path))")
+            guard let showData = try? Data(contentsOf: root.appendingPathComponent("show.json")),
+                  let doc = try? JSONDecoder().decode(ShowDocument.self, from: showData)
+            else { dlog("decode FAILED"); return }
+            func media(_ folder: String) -> [String: (data: Data, ext: String)] {
+                var out: [String: (data: Data, ext: String)] = [:]
+                let dir = root.appendingPathComponent(folder)
+                for f in (try? FileManager.default.contentsOfDirectory(
+                            at: dir, includingPropertiesForKeys: nil)) ?? [] {
+                    guard let d = try? Data(contentsOf: f) else { continue }
+                    out[f.deletingPathExtension().lastPathComponent] = (d, f.pathExtension)
+                }
+                return out
+            }
+            file.audio = media("audio")
+            file.assetsMedia = media("bg").merging(media("assets")) { _, new in new }
+            file.model.document = doc
+            dlog("applied: \(file.audio.count) audio, \(file.assetsMedia.count) assets")
+        }
+    }
+}
+#endif
 
 /// Shared baked-part catalog, loaded once from the app bundle.
 enum SharedAssets {
