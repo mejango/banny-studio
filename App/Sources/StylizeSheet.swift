@@ -1,5 +1,6 @@
 import SwiftUI
 import ImageIO
+import AVFoundation
 import UniformTypeIdentifiers
 import BannyRender
 
@@ -23,12 +24,27 @@ struct StylizeSheet: View {
     @State private var working = false
     @State private var stylePalette: [SIMD3<Float>]?
 
+    /// Palette references: bank images directly, videos via a poster frame —
+    /// the ep1 backdrops are videos, and they ARE the house style.
     private var bankImages: [CGImage] {
-        model.document.assets.filter { $0.kind == .image }.compactMap {
-            guard let media = file.assetsMedia[$0.id],
-                  let src = CGImageSourceCreateWithData(media.data as CFData, nil)
-            else { return nil }
-            return CGImageSourceCreateImageAtIndex(src, 0, nil)
+        model.document.assets.compactMap { asset -> CGImage? in
+            guard let media = file.assetsMedia[asset.id] else { return nil }
+            switch asset.kind {
+            case .image:
+                guard let src = CGImageSourceCreateWithData(media.data as CFData, nil)
+                else { return nil }
+                return CGImageSourceCreateImageAtIndex(src, 0, nil)
+            case .video:
+                let tmp = FileManager.default.temporaryDirectory
+                    .appendingPathComponent("palette-\(asset.id).\(media.ext)")
+                if !FileManager.default.fileExists(atPath: tmp.path) {
+                    try? media.data.write(to: tmp)
+                }
+                let gen = AVAssetImageGenerator(asset: AVURLAsset(url: tmp))
+                gen.maximumSize = CGSize(width: 320, height: 180)
+                return try? gen.copyCGImage(at: CMTime(seconds: 1, preferredTimescale: 600),
+                                            actualTime: nil)
+            }
         }
     }
 
@@ -86,7 +102,10 @@ struct StylizeSheet: View {
             guard case .success(let url) = result else { return }
             let scoped = url.startAccessingSecurityScopedResource()
             defer { if scoped { url.stopAccessingSecurityScopedResource() } }
-            if let src = CGImageSourceCreateWithURL(url as CFURL, nil),
+            // Read the bytes NOW — a file-backed CGImage decodes lazily,
+            // after the security scope is gone, and comes out black.
+            if let data = try? Data(contentsOf: url),
+               let src = CGImageSourceCreateWithData(data as CFData, nil),
                let img = CGImageSourceCreateImageAtIndex(src, 0, nil) {
                 source = img
                 name = url.deletingPathExtension().lastPathComponent
