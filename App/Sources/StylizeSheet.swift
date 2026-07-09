@@ -48,13 +48,16 @@ struct StylizeSheet: View {
     @State private var name = "New backdrop"
     @State private var gridWidth = 480.0
     @State private var colors = 28.0
-    @State private var dither = 0.5
+    @State private var dither = 0.2
     @State private var smooth = 2.0
     @State private var flatness = 16.0
     @State private var outline = true
     @State private var matchShow = true
+    @State private var subjectAware = true
     @State private var working = false
     @State private var stylePalette: [SIMD3<Float>]?
+    /// Vision subject mask at grid resolution, computed per (source, grid).
+    @State private var fgMask: [Float]?
 
     /// Palette references: bank images directly, videos via a poster frame —
     /// the ep1 backdrops are videos, and they ARE the house style.
@@ -122,9 +125,14 @@ struct StylizeSheet: View {
                     Slider(value: $dither, in: 0...1)
                     Toggle("Outline", isOn: $outline).font(.caption)
                 }
-                Toggle("Match show palette (learned from bank images)", isOn: $matchShow)
-                    .font(.caption)
-                    .disabled(bankImages.isEmpty)
+                HStack {
+                    Toggle("Match show palette (learned from bank images)", isOn: $matchShow)
+                        .font(.caption)
+                        .disabled(bankImages.isEmpty)
+                    Toggle("Subject aware", isOn: $subjectAware)
+                        .font(.caption)
+                        .help("Vision finds the subjects; they get detail and outlines while the backdrop stays flat")
+                }
                 HStack {
                     Button("Different image…") { importing = true }
                     Spacer()
@@ -156,7 +164,8 @@ struct StylizeSheet: View {
                 restyle()
             }
         }
-        .onChange(of: gridWidth) { _, _ in restyle() }
+        .onChange(of: gridWidth) { _, _ in fgMask = nil; restyle() }
+        .onChange(of: subjectAware) { _, _ in restyle() }
         .onChange(of: dither) { _, _ in restyle() }
         .onChange(of: smooth) { _, _ in restyle() }
         .onChange(of: flatness) { _, _ in restyle() }
@@ -168,11 +177,15 @@ struct StylizeSheet: View {
     private func restyle() {
         guard let source else { return }
         working = true
-        let opts = PixelStyler.Options(gridWidth: Int(gridWidth), paletteSize: Int(colors),
+        let gw = Int(gridWidth)
+        let gh = PixelStyler.gridHeight(of: source, gridWidth: gw)
+        var opts = PixelStyler.Options(gridWidth: gw, paletteSize: Int(colors),
                                        dither: dither, smooth: Int(smooth),
                                        flatness: flatness, outline: outline, scale: 2)
         let refs = matchShow ? bankImages : []
         let cachedPalette = stylePalette
+        let cachedMask = fgMask
+        let aware = subjectAware
         let k = Int(colors)
         Task.detached(priority: .userInitiated) {
             let pal: [SIMD3<Float>]
@@ -183,9 +196,32 @@ struct StylizeSheet: View {
             } else {
                 pal = PixelStyler.palette(from: [source], size: k)
             }
-            let out = PixelStyler.stylize(source, palette: pal, options: opts)
+            var mask = cachedMask
+            if aware, mask == nil {
+                mask = SemanticGuide.foregroundMask(of: source, gridW: gw, gridH: gh)
+            }
+            var out: CGImage?
+            if aware, let mask {
+                // Two drawings: flat atmospheric backdrop, detailed subjects.
+                var bgOpts = opts
+                bgOpts.smooth += 1
+                bgOpts.flatness = max(bgOpts.flatness, 22)
+                bgOpts.outline = false
+                var fgOpts = opts
+                fgOpts.smooth = max(0, fgOpts.smooth - 1)
+                fgOpts.flatness = min(fgOpts.flatness, 10)
+                if let bg = PixelStyler.stylize(source, palette: pal, options: bgOpts),
+                   let fg = PixelStyler.stylize(source, palette: pal, options: fgOpts) {
+                    out = PixelStyler.composite(fg: fg, bg: bg, mask: mask,
+                                                gridW: gw, gridH: gh, scale: 2)
+                }
+            }
+            if out == nil {
+                out = PixelStyler.stylize(source, palette: pal, options: opts)
+            }
             await MainActor.run {
                 stylePalette = pal
+                fgMask = mask
                 preview = out
                 working = false
             }

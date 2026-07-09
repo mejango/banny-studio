@@ -167,6 +167,40 @@ public enum PixelStyler {
         return out
     }
 
+    // MARK: - Compositing (subject-aware two-pass)
+
+    /// Blends two stylized renders by a foreground mask (grid resolution,
+    /// values 0...1): subjects come from `fg`, backdrop from `bg`. Both
+    /// should share a palette so seams read as region borders, not cuts.
+    public static func composite(fg: CGImage, bg: CGImage, mask: [Float],
+                                 gridW: Int, gridH: Int, scale: Int) -> CGImage? {
+        let w = gridW * max(1, scale), h = gridH * max(1, scale)
+        guard var fgPx = rgba(of: fg, width: w, height: h),
+              let bgPx = rgba(of: bg, width: w, height: h) else { return nil }
+        for y in 0..<h {
+            let my = min(gridH - 1, y / max(1, scale))
+            for x in 0..<w {
+                let mx = min(gridW - 1, x / max(1, scale))
+                if mask[my * gridW + mx] < 0.5 {
+                    let i = (y * w + x) * 4
+                    fgPx[i] = bgPx[i]; fgPx[i+1] = bgPx[i+1]; fgPx[i+2] = bgPx[i+2]
+                }
+            }
+        }
+        return fgPx.withUnsafeMutableBytes { raw -> CGImage? in
+            CGContext(data: raw.baseAddress, width: w, height: h,
+                      bitsPerComponent: 8, bytesPerRow: w * 4,
+                      space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                      bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)?.makeImage()
+        }
+    }
+
+    /// Grid height the stylizer will use for a source at a given grid width.
+    public static func gridHeight(of image: CGImage, gridWidth: Int) -> Int {
+        max(9, Int((Double(image.height) / Double(image.width)
+            * Double(max(16, gridWidth))).rounded()))
+    }
+
     // MARK: - Stylize
 
     private static let bayer: [Float] = [
