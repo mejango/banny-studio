@@ -7,10 +7,11 @@ func shipCommand(_ args: [String]) throws {
     // banny-tool ship <show.bannyshow> <out.mp4> [--720|--1080|--4k]
     let pkgURL = URL(fileURLWithPath: args[0])
     let outURL = URL(fileURLWithPath: args[1])
-    let options: ShowExporter.Options = args.contains("--720") ? .p720
+    let tier: ShowExporter.Options = args.contains("--720") ? .p720
         : args.contains("--4k") ? .p2160 : .p1080
 
     let contents = try ShowPackage.read(from: pkgURL)
+    let options = tier.fitted(aspect: contents.document.settings.frameAspect)
     let assetsRoot = URL(fileURLWithPath: #filePath)
         .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
         .appendingPathComponent("App/Resources/BannyAssets")

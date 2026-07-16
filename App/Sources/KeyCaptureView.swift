@@ -106,10 +106,12 @@ struct KeyCaptureView: NSViewRepresentable {
                 }
                 return false
             }
-            // Light tracks and image recording take the arrows + pen keys.
-            if model.isImageRecording
+            // Light tracks, the Scenes track (camera), image recording, and
+            // camera recording take the arrows + pen keys.
+            if model.isImageRecording || model.isCameraRecording
                 || (model.selectedTrackKey.map { key in
                         model.scene.lightTracks.contains(where: { $0.id == key })
+                            || model.scene.backgroundTracks.contains(where: { $0.id == key })
                     } ?? false) {
                 let lightMap: [UInt16: StudioModel.LightKey] = [
                     123: .left, 124: .right, 126: .up, 125: .down,

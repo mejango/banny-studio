@@ -389,6 +389,28 @@ final class StudioModel {
         }
     }
 
+    /// The selected background (scene) cue, if any.
+    var selectedBackgroundCueValue: BackgroundCue? {
+        guard let id = selectedBackgroundCue else { return nil }
+        for t in scene.backgroundTracks {
+            if let c = t.cues.first(where: { $0.id == id }) { return c }
+        }
+        return nil
+    }
+
+    func updateSelectedBackgroundCue(_ body: (inout BackgroundCue) -> Void) {
+        guard let id = selectedBackgroundCue else { return }
+        for ti in scene.backgroundTracks.indices {
+            if let ci = scene.backgroundTracks[ti].cues.firstIndex(where: { $0.id == id }) {
+                body(&scene.backgroundTracks[ti].cues[ci])
+                return
+            }
+        }
+    }
+
+    /// Output frame aspect (w/h) from the document settings.
+    var frameAspect: Double { document.settings.frameAspect }
+
     /// The selected image cue's track/cue indices, if any.
     var selectedImageCuePath: (track: Int, cue: Int)? {
         guard let id = selectedImageCue else { return nil }
@@ -620,6 +642,145 @@ final class StudioModel {
         }
     }
 
+    // MARK: - Camera path recording (drive the frame's cut of the scene live)
+
+    /// Pen speeds while recording: pan in frame-widths/sec, zoom in zoom/sec.
+    var cameraPanSpeed: Double
+        = UserDefaults.standard.object(forKey: "cameraPanSpeed") as? Double ?? 0.4 {
+        didSet { UserDefaults.standard.set(cameraPanSpeed, forKey: "cameraPanSpeed") }
+    }
+    var cameraZoomSpeed: Double
+        = UserDefaults.standard.object(forKey: "cameraZoomSpeed") as? Double ?? 1.2 {
+        didSet { UserDefaults.standard.set(cameraZoomSpeed, forKey: "cameraZoomSpeed") }
+    }
+
+    /// Preview camera while the Scenes track is selected and paused: arrows,
+    /// +/−, and stage drags aim the frame WITHOUT recording; "Set start
+    /// position" commits it (mirrors the characters' freeform → commit flow).
+    private(set) var cameraFreeform: CameraState?
+    var cameraFreeformActive: Bool { cameraFreeform != nil }
+
+    /// The camera the pen starts from: the active cue's camera at the playhead.
+    private func currentCueCamera() -> CameraState {
+        scene.activeBackgroundCue(at: time)?.camera(at: time) ?? CameraState()
+    }
+
+    /// Stage drag while the Scenes track is selected: grab-the-world pan.
+    func cameraFreeformDrag(dx: Double, dy: Double) {
+        var pen = cameraFreeform ?? currentCueCamera()
+        pen.x = min(1.5, max(-0.5, pen.x - dx / max(0.1, pen.zoom)))
+        pen.y = min(1.5, max(-0.5, pen.y - dy / max(0.1, pen.zoom)))
+        cameraFreeform = pen
+    }
+
+    /// Saves the previewed framing as the scene cue's camera start.
+    func commitCameraStart() {
+        guard let pen = cameraFreeform else { return }
+        defer { cameraFreeform = nil }
+        let id = selectedBackgroundCue ?? scene.activeBackgroundCue(at: time)?.id
+        guard let id else { return }
+        registerUndoSnapshot(label: "Set Frame Start")
+        for ti in scene.backgroundTracks.indices {
+            if let ci = scene.backgroundTracks[ti].cues.firstIndex(where: { $0.id == id }) {
+                scene.backgroundTracks[ti].cues[ci].camFrom = pen
+                return
+            }
+        }
+    }
+
+    private(set) var cameraRecording = false
+    private var cameraSamples: [(t: Double, x: Double, y: Double, zoom: Double)] = []
+    /// The camera "pen": arrows pan the focus, +/- zoom, stage drags aim it.
+    private var cameraPen: (x: Double, y: Double, zoom: Double) = (0.5, 0.5, 1)
+    var isCameraRecording: Bool { cameraRecording }
+    var cameraPenNow: (x: Double, y: Double, zoom: Double)? { cameraRecording ? cameraPen : nil }
+
+    func cameraRecordSample(x: Double? = nil, y: Double? = nil) {
+        guard cameraRecording else { return }
+        if let x { cameraPen.x = min(1.5, max(-0.5, x)) }
+        if let y { cameraPen.y = min(1.5, max(-0.5, y)) }
+        if let last = cameraSamples.last, time - last.t < 0.15 { return } // ~7Hz
+        cameraSamples.append((time, cameraPen.x, cameraPen.y, cameraPen.zoom))
+    }
+
+    /// Turns the recorded pen path into camera keyframes on the Scenes track:
+    /// cues overlapping the take split into linear from→to pieces (same
+    /// punch-in shape as light takes); the piece after the take holds the
+    /// final camera.
+    private func commitCameraRecording() {
+        defer {
+            cameraRecording = false
+            cameraSamples = []
+        }
+        guard cameraSamples.count >= 2, !scene.backgroundTracks.isEmpty else { return }
+        registerUndoSnapshot(label: "Record Camera")
+        // Simplify: drop samples that barely deviate from their neighbours' line.
+        var pts = cameraSamples
+        var i = 1
+        while i < pts.count - 1 {
+            let a = pts[i - 1], b = pts[i], c = pts[i + 1]
+            let f = (b.t - a.t) / max(0.001, c.t - a.t)
+            if abs(a.x + (c.x - a.x) * f - b.x) < 0.008,
+               abs(a.y + (c.y - a.y) * f - b.y) < 0.008,
+               abs(a.zoom + (c.zoom - a.zoom) * f - b.zoom) < 0.02 {
+                pts.remove(at: i)
+            } else {
+                i += 1
+            }
+        }
+        let t0 = pts[0].t
+        let tEnd = pts[pts.count - 1].t
+        func cam(at t: Double) -> CameraState {
+            if t <= t0 { return CameraState(x: pts[0].x, y: pts[0].y, zoom: pts[0].zoom) }
+            for k in 0..<(pts.count - 1) where t < pts[k + 1].t {
+                let a = pts[k], b = pts[k + 1]
+                let f = (t - a.t) / max(0.001, b.t - a.t)
+                return CameraState(x: a.x + (b.x - a.x) * f,
+                                   y: a.y + (b.y - a.y) * f,
+                                   zoom: a.zoom + (b.zoom - a.zoom) * f)
+            }
+            let last = pts[pts.count - 1]
+            return CameraState(x: last.x, y: last.y, zoom: last.zoom)
+        }
+        var out: [BackgroundCue] = []
+        for cue in scene.backgroundTracks[0].cues {
+            let end = cue.start + cue.dur
+            if end <= t0 + 0.01 || cue.start >= tEnd - 0.01 {
+                out.append(cue)
+                continue
+            }
+            if cue.start < t0 - 0.02 {
+                var head = cue
+                if head.camTo != nil { head.camTo = cue.camera(at: t0) }
+                head.dur = t0 - cue.start
+                out.append(head)
+            }
+            let lo = max(cue.start, t0)
+            let hi = min(end, tEnd)
+            let bounds = [lo] + pts.map(\.t).filter { $0 > lo + 0.02 && $0 < hi - 0.02 } + [hi]
+            for k in 0..<(bounds.count - 1) where bounds[k + 1] - bounds[k] > 0.02 {
+                var piece = cue
+                piece.id = ShowDocumentFile.newID()
+                piece.start = bounds[k]
+                piece.dur = bounds[k + 1] - bounds[k]
+                piece.camFrom = cam(at: bounds[k])
+                piece.camTo = cam(at: bounds[k + 1])
+                out.append(piece)
+            }
+            if end > tEnd + 0.02 {
+                var tail = cue
+                tail.id = ShowDocumentFile.newID()
+                tail.start = tEnd
+                tail.dur = end - tEnd
+                tail.camFrom = cam(at: tEnd)
+                tail.camTo = nil
+                out.append(tail)
+            }
+        }
+        scene.backgroundTracks[0].cues = out.sorted { $0.start < $1.start }
+        backgroundRevision += 1
+    }
+
     // MARK: - Light path recording ("draw" the light over time)
 
     private(set) var lightRecordTrack: Int?
@@ -653,12 +814,30 @@ final class StudioModel {
             imageRecordSample(x: imagePen.x, y: imagePen.y)
             return
         }
+        if isCameraRecording {
+            cameraPen.x = min(1.5, max(-0.5, cameraPen.x + dx * cameraPanSpeed * dt))
+            cameraPen.y = min(1.5, max(-0.5, cameraPen.y + dy * cameraPanSpeed * dt))
+            cameraPen.zoom = min(4, max(0.5, cameraPen.zoom + di * cameraZoomSpeed * dt))
+            cameraRecordSample()
+            return
+        }
         if isLightRecording {
             lightPen.x = min(1.1, max(-0.1, lightPen.x + dx * 0.4 * dt))
             lightPen.y = min(1.1, max(-0.1, lightPen.y + dy * 0.4 * dt))
             lightPen.intensity = min(1, max(0, lightPen.intensity + di * 0.8 * dt))
             lightPen.size = min(300, max(40, lightPen.size + ds * 160 * dt))
             lightRecordSample(x: lightPen.x, y: lightPen.y)
+            return
+        }
+        // Paused nudge of the FRAME while the Scenes track is selected: the
+        // preview pen moves; "Set start position" commits it.
+        if !playing, let key = selectedTrackKey,
+           scene.backgroundTracks.contains(where: { $0.id == key }) {
+            var pen = cameraFreeform ?? currentCueCamera()
+            pen.x = min(1.5, max(-0.5, pen.x + dx * cameraPanSpeed * dt))
+            pen.y = min(1.5, max(-0.5, pen.y + dy * cameraPanSpeed * dt))
+            pen.zoom = min(4, max(0.5, pen.zoom + di * cameraZoomSpeed * dt))
+            cameraFreeform = pen
             return
         }
         // Paused nudge of the selected/active cue on the selected light track.
@@ -787,6 +966,23 @@ final class StudioModel {
             file?.audioEngine?.syncPlayback(self)
             return
         }
+        // The selected Scenes track records the CAMERA: arrows pan, +/- zoom,
+        // stage drags aim the focus.
+        if let key = selectedTrackKey,
+           scene.backgroundTracks.contains(where: { $0.id == key }) {
+            // An uncommitted freeform framing becomes the take's start.
+            let cam = cameraFreeform
+                ?? scene.activeBackgroundCue(at: time)?.camera(at: time) ?? CameraState()
+            clearFreeform()
+            cameraRecording = true
+            cameraSamples = []
+            cameraPen = (cam.x, cam.y, cam.zoom)
+            recording = true
+            playing = true
+            startWall = Date.timeIntervalSinceReferenceDate - time
+            file?.audioEngine?.syncPlayback(self)
+            return
+        }
         // A selected light track records by DRAWING on the stage.
         if let key = selectedTrackKey,
            let li = scene.lightTracks.firstIndex(where: { $0.id == key }) {
@@ -836,6 +1032,11 @@ final class StudioModel {
     private func finishRecording() {
         if isImageRecording {
             commitImageRecording()
+            recording = false
+            return
+        }
+        if isCameraRecording {
+            commitCameraRecording()
             recording = false
             return
         }
@@ -932,6 +1133,7 @@ final class StudioModel {
         freeformStarts = [:]
         freeformClock = 0
         freeformLastEvent = 0
+        cameraFreeform = nil
     }
 
     private func freeformKey(code: EventCode, down: Bool) {
@@ -1230,11 +1432,17 @@ final class StudioModel {
             var first = scene.backgroundTracks[ti].cues[ci]
             guard t > first.start + 0.1, t < first.start + first.dur - 0.1 else { return }
             registerUndoSnapshot(label: "Split Background")
+            let midCam = first.camera(at: t)
             var second = first
             second.id = ShowDocumentFile.newID()
             second.start = t
             second.dur = first.start + first.dur - t
             first.dur = t - first.start
+            // An animated camera keeps its ramp by meeting at the split point.
+            if first.camTo != nil {
+                first.camTo = midCam
+                second.camFrom = midCam
+            }
             scene.backgroundTracks[ti].cues[ci] = first
             scene.backgroundTracks[ti].cues.insert(second, at: ci + 1)
             selectedBackgroundCue = second.id

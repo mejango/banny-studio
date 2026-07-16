@@ -56,9 +56,13 @@ public struct SceneSimulator: Sendable {
 
     public func pose(characterIndex: Int, at t: Double) -> CharacterPose {
         let c = state.characters[characterIndex]
-        let sim = simulatePosition(events: c.events,
-                                   recStart: c.recStart ?? StartPose(x: c.x, depth: c.depth, face: c.face),
-                                   speed: c.speed, gScale: state.gScale, at: t)
+        // Checkpointed + cached: bit-identical to simulatePosition, but a
+        // query costs ~10s of integration, not t — hour-long shows stay 60fps.
+        let sim = PositionTimelineCache.shared.timeline(
+            events: c.events,
+            recStart: c.recStart ?? StartPose(x: c.x, depth: c.depth, face: c.face),
+            speed: c.speed, gScale: state.gScale, coveringAtLeast: t)
+            .pose(at: t)
 
         // State scan (web resetToTime): last-writer-wins over events strictly before t.
         var eye = EyeExpression.open

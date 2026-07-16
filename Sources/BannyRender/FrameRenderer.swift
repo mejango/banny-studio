@@ -53,6 +53,24 @@ public struct FrameRenderer: Sendable {
 
         ctx.setFillColor(Self.stageFill)
         ctx.fill(CGRect(x: 0, y: 0, width: W, height: outH))
+
+        // Virtual camera: the active scene cue's pan/zoom applies to the whole
+        // world (background, images, shadows, characters) — captions stay put.
+        ctx.saveGState()
+        if var cam = scene.activeBackgroundCue(at: t)?.camera(at: t) {
+            if let background {
+                // The frame never sees past the background's edges.
+                let r = Self.backgroundRect(imageWidth: background.image.width,
+                                            imageHeight: background.image.height,
+                                            crop: background.crop,
+                                            size: CGSize(width: W, height: outH))
+                cam = Self.clampCamera(cam, background: r, size: CGSize(width: W, height: outH))
+            }
+            let z = max(0.1, cam.zoom)
+            ctx.translateBy(x: CGFloat(W / 2), y: CGFloat(outH / 2))
+            ctx.scaleBy(x: CGFloat(z), y: CGFloat(z))
+            ctx.translateBy(x: CGFloat(-cam.x * W), y: CGFloat(-cam.y * outH))
+        }
         if let background {
             drawBackground(background.image, crop: background.crop, size: CGSize(width: W, height: outH), in: ctx)
         }
@@ -114,6 +132,7 @@ public struct FrameRenderer: Sendable {
         for e in entries.sorted(by: { $0.placement.zIndex < $1.placement.zIndex }) {
             drawCharacter(scene.characters[e.index], pose: e.pose, placement: e.placement, in: ctx)
         }
+        ctx.restoreGState() // camera off — captions render in screen space
 
         // Captions gate on track visibility only — a presence-hidden character
         // still speaks (its audio plays), so its line still shows.
@@ -193,6 +212,43 @@ public struct FrameRenderer: Sendable {
             }
         }
         ctx.restoreGState()
+    }
+
+    // MARK: - Camera bounds
+
+    /// Where the background lands in frame coordinates (before any camera).
+    public static func backgroundRect(imageWidth: Int, imageHeight: Int, crop: Crop,
+                                      size: CGSize) -> CGRect {
+        let W = size.width, H = size.height
+        let iw = CGFloat(imageWidth), ih = CGFloat(imageHeight)
+        switch crop {
+        case .stretch, .tile:
+            return CGRect(x: 0, y: 0, width: W, height: H)
+        case .cover, .fit:
+            let s = crop == .cover ? max(W / iw, H / ih) : min(W / iw, H / ih)
+            return CGRect(x: (W - iw * s) / 2, y: (H - ih * s) / 2, width: iw * s, height: ih * s)
+        }
+    }
+
+    /// The camera pinned so the frame never shows space outside the
+    /// background rect `r` — zoom bottoms out at the background bounds and
+    /// the focus can't drag an edge into view.
+    public static func clampCamera(_ cam: CameraState, background r: CGRect,
+                                   size: CGSize) -> CameraState {
+        let W = Double(size.width), H = Double(size.height)
+        guard W > 0, H > 0, r.width > 0, r.height > 0 else { return cam }
+        var out = cam
+        // ponytail: zMin capped at 4 so a tiny fit-cropped image can't force absurd zoom
+        let zMin = min(4, max(W / Double(r.width), H / Double(r.height)))
+        let z = max(max(0.1, cam.zoom), zMin)
+        out.zoom = z
+        let loX = Double(r.minX) / W + 1 / (2 * z)
+        let hiX = Double(r.maxX) / W - 1 / (2 * z)
+        out.x = hiX < loX ? (loX + hiX) / 2 : min(hiX, max(loX, cam.x))
+        let loY = Double(r.minY) / H + 1 / (2 * z)
+        let hiY = Double(r.maxY) / H - 1 / (2 * z)
+        out.y = hiY < loY ? (loY + hiY) / 2 : min(hiY, max(loY, cam.y))
+        return out
     }
 
     // MARK: - Background

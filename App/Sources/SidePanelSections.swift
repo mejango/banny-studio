@@ -57,14 +57,16 @@ struct AssetBankSection: View {
                         Text(asset.kind.rawValue).font(.system(size: 8)).foregroundStyle(.secondary)
                     }
                     Spacer()
-                    Button("BG") { model.addBackgroundCue(assetID: asset.id, assetName: asset.name) }
+                    Button("Add") { model.addBackgroundCue(assetID: asset.id, assetName: asset.name) }
                         .font(.system(size: 9, weight: .bold))
-                        .help("Set as the background from the playhead onward")
-                    if asset.kind == .image {
-                        Button("Stage") { model.addImageTrack(assetID: asset.id, assetName: asset.name) }
-                            .font(.system(size: 9, weight: .bold))
-                            .help("Add to the stage as an image track at the playhead")
-                    }
+                        .help("Add to the show from the playhead onward (right-click for a floating stage image)")
+                        .contextMenu {
+                            if asset.kind == .image {
+                                Button("Add as floating stage image") {
+                                    model.addImageTrack(assetID: asset.id, assetName: asset.name)
+                                }
+                            }
+                        }
                     Button("×") { model.removeAsset(id: asset.id) }
                         .buttonStyle(.plain).foregroundStyle(.red)
                 }
@@ -73,7 +75,7 @@ struct AssetBankSection: View {
             }
         }
         .fileImporter(isPresented: $importing,
-                      allowedContentTypes: [.png, .jpeg, .gif, .webP, .svg, .mpeg4Movie, .quickTimeMovie]) { result in
+                      allowedContentTypes: [.image, .movie]) { result in
             if case .success(let url) = result {
                 model.addAsset(from: url)
             }
@@ -271,6 +273,160 @@ struct LightCueInspector: View {
                     }
                 }
             }
+        }
+    }
+}
+
+/// Output frame shape: horizontal, vertical, or a custom W:H ratio.
+struct FrameSection: View {
+    @Bindable var model: StudioModel
+
+    private enum Preset: String, CaseIterable, Identifiable {
+        case horizontal = "16:9", vertical = "9:16", custom = "Custom"
+        var id: String { rawValue }
+    }
+
+    private var preset: Preset {
+        let s = model.document.settings
+        if s.frameW == 16, s.frameH == 9 { return .horizontal }
+        if s.frameW == 9, s.frameH == 16 { return .vertical }
+        return .custom
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("FRAME").font(.caption.bold()).foregroundStyle(.secondary)
+            Picker("", selection: Binding(
+                get: { preset },
+                set: { p in
+                    model.registerUndoSnapshot(label: "Frame")
+                    switch p {
+                    case .horizontal: setFrame(16, 9)
+                    case .vertical: setFrame(9, 16)
+                    case .custom: setFrame(1, 1) // distinct from the presets
+                    }
+                })) {
+                ForEach(Preset.allCases) { Text($0.rawValue).tag($0) }
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            if preset == .custom {
+                HStack(spacing: 4) {
+                    TextField("W", value: Binding(get: { model.document.settings.frameW },
+                                                  set: { setFrame(max(1, $0), model.document.settings.frameH) }),
+                              format: .number)
+                        .textFieldStyle(.roundedBorder).font(.caption2).frame(width: 48)
+                    Text(":").font(.caption2)
+                    TextField("H", value: Binding(get: { model.document.settings.frameH },
+                                                  set: { setFrame(model.document.settings.frameW, max(1, $0)) }),
+                              format: .number)
+                        .textFieldStyle(.roundedBorder).font(.caption2).frame(width: 48)
+                }
+            }
+            Text("The whole project renders in this shape — stage and export.")
+                .font(.caption2).foregroundStyle(.secondary)
+        }
+    }
+
+    private func setFrame(_ w: Double, _ h: Double) {
+        model.document.settings.frameW = w
+        model.document.settings.frameH = h
+    }
+}
+
+/// Camera pan/zoom for the selected scene cue (or the one under the playhead).
+struct CameraSection: View {
+    @Bindable var model: StudioModel
+
+    /// (track, cue) of the cue being edited.
+    private var path: (track: Int, cue: Int)? {
+        let id = model.selectedBackgroundCue
+            ?? model.scene.activeBackgroundCue(at: model.time)?.id
+        guard let id else { return nil }
+        for (ti, track) in model.scene.backgroundTracks.enumerated() {
+            if let ci = track.cues.firstIndex(where: { $0.id == id }) { return (ti, ci) }
+        }
+        return nil
+    }
+
+    var body: some View {
+        if let path {
+            let binding = Binding(
+                get: { model.scene.backgroundTracks[path.track].cues[path.cue] },
+                set: { model.scene.backgroundTracks[path.track].cues[path.cue] = $0 })
+            VStack(alignment: .leading, spacing: 6) {
+                Text("CAMERA").font(.caption.bold()).foregroundStyle(.secondary)
+                Toggle(isOn: Binding(
+                    get: { binding.wrappedValue.camFrom != nil },
+                    set: { on in
+                        model.registerUndoSnapshot(label: "Camera")
+                        var cue = binding.wrappedValue
+                        cue.camFrom = on ? CameraState() : nil
+                        if !on { cue.camTo = nil }
+                        binding.wrappedValue = cue
+                    })) {
+                    Text("Pan/zoom this scene").font(.caption2)
+                }
+                #if os(macOS)
+                .toggleStyle(.checkbox)
+                #endif
+                if let cam = binding.wrappedValue.camFrom {
+                    camSliders(binding: binding, cam: cam, end: false)
+                    Toggle(isOn: Binding(
+                        get: { binding.wrappedValue.camTo != nil },
+                        set: { on in
+                            model.registerUndoSnapshot(label: "Animate Camera")
+                            var cue = binding.wrappedValue
+                            cue.camTo = on ? cue.camFrom : nil
+                            binding.wrappedValue = cue
+                        })) {
+                        Text("animate over the scene (these values become the START; set the END below)")
+                            .font(.caption2)
+                    }
+                    #if os(macOS)
+                    .toggleStyle(.checkbox)
+                    #endif
+                    if let end = binding.wrappedValue.camTo {
+                        camSliders(binding: binding, cam: end, end: true)
+                    }
+                    Text("Drag the stage to move the focus (second half of the scene moves the end).")
+                        .font(.caption2).foregroundStyle(.secondary)
+                }
+                slider("pan speed", value: Binding(get: { model.cameraPanSpeed },
+                                                   set: { model.cameraPanSpeed = $0 }),
+                       range: 0.1...1.5)
+                slider("zoom speed", value: Binding(get: { model.cameraZoomSpeed },
+                                                    set: { model.cameraZoomSpeed = $0 }),
+                       range: 0.2...3)
+                Text("How fast arrows pan and +/− zoom while recording the camera.")
+                    .font(.caption2).foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func camSliders(binding: Binding<BackgroundCue>, cam: CameraState, end: Bool) -> some View {
+        let set: (WritableKeyPath<CameraState, Double>, Double) -> Void = { key, v in
+            var cue = binding.wrappedValue
+            if end { cue.camTo?[keyPath: key] = v } else { cue.camFrom?[keyPath: key] = v }
+            binding.wrappedValue = cue
+        }
+        slider(end ? "end zoom" : "zoom", value: Binding(get: { cam.zoom }, set: { set(\.zoom, $0) }),
+               range: 0.5...4)
+        slider(end ? "end ←→" : "focus ←→", value: Binding(get: { cam.x }, set: { set(\.x, $0) }),
+               range: 0...1)
+        slider(end ? "end ↑↓" : "focus ↑↓", value: Binding(get: { cam.y }, set: { set(\.y, $0) }),
+               range: 0...1)
+    }
+
+    private func slider(_ label: String, value: Binding<Double>,
+                        range: ClosedRange<Double>) -> some View {
+        HStack {
+            Text(label).font(.caption2).frame(width: 60, alignment: .leading)
+            Slider(value: value, in: range)
+            Text(String(format: "%.2f", value.wrappedValue))
+                .font(.system(size: 9, design: .monospaced)).foregroundStyle(.secondary)
+                .frame(width: 30, alignment: .trailing)
         }
     }
 }

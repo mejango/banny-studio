@@ -119,3 +119,55 @@ let ep1Exists = FileManager.default.fileExists(atPath: "/Users/jango/Documents/b
                                  speed: 320, gScale: 0.6, at: 0.2)
     #expect(after.x > 0.5)
 }
+
+/// The checkpointed timeline must be BIT-identical to the from-zero pure
+/// function — same float ops in the same order — across a fuzz of event
+/// streams and query times. This is the license for SceneSimulator to use it.
+@Test func timelineMatchesFromZeroExactly() {
+    var seed: UInt64 = 0x5EED
+    func rand() -> Double {
+        seed = seed &* 6364136223846793005 &+ 1442695040888963407
+        return Double(seed >> 11) / Double(UInt64.max >> 11)
+    }
+    let codes: [EventCode] = [.arrowLeft, .arrowRight, .arrowUp, .arrowDown, .keyJ]
+    for round in 0..<5 {
+        var events: [PerfEvent] = []
+        var t = 0.0
+        for _ in 0..<300 {
+            t += rand() * 1.2
+            events.append(.key(t: (t * 1000).rounded() / 1000,
+                               code: codes[Int(rand() * 4.99)], down: rand() < 0.5))
+        }
+        let recStart = StartPose(x: 0.2 + rand() * 0.6, depth: rand() - 0.5, face: rand() < 0.5 ? 1 : -1)
+        let speed = 40 + rand() * 560
+        let gScale = 0.3 + rand() * 0.9
+        let timeline = PositionTimeline(events: events, recStart: recStart,
+                                        speed: speed, gScale: gScale, upTo: t + 60)
+        for _ in 0..<120 {
+            let q = rand() * (t + 50)
+            let a = timeline.pose(at: q)
+            let b = simulatePosition(events: events, recStart: recStart,
+                                     speed: speed, gScale: gScale, at: q)
+            #expect(a == b, "round \(round) t=\(q)")
+        }
+    }
+}
+
+/// Hour-long shows must answer pose queries at tick rate: warm-timeline
+/// queries near t=3600 stay ~10s-of-integration cheap.
+@Test func hourLongPoseQueriesStayFast() {
+    var events: [PerfEvent] = []
+    for i in 0..<2000 {
+        let t = Double(i) * 1.8
+        events.append(.key(t: t, code: i % 2 == 0 ? .arrowRight : .arrowLeft, down: i % 4 < 2))
+    }
+    let c = Character(body: .orange, events: events, recStart: StartPose(x: 0.5, depth: 0, face: 1))
+    let sim = SceneSimulator(state: SceneState(characters: [c], gScale: 0.6))
+    _ = sim.pose(characterIndex: 0, at: 3599) // warm the cached timeline
+    let t0 = ContinuousClock.now
+    for i in 0..<60 { // one second of playback ticks at the hour mark
+        _ = sim.pose(characterIndex: 0, at: 3540 + Double(i) / 60.0)
+    }
+    let elapsed = ContinuousClock.now - t0
+    #expect(elapsed < .milliseconds(100), "60 hour-mark queries took \(elapsed)")
+}

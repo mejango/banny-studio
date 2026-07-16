@@ -265,25 +265,78 @@ public struct BackgroundCue: Codable, Equatable, Identifiable, Sendable {
     public var crop: Crop
     /// Display label; nil falls back to the asset's name.
     public var label: String?
+    /// Camera at cue start; nil = no camera (full frame). Optionals decode
+    /// as absent on pre-camera documents.
+    public var camFrom: CameraState?
+    /// Camera at cue end; nil = static. Linear interpolation between.
+    public var camTo: CameraState?
 
     public init(id: String, assetID: String, start: Double, dur: Double, crop: Crop = .cover,
-                label: String? = nil) {
+                label: String? = nil, camFrom: CameraState? = nil, camTo: CameraState? = nil) {
         self.id = id
         self.assetID = assetID
         self.start = start
         self.dur = dur
         self.crop = crop
         self.label = label
+        self.camFrom = camFrom
+        self.camTo = camTo
+    }
+
+    /// Interpolated camera at absolute time t (clamped to the cue).
+    public func camera(at t: Double) -> CameraState? {
+        guard let from = camFrom else { return nil }
+        guard let to = camTo, dur > 0 else { return from }
+        let k = min(1, max(0, (t - start) / dur))
+        return CameraState(x: from.x + (to.x - from.x) * k,
+                           y: from.y + (to.y - from.y) * k,
+                           zoom: from.zoom + (to.zoom - from.zoom) * k)
+    }
+}
+
+/// A virtual camera over the whole frame: focus point (fractions of frame
+/// width/height, lands at frame center) and zoom (1 = full frame).
+public struct CameraState: Codable, Equatable, Sendable {
+    public var x: Double
+    public var y: Double
+    public var zoom: Double
+
+    public init(x: Double = 0.5, y: Double = 0.5, zoom: Double = 1) {
+        self.x = x
+        self.y = y
+        self.zoom = zoom
     }
 }
 
 public struct Settings: Codable, Equatable, Sendable {
     public var activeScene: Int
     public var lightSize: Double
+    /// Output frame aspect as W:H (16:9 horizontal, 9:16 vertical, or custom).
+    public var frameW: Double
+    public var frameH: Double
 
-    public init(activeScene: Int = 0, lightSize: Double = 0) {
+    public init(activeScene: Int = 0, lightSize: Double = 0,
+                frameW: Double = 16, frameH: Double = 9) {
         self.activeScene = activeScene
         self.lightSize = lightSize
+        self.frameW = frameW
+        self.frameH = frameH
+    }
+
+    private enum CodingKeys: String, CodingKey { case activeScene, lightSize, frameW, frameH }
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        activeScene = try c.decodeIfPresent(Int.self, forKey: .activeScene) ?? 0
+        lightSize = try c.decodeIfPresent(Double.self, forKey: .lightSize) ?? 0
+        frameW = try c.decodeIfPresent(Double.self, forKey: .frameW) ?? 16
+        frameH = try c.decodeIfPresent(Double.self, forKey: .frameH) ?? 9
+    }
+
+    /// Frame aspect ratio (w/h), clamped to something renderable.
+    public var frameAspect: Double {
+        let w = frameW > 0 ? frameW : 16
+        let h = frameH > 0 ? frameH : 9
+        return min(4, max(0.25, w / h))
     }
 }
 

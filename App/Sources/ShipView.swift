@@ -150,7 +150,8 @@ struct ShipButton: View {
                     assets: SharedAssets.catalog,
                     audioURL: { audioURLs[$0] },
                     assetURL: { assetURLs[$0] },
-                    options: .p1080,
+                    options: ShowExporter.Options.p1080
+                        .fitted(aspect: document.settings.frameAspect),
                     to: out,
                     progress: { p in
                         Task { @MainActor in progress = p }

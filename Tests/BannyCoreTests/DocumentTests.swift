@@ -38,6 +38,30 @@ import Testing
     #expect(back == doc)
 }
 
+@Test func cameraAndFrameDefaults() throws {
+    // Pre-camera documents: settings without frame keys → 16:9; cues without
+    // camera keys → nil (identity camera).
+    let old = try JSONDecoder().decode(Settings.self, from: Data(#"{"activeScene":0,"lightSize":0}"#.utf8))
+    #expect(old.frameW == 16 && old.frameH == 9)
+    #expect(abs(old.frameAspect - 16.0 / 9.0) < 1e-9)
+    let cue = try JSONDecoder().decode(
+        BackgroundCue.self,
+        from: Data(#"{"id":"b","assetID":"a","start":0,"dur":10,"crop":"cover"}"#.utf8))
+    #expect(cue.camera(at: 5) == nil)
+
+    // Camera interpolation: midpoint of an animated cue is halfway.
+    var animated = cue
+    animated.camFrom = CameraState(x: 0.2, y: 0.4, zoom: 1)
+    animated.camTo = CameraState(x: 0.8, y: 0.6, zoom: 3)
+    let mid = animated.camera(at: 5)
+    #expect(mid == CameraState(x: 0.5, y: 0.5, zoom: 2))
+    // Static camera holds its from state; round trip keeps the fields.
+    animated.camTo = nil
+    #expect(animated.camera(at: 9) == animated.camFrom)
+    let back = try JSONDecoder().decode(BackgroundCue.self, from: JSONEncoder().encode(animated))
+    #expect(back == animated)
+}
+
 @Test func perfEventWireFormat() throws {
     let key = PerfEvent.key(t: 1.25, code: .arrowRight, down: true)
     let keyJSON = try JSONSerialization.jsonObject(with: JSONEncoder().encode(key)) as! [String: Any]

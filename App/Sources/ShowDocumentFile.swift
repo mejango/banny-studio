@@ -130,7 +130,15 @@ final class ShowDocumentFile: ReferenceFileDocument {
     }
 
     static func defaultSceneState() -> SceneState {
-        SceneState(characters: [Character(body: .orange, x: 0.5)],
-                   lights: [Light(x: 0.80, y: 0.18)])
+        var state = SceneState(characters: [Character(body: .original, x: 0.5)],
+                               lights: [Light(x: 0.80, y: 0.18)])
+        // A real light track from the start (the legacy `lights` sun stays as
+        // the fallback beyond the cue, same position). Short cue: the timeline
+        // duration follows contentEnd, so a long cue would bloat a new project
+        // to hours and make every timeline redraw resolve thousands of ticks.
+        state.lightTracks = [LightTrack(id: newID(), name: "Light 1",
+                                        cues: [LightCue(id: newID(), start: 0, dur: 10,
+                                                        from: LightState())])]
+        return state
     }
 }

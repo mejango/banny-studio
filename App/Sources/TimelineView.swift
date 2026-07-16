@@ -1,4 +1,5 @@
 import SwiftUI
+import UniformTypeIdentifiers
 import BannyCore
 #if os(macOS)
 import AppKit
@@ -186,12 +187,20 @@ struct StudioTimelineView: View {
     /// Pointer position over the lanes (content coords) for context menus.
     @State private var hoverLanePoint: CGPoint?
     /// Click/double-click on an empty audio-track spot → import a file there.
+    /// Presentation flags are SEPARATE Bools: SwiftUI writes false to the
+    /// fileImporter's isPresented binding on dismissal, and deriving it from
+    /// the payload state nils the payload before onCompletion reads it.
     @State private var audioImportAt: (trackIndex: Int, t: Double)?
+    @State private var audioImportShown = false
     /// Empty media-lane click: add-menu popover (import / bank / paste).
     @State private var mediaAddAt: (trackIndex: Int, t: Double, x: CGFloat, y: CGFloat)?
     /// Collapsed scene sections (background cue ids) — folded to thin strips.
     @State private var collapsedSections: Set<String> = []
     @State private var imageImportAt: (trackIndex: Int, t: Double)?
+    @State private var imageImportShown = false
+    /// Scenes-row context menu: import a file and cue it as the scene from t.
+    @State private var sceneImportAt: Double?
+    @State private var sceneImportShown = false
     /// Wardrobe-strip click: add a timed outfit change here.
     @State private var outfitPopover: (char: Int, t: Double, x: CGFloat, y: CGFloat)?
     @State private var renamingText = ""
@@ -316,6 +325,18 @@ struct StudioTimelineView: View {
                                     y: laneTop(of: row) + presenceStripH + 13 + 13 * lines + 2
                                         - scrollOffset.y)
                     }
+                    if onScreen, case .background = row, model.cameraFreeformActive {
+                        Button("Set start position") { model.commitCameraStart() }
+                            .buttonStyle(.plain)
+                            .font(.system(size: 9, weight: .semibold))
+                            .foregroundStyle(.orange)
+                            .padding(.horizontal, 6).padding(.vertical, 2)
+                            .background(Color.orange.opacity(0.12), in: Capsule())
+                            .overlay(Capsule().stroke(Color.orange.opacity(0.55), lineWidth: 1))
+                            .help("Save this framing as the scene's camera start")
+                            .offset(x: 12 + 34 + 10,
+                                    y: laneTop(of: row) + presenceStripH + 8 - scrollOffset.y)
+                    }
                 }
                 if let row = renamingRow {
                     TextField("name", text: $renamingText)
@@ -382,8 +403,7 @@ struct StudioTimelineView: View {
                         pinchZoomBase = nil
                         pinchAnchor = nil
                     })
-        .fileImporter(isPresented: Binding(get: { audioImportAt != nil },
-                                           set: { if !$0 { audioImportAt = nil } }),
+        .fileImporter(isPresented: $audioImportShown,
                       allowedContentTypes: [.audio, .mp3, .mpeg4Audio, .wav]) { result in
             if case .success(let url) = result, let target = audioImportAt {
                 model.addAudioClip(from: url, characterIndex: nil,
@@ -391,15 +411,22 @@ struct StudioTimelineView: View {
             }
             audioImportAt = nil
         }
-        .fileImporter(isPresented: Binding(get: { imageImportAt != nil },
-                                           set: { if !$0 { imageImportAt = nil } }),
-                      allowedContentTypes: [.png, .jpeg, .gif, .webP, .svg]) { result in
+        .fileImporter(isPresented: $imageImportShown,
+                      allowedContentTypes: [.image]) { result in
             if case .success(let url) = result, let target = imageImportAt,
                let asset = model.addAsset(from: url) {
                 model.addMediaImageCue(trackIndex: target.trackIndex,
                                        assetID: asset.id, at: target.t)
             }
             imageImportAt = nil
+        }
+        .fileImporter(isPresented: $sceneImportShown,
+                      allowedContentTypes: [.image, .movie]) { result in
+            if case .success(let url) = result, let t = sceneImportAt,
+               let asset = model.addAsset(from: url) {
+                model.addBackgroundCue(assetID: asset.id, assetName: asset.name, at: t)
+            }
+            sceneImportAt = nil
         }
         .onChange(of: model.timelineDeleteRequest) { _, _ in deleteSelection() }
         #if os(macOS)
@@ -474,6 +501,9 @@ struct StudioTimelineView: View {
             let lineCount = CGFloat(3 + mixReadout(c.trackFx).count)
             let needed = presenceStripH + 13 + 13 * lineCount + 32 + wardrobeStripH
             h = max(h + 26, needed)
+        }
+        if case .background = row, model.cameraFreeformActive {
+            h = max(h, presenceStripH + 40)
         }
         return h
     }
@@ -1170,10 +1200,12 @@ struct StudioTimelineView: View {
                                             .font(.caption.bold())
                                         Button("Import audio…") {
                                             audioImportAt = (ma.trackIndex, ma.t)
+                                            audioImportShown = true
                                             mediaAddAt = nil
                                         }
                                         Button("Import image…") {
                                             imageImportAt = (ma.trackIndex, ma.t)
+                                            imageImportShown = true
                                             mediaAddAt = nil
                                         }
                                         #if os(macOS)
@@ -1272,10 +1304,12 @@ struct StudioTimelineView: View {
                     if !collapsedSections.isEmpty {
                         Button("Expand all") { collapsedSections = [] }
                     }
-                } else if model.document.assets.isEmpty {
-                    Text("Add images/videos to the Asset Bank first")
                 } else {
-                    Text(String(format: "Background from %.1fs:", t))
+                    Text(String(format: "Scene from %.1fs:", t))
+                    Button("Add image/video…") {
+                        sceneImportAt = t
+                        sceneImportShown = true
+                    }
                     ForEach(model.document.assets) { asset in
                         Button(asset.name) {
                             model.addBackgroundCue(assetID: asset.id, assetName: asset.name, at: t)
@@ -1311,9 +1345,13 @@ struct StudioTimelineView: View {
         let step = [0.5, 1.0, 2.0, 5.0, 10.0, 15.0, 30.0, 60.0]
             .first { CGFloat($0) * pxPerSecond >= 55 } ?? 60
         let minor = step / 5
+        // Only the ticks inside the viewport draw — the cost of a redraw must
+        // never scale with the show's length.
+        let visLo = max(0, time(forX: scrollOffset.x) - step)
+        let visHi = min(model.duration, time(forX: scrollOffset.x + tlViewport.width) + step)
         if CGFloat(minor) * pxPerSecond >= 7 {
-            var m: Double = 0
-            while m <= model.duration {
+            var m: Double = (visLo / minor).rounded(.down) * minor
+            while m <= visHi {
                 if folded(m) { m += minor; continue }
                 let px = x(forTime: m)
                 ctx.stroke(Path { $0.move(to: CGPoint(x: px, y: top + rulerHeight - 6))
@@ -1322,8 +1360,8 @@ struct StudioTimelineView: View {
                 m += minor
             }
         }
-        var t: Double = 0
-        while t <= model.duration {
+        var t: Double = (visLo / step).rounded(.down) * step
+        while t <= visHi {
             if folded(t) { t += step; continue }
             let px = x(forTime: t)
             ctx.stroke(Path { $0.move(to: CGPoint(x: px, y: top + 16))
@@ -1484,14 +1522,38 @@ struct StudioTimelineView: View {
             for cue in cues {
                 let leadButt = cues.contains { abs(($0.start + $0.dur) - cue.start) < 0.02 }
                 let trailButt = cues.contains { abs($0.start - (cue.start + cue.dur)) < 0.02 }
+                // Camera-take chains: same asset butted together reads as one
+                // scene — label only the first piece.
+                let chained = cues.contains {
+                    $0.assetID == cue.assetID && abs(($0.start + $0.dur) - cue.start) < 0.02
+                }
                 drawCueBar(start: cue.start, dur: cue.dur, y: y, h: h,
                            color: Color(red: 0.45, green: 0.4, blue: 0.85),
-                           label: cue.label ?? assetName(cue.assetID),
+                           label: chained ? "" : (cue.label ?? assetName(cue.assetID)),
                            assetID: cue.assetID,
                            selected: model.selectedBackgroundCue == cue.id,
                            animated: false,
                            squareLeading: leadButt, squareTrailing: trailButt,
                            collapsed: collapsedSections.contains(cue.id), ctx: content)
+                // Camera motion bars (same idiom as the light lane): blue =
+                // the focus pans, purple = the zoom changes.
+                if let from = cue.camFrom, !collapsedSections.contains(cue.id) {
+                    let to = cue.camTo ?? from
+                    let bx = x(forTime: cue.start)
+                    let bw = max(2, xw(cue.start, cue.dur))
+                    if abs(to.x - from.x) > 0.002 || abs(to.y - from.y) > 0.002 {
+                        content.fill(Path(roundedRect: CGRect(x: bx + 1, y: y + h - 13,
+                                                              width: bw - 2, height: 3),
+                                          cornerRadius: 1.5),
+                                     with: .color(Color(red: 0.45, green: 0.62, blue: 0.95)))
+                    }
+                    if abs(to.zoom - from.zoom) > 0.005 {
+                        content.fill(Path(roundedRect: CGRect(x: bx + 1, y: y + h - 9,
+                                                              width: bw - 2, height: 3),
+                                          cornerRadius: 1.5),
+                                     with: .color(Color(red: 0.75, green: 0.55, blue: 0.95)))
+                    }
+                }
             }
         }
 
@@ -1734,13 +1796,17 @@ struct StudioTimelineView: View {
                                          topTrailing: squareTrailing ? 0 : 4)
         let barPath = Path(roundedRect: rect, cornerRadii: radii)
         ctx.fill(barPath, with: .color(color.opacity(0.55)))
-        // Tile the asset's image across the band.
+        // Tile the asset's image across the band. Tile count is CAPPED — an
+        // hours-long cue stretches its tiles slightly instead of issuing
+        // thousands of blits. (No scroll-state reads here: this canvas must
+        // stay untouched by scroll ticks.)
         if let thumb = cueThumbs.thumb(assetID: assetID, file: file) {
             var tiled = ctx
             tiled.clip(to: barPath)
             tiled.opacity = 0.85
             let tileH = rect.height
-            let tileW = tileH * CGFloat(thumb.width) / CGFloat(max(1, thumb.height))
+            var tileW = max(1, tileH * CGFloat(thumb.width) / CGFloat(max(1, thumb.height)))
+            if rect.width / tileW > 240 { tileW = rect.width / 240 }
             var tx = rect.minX
             while tx < rect.maxX {
                 tiled.draw(Image(decorative: thumb, scale: 1),
@@ -1749,7 +1815,8 @@ struct StudioTimelineView: View {
             }
         }
         ctx.stroke(barPath, with: .color(selected ? .white : color), lineWidth: selected ? 1.5 : 1)
-        // Label chip stays readable over the artwork.
+        // Label chip stays readable over the artwork (chained pieces skip it).
+        guard !label.isEmpty || animated else { return }
         let text = Text(label + (animated ? " →" : "")).font(.system(size: 9, weight: .medium))
             .foregroundStyle(.white)
         let size = ctx.resolve(text).measure(in: CGSize(width: 200, height: 20))
@@ -2756,6 +2823,11 @@ struct TransportBar: View {
                               tint: Color(red: 0.95, green: 0.78, blue: 0.25))
                     lightChip(title: "Size", keys: ["1", "2"],
                               tint: Color(red: 0.75, green: 0.55, blue: 0.95))
+                } else if model.scene.backgroundTracks.contains(where: { $0.id == model.selectedTrackKey }) {
+                    lightChip(title: "Pan", keys: ["←", "→", "↑", "↓"],
+                              tint: Color(red: 0.45, green: 0.62, blue: 0.95))
+                    lightChip(title: "Zoom", keys: ["−", "+"],
+                              tint: Color(red: 0.75, green: 0.55, blue: 0.95))
                 } else if model.selectedImageCue != nil,
                           model.scene.audioTracks.contains(where: { $0.id == model.selectedTrackKey })
                             || model.scene.imageTracks.contains(where: { $0.id == model.selectedTrackKey }) {
@@ -2817,6 +2889,10 @@ struct TransportBar: View {
         if let key = model.selectedTrackKey,
            let t = model.scene.lightTracks.first(where: { $0.id == key }) {
             return t.name
+        }
+        if let key = model.selectedTrackKey,
+           model.scene.backgroundTracks.contains(where: { $0.id == key }) {
+            return "camera"
         }
         let indices = model.recording ? Array(model.recTargets).sorted()
                                       : Array(model.selection).sorted()

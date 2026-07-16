@@ -27,6 +27,19 @@ public enum ShowExporter {
         public static let p720 = Options(size: CGSize(width: 1280, height: 720), videoBitrate: 8_000_000)
         public static let p1080 = Options()
         public static let p2160 = Options(size: CGSize(width: 3840, height: 2160), videoBitrate: 40_000_000)
+
+        /// The same quality tier reshaped to the document's frame aspect:
+        /// the long side keeps its pixel count (16:9 1080p → 9:16 1080×1920).
+        public func fitted(aspect: Double) -> Options {
+            let long = Double(max(size.width, size.height))
+            let a = min(4, max(0.25, aspect))
+            let w = a >= 1 ? long : long * a
+            let h = a >= 1 ? long / a : long
+            // H.264 wants even dimensions.
+            func even(_ v: Double) -> CGFloat { CGFloat(Int(v.rounded() / 2) * 2) }
+            return Options(size: CGSize(width: even(w), height: even(h)),
+                           fps: fps, videoBitrate: videoBitrate)
+        }
     }
 
     public struct ResolvedSegment {
@@ -286,6 +299,8 @@ public enum ShowExporter {
         private let byID: [String: Asset]
         private let assetURL: (String) -> URL?
         private var stills: [String: CGImage] = [:]
+        private var gifs: [String: GifSequence] = [:]
+        private var notAnimated: Set<String> = []
         private var videos: [String: SequentialVideoReader] = [:]
 
         init(assets: [Asset], assetURL: @escaping (String) -> URL?) {
@@ -297,6 +312,17 @@ public enum ShowExporter {
             guard let asset = byID[cue.assetID], let url = assetURL(cue.assetID) else { return nil }
             switch asset.kind {
             case .image:
+                // Animated GIFs sample by show time — identical to the editor.
+                if !notAnimated.contains(asset.id), gifs[asset.id] == nil {
+                    if let data = try? Data(contentsOf: url), let seq = GifSequence(data: data) {
+                        gifs[asset.id] = seq
+                    } else {
+                        notAnimated.insert(asset.id)
+                    }
+                }
+                if let seq = gifs[asset.id] {
+                    return (seq.frame(at: max(0, t - cue.start)), cue.crop)
+                }
                 if stills[asset.id] == nil {
                     stills[asset.id] = CGImageSourceCreateWithURL(url as CFURL, nil)
                         .flatMap { CGImageSourceCreateImageAtIndex($0, 0, nil) }

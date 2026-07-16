@@ -126,3 +126,118 @@ private func writePNG(_ image: CGImage, to url: URL) throws {
     }
     _ = renderer
 }
+
+@Test func cameraClampsToBackgroundBounds() {
+    // Wide 32:9 image cover-cropped into a 9:16 frame: bg exactly frame height,
+    // much wider than the frame.
+    let size = CGSize(width: 900, height: 1600)
+    let r = FrameRenderer.backgroundRect(imageWidth: 3200, imageHeight: 900,
+                                         crop: .cover, size: size)
+    #expect(abs(r.height - 1600) < 1e-6)
+    #expect(r.width > size.width)
+
+    // Zoom below 1 would show above/below the background → pinned to 1,
+    // and vertical focus pinned to center.
+    let out = FrameRenderer.clampCamera(CameraState(x: 0.5, y: 0.9, zoom: 0.6),
+                                        background: r, size: size)
+    #expect(abs(out.zoom - 1) < 1e-9)
+    #expect(abs(out.y - 0.5) < 1e-9)
+
+    // Panning far past the edge stops exactly AT the background's left edge:
+    // the bg's left lands on the frame's left (frame coord 0), not inside it.
+    let left = FrameRenderer.clampCamera(CameraState(x: -5, y: 0.5, zoom: 1),
+                                         background: r, size: size)
+    let frameLeft = 1 * (Double(r.minX) - left.x * 900) + 450
+    #expect(abs(frameLeft) < 1e-6)
+
+    // A legal camera passes through untouched.
+    let ok = CameraState(x: 0.5, y: 0.5, zoom: 2)
+    #expect(FrameRenderer.clampCamera(ok, background: r, size: size) == ok)
+}
+
+@Test func gifSequencePicksFramesByTime() throws {
+    // 3 frames (red, green, blue) at 0.2s each, built in memory.
+    let colors: [CGColor] = [CGColor(red: 1, green: 0, blue: 0, alpha: 1),
+                             CGColor(red: 0, green: 1, blue: 0, alpha: 1),
+                             CGColor(red: 0, green: 0, blue: 1, alpha: 1)]
+    let data = NSMutableData()
+    let dest = try #require(CGImageDestinationCreateWithData(
+        data, UTType.gif.identifier as CFString, colors.count, nil))
+    for color in colors {
+        let ctx = makeContext(CGSize(width: 8, height: 8))
+        ctx.setFillColor(color)
+        ctx.fill(CGRect(x: 0, y: 0, width: 8, height: 8))
+        let frameProps = [kCGImagePropertyGIFDictionary: [kCGImagePropertyGIFDelayTime: 0.2]]
+        CGImageDestinationAddImage(dest, ctx.makeImage()!, frameProps as CFDictionary)
+    }
+    #expect(CGImageDestinationFinalize(dest))
+
+    let seq = try #require(GifSequence(data: data as Data))
+    #expect(seq.frames.count == 3)
+    #expect(abs(seq.duration - 0.6) < 1e-6)
+    func red(at t: Double) -> UInt8 {
+        let img = seq.frame(at: t)
+        let d = img.dataProvider!.data! as Data
+        return d[0]
+    }
+    #expect(red(at: 0.0) > 200)   // frame 1: red
+    #expect(red(at: 0.3) < 50)    // frame 2: green
+    #expect(red(at: 0.7) > 200)   // loops back to red
+    // Static image (single frame) is not a sequence.
+    let png = makeContext(CGSize(width: 4, height: 4))
+    png.setFillColor(colors[0])
+    png.fill(CGRect(x: 0, y: 0, width: 4, height: 4))
+    let pngData = NSMutableData()
+    let pdest = CGImageDestinationCreateWithData(pngData, UTType.png.identifier as CFString, 1, nil)!
+    CGImageDestinationAddImage(pdest, png.makeImage()!, nil)
+    CGImageDestinationFinalize(pdest)
+    #expect(GifSequence(data: pngData as Data) == nil)
+}
+
+@Test func cameraZoomScalesTheWorld() throws {
+    let catalog = try AssetCatalog(assetsRoot: assetsRoot)
+    // One character dead center, and a scene cue whose camera zooms 2× into
+    // the frame center. The zoomed render must differ from the plain one, and
+    // its center column must show the character's body color spanning ~2× the
+    // vertical extent of the plain render's.
+    func scene(camera: CameraState?) -> SceneState {
+        SceneState(characters: [Character(body: .orange, x: 0.5)],
+                   backgroundTracks: [BackgroundTrack(id: "bt", name: "Scenes", cues: [
+                       BackgroundCue(id: "bc", assetID: "missing", start: 0, dur: 10,
+                                     camFrom: camera),
+                   ])],
+                   lights: [Light(x: 0.8, y: 0.18)])
+    }
+
+    let size = CGSize(width: 1280, height: 720)
+    func bodyPixels(_ scene: SceneState) throws -> Int {
+        let ctx = makeContext(size)
+        FrameRenderer(assets: catalog).draw(scene: scene, at: 0, size: size, flipped: true, in: ctx)
+        let img = try #require(ctx.makeImage())
+        let data = try #require(img.dataProvider?.data as Data?)
+        let bpr = img.bytesPerRow
+        var count = 0
+        for y in 0..<img.height {
+            for x in 0..<img.width {
+                let i = y * bpr + x * 4
+                // Orange body: strongly red, low blue (RGBA).
+                if data[i] > 180, data[i + 2] < 90 { count += 1 }
+            }
+        }
+        return count
+    }
+
+    let plain = try bodyPixels(scene(camera: nil))
+    // Focus on the character (standing low in the frame), zoom 2×.
+    let zoomed = try bodyPixels(scene(camera: CameraState(x: 0.5, y: 0.8, zoom: 2)))
+    #expect(plain > 0)
+    #expect(Double(zoomed) > Double(plain) * 2, "zoom 2 on the character should grow its pixel area")
+
+    // No camera == identity camera: explicitly-default camera renders identically.
+    func render(_ s: SceneState) throws -> Data? {
+        let ctx = makeContext(size)
+        FrameRenderer(assets: catalog).draw(scene: s, at: 0, size: size, flipped: true, in: ctx)
+        return try #require(ctx.makeImage()).dataProvider?.data as Data?
+    }
+    #expect(try render(scene(camera: nil)) == render(scene(camera: CameraState())))
+}

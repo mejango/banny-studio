@@ -45,15 +45,16 @@ struct WideEditor: View {
 
     var body: some View {
         GeometryReader { geo in
-            // Stage never letterboxes vertically: it takes exactly its 16:9 height
-            // for the available width, and the timeline absorbs all remaining space.
+            // Stage never letterboxes vertically: it takes exactly its aspect
+            // height for the available width, and the timeline absorbs all
+            // remaining space.
             let availH = Double(geo.size.height) - headerH
             let stageWidth = Double(max(200, geo.size.width))
             let requestedTL = min(max(0, timelineHeight), availH - 9)
             // Below ~24pt the timeline snaps away entirely and the stage keeps
-            // the whole area (letterboxed once it hits its 16:9 width limit).
+            // the whole area (letterboxed once it hits its aspect width limit).
             let wantTL = requestedTL < 24 ? 0.0 : requestedTL
-            let rawStage = min(stageWidth * 9.0 / 16.0, availH - 9 - wantTL)
+            let rawStage = min(stageWidth / model.frameAspect, availH - 9 - wantTL)
             // Below ~44pt the stage snaps away too — timeline-only editing.
             let stageH = rawStage < 44 ? 0.0 : rawStage
             let tlH = wantTL == 0 ? 0.0 : max(0, availH - 9 - stageH)
@@ -240,6 +241,8 @@ struct TrackInspector: View {
                 if let file {
                     BackgroundPreview(model: model, file: file)
                 }
+                FrameSection(model: model)
+                CameraSection(model: model)
                 stageSection
                 if let file {
                     AssetBankSection(model: model, file: file)
@@ -386,7 +389,8 @@ struct TrackCardButton: View {
     private var popoverHeight: CGFloat {
         switch row {
         case .character: return 560
-        case .background, .image: return 380
+        case .background: return 560
+        case .image: return 380
         case .audio: return 480
         case .light: return 220
         }
