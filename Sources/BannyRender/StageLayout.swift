@@ -94,15 +94,23 @@ public enum StageLayout {
         let hx = placement.footX - lx
         let vy = max(40, (H - H * 0.071) - ly)
         let ang = min(1, abs(hx) / vy)
-        let cx = placement.footX + hx * (0.04 + ang * 0.12)
+        var cx = placement.footX + hx * (0.04 + ang * 0.12)
         let dFar = max(0, pose.depth)
         let zin = min(1, max(0, -pose.depth) / 6)
+        // Jump: as the character rises the shadow shrinks and fades under it
+        // (feet leave the ground; the light spreads). 0 grounded → 1 at apex.
+        let lift = pose.jump.map { sin($0.progress * .pi) } ?? 0
+        let jumpShrink = 1 - 0.45 * lift
+        let jumpFade = 1 - 0.6 * lift
+        // Wobble: the gait sway rocks the shadow side to side under the feet.
+        let sway = pose.moving ? sin(pose.phase) * 6 * placement.scale : 0
+        cx += sway
         return ShadowPlacement(
             x: cx - 75,
             y: placement.footY - H * 0.019,
-            scaleX: placement.scale * (0.7 + ang * 0.8),
-            scaleY: placement.scale * 0.75,
-            opacity: max(0, (0.42 - ang * 0.30) * (1 - dFar * 0.7)) * (1 - zin),
+            scaleX: placement.scale * (0.7 + ang * 0.8) * jumpShrink,
+            scaleY: placement.scale * 0.75 * jumpShrink,
+            opacity: max(0, (0.42 - ang * 0.30) * (1 - dFar * 0.7)) * (1 - zin) * jumpFade,
             zIndex: placement.zIndex - 1)
     }
 

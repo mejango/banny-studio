@@ -11,7 +11,7 @@ struct KeyCaptureView: NSViewRepresentable {
 
     func makeNSView(context: Context) -> NSView {
         let view = NSView()
-        context.coordinator.install(model: model)
+        context.coordinator.install(model: model, view: view)
         return view
     }
 
@@ -22,8 +22,14 @@ struct KeyCaptureView: NSViewRepresentable {
     @MainActor
     final class Coordinator {
         private var monitor: Any?
+        /// This capture view lives in exactly one document window. The local
+        /// monitor is app-global (fires for every open document's monitor), so
+        /// each one must ignore events unless ITS window is key — otherwise a
+        /// background document hijacks the keystrokes of the focused one.
+        private weak var view: NSView?
 
-        func install(model: StudioModel) {
+        func install(model: StudioModel, view: NSView) {
+            self.view = view
             guard monitor == nil else { return }
             if UserDefaults.standard.bool(forKey: "debugDeleteTest") {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 5) {
@@ -44,9 +50,12 @@ struct KeyCaptureView: NSViewRepresentable {
                     }
                 }
             }
-            monitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .keyUp]) { event in
+            monitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .keyUp]) { [weak self] event in
                 MainActor.assumeIsolated {
-                    Self.handle(event: event, model: model) ? nil : event
+                    // Only the capture view in the focused document acts; every
+                    // other open document's monitor passes the event through.
+                    guard let win = self?.view?.window, win.isKeyWindow else { return event }
+                    return Self.handle(event: event, model: model) ? nil : event
                 }
             }
         }
@@ -105,6 +114,14 @@ struct KeyCaptureView: NSViewRepresentable {
                     return true
                 }
                 return false
+            }
+            // A picked timeline element (marks, clips, outfit dot, scene group)
+            // moves with ← / → — takes arrows before any pen/freeform use.
+            if !event.modifierFlags.contains(.command),
+               event.keyCode == 123 || event.keyCode == 124,
+               model.hasArrowMovableSelection, !model.recording {
+                if down { model.nudgeTimelineSelection(by: event.keyCode == 124 ? 1.0/30 : -1.0/30) }
+                return true
             }
             // Light tracks, the Scenes track (camera), image recording, and
             // camera recording take the arrows + pen keys.

@@ -39,6 +39,9 @@ final class StudioModel {
     /// Image cue selected on the timeline (drag on stage repositions it).
     var selectedImageCue: String?
     var selectedBackgroundCue: String?
+    /// Marquee/multi-select of scene cues (move or delete together). The single
+    /// `selectedBackgroundCue` stays the inspector/camera focus.
+    var selectedBackgroundCues: Set<String> = []
     /// A clicked outfit-change dot: (character, index into its events).
     var selectedOutfitEvent: (char: Int, index: Int)?
     /// Track key whose gutter-card popover should open (double-click on the cell).
@@ -198,6 +201,89 @@ final class StudioModel {
     var hasTimelineSelection: Bool {
         !selectedMarks.isEmpty || !selectedClips.isEmpty || selectedImageCue != nil
             || selectedLightCue != nil || selectedBackgroundCue != nil
+            || !selectedBackgroundCues.isEmpty || selectedOutfitEvent != nil
+    }
+
+    /// True when ← / → should shift the timeline selection rather than drive a
+    /// track's pen (single cues are edited via their pen/inspector, so they're
+    /// drag-only — this excludes them to avoid hijacking light/camera arrows).
+    var hasArrowMovableSelection: Bool {
+        !selectedMarks.isEmpty || !selectedClips.isEmpty
+            || selectedOutfitEvent != nil || !selectedBackgroundCues.isEmpty
+    }
+
+    /// ← / → on the timeline: shift every arrow-movable selected element. dt sec.
+    func nudgeTimelineSelection(by dt: Double) {
+        guard dt != 0, hasArrowMovableSelection else { return }
+        registerUndoSnapshot(label: "Nudge Selection")
+        // Marks (per character).
+        if !selectedMarks.isEmpty {
+            for ci in Set(selectedMarks.map(\.character)) where scene.characters.indices.contains(ci) {
+                var events = scene.characters[ci].events
+                let hit = selectedMarks.filter { $0.character == ci }
+                events = events.map { ev in
+                    guard case .key(let t, let code, let down) = ev,
+                          hit.contains(where: { $0.code == code && t >= $0.start - 1e-6 && t <= $0.end + 1e-6 })
+                    else { return ev }
+                    return .key(t: max(0, ((t + dt) * 1000).rounded() / 1000), code: code, down: down)
+                }
+                events.sort { $0.t < $1.t }
+                scene.characters[ci].events = events
+            }
+            selectedMarks = Set(selectedMarks.map {
+                PerfMark(character: $0.character, code: $0.code,
+                         start: max(0, $0.start + dt), end: max(0, $0.end + dt))
+            })
+        }
+        // Clips (character + audio tracks).
+        for id in selectedClips {
+            for i in scene.characters.indices {
+                if let ci = scene.characters[i].clips.firstIndex(where: { $0.id == id }) {
+                    scene.characters[i].clips[ci].start = max(0, scene.characters[i].clips[ci].start + dt)
+                }
+            }
+            for i in scene.audioTracks.indices {
+                if let ci = scene.audioTracks[i].clips.firstIndex(where: { $0.id == id }) {
+                    scene.audioTracks[i].clips[ci].start = max(0, scene.audioTracks[i].clips[ci].start + dt)
+                }
+            }
+        }
+        // Marquee'd scene cues move as a group (single cues are drag-only).
+        for id in selectedBackgroundCues {
+            for ti in scene.backgroundTracks.indices {
+                if let ci = scene.backgroundTracks[ti].cues.firstIndex(where: { $0.id == id }) {
+                    scene.backgroundTracks[ti].cues[ci].start = max(0, scene.backgroundTracks[ti].cues[ci].start + dt)
+                }
+            }
+        }
+        // Outfit event.
+        if let sel = selectedOutfitEvent, scene.characters.indices.contains(sel.char),
+           scene.characters[sel.char].events.indices.contains(sel.index),
+           case .outfit(let t, _, _) = scene.characters[sel.char].events[sel.index] {
+            moveOutfitEvent(char: sel.char, index: sel.index, to: t + dt)
+        }
+    }
+
+    /// Every selected scene cue (the multi-set, else the single).
+    func bgCueSelection() -> Set<String> {
+        if !selectedBackgroundCues.isEmpty { return selectedBackgroundCues }
+        return selectedBackgroundCue.map { [$0] } ?? []
+    }
+
+    /// Moves an outfit-change event to time t, keeping events sorted and the
+    /// selection on the same event.
+    func moveOutfitEvent(char: Int, index: Int, to t: Double) {
+        guard scene.characters.indices.contains(char),
+              scene.characters[char].events.indices.contains(index),
+              case .outfit(_, let slot, let name) = scene.characters[char].events[index] else { return }
+        let nt = max(0, (t * 1000).rounded() / 1000)
+        var events = scene.characters[char].events
+        events.remove(at: index)
+        let moved = PerfEvent.outfit(t: nt, slot: slot, name: name)
+        let insertAt = events.firstIndex { $0.t > nt } ?? events.count
+        events.insert(moved, at: insertAt)
+        scene.characters[char].events = events
+        selectedOutfitEvent = (char, insertAt)
     }
 
     /// ⌘C / right-click Copy: everything selected, times relative to the earliest.
@@ -373,12 +459,15 @@ final class StudioModel {
             }
             selectedOutfitEvent = nil
         }
-        if let id = selectedBackgroundCue {
-            registerUndoSnapshot(label: "Delete Background Cue")
+        let bgKill = bgCueSelection()
+        if !bgKill.isEmpty {
+            registerUndoSnapshot(label: "Delete Scene Cue")
             for i in scene.backgroundTracks.indices {
-                scene.backgroundTracks[i].cues.removeAll { $0.id == id }
+                scene.backgroundTracks[i].cues.removeAll { bgKill.contains($0.id) }
             }
             selectedBackgroundCue = nil
+            selectedBackgroundCues = []
+            backgroundRevision += 1
         }
         if let id = selectedLightCue {
             registerUndoSnapshot(label: "Delete Light Cue")

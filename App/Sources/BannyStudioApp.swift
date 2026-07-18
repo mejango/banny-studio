@@ -5,10 +5,22 @@ import BannyRender
 
 extension UTType {
     static let bannyShow = UTType(exportedAs: "com.banny.show", conformingTo: .package)
+    /// The shareable single-file project: a zip of the .bannyshow package.
+    static let bannyShowArchive = UTType(exportedAs: "com.banny.show-archive", conformingTo: .zip)
 }
 
 @main
 struct BannyStudioApp: App {
+    init() {
+        #if os(macOS)
+        // Launch straight into a blank project instead of the open panel.
+        // (Restored documents still reopen; this only governs a cold launch
+        // with nothing to restore.) register() so the user can still override.
+        UserDefaults.standard.register(
+            defaults: ["NSShowAppCentricOpenPanelInsteadOfUntitledFile": false])
+        #endif
+    }
+
     var body: some SwiftUI.Scene {
         DocumentGroup(newDocument: { ShowDocumentFile() }) { config in
             EditorView(file: config.document)

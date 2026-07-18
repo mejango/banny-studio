@@ -15,7 +15,7 @@ final class ShowDocumentFile: ReferenceFileDocument {
     let saveIndicator = SaveIndicator()
     typealias Snapshot = ShowDocument
 
-    static let readableContentTypes: [UTType] = [.bannyShow]
+    static let readableContentTypes: [UTType] = [.bannyShow, .bannyShowArchive]
 
     /// The document as read from disk; the live model is created lazily on main.
     private let initialDocument: ShowDocument
@@ -59,6 +59,15 @@ final class ShowDocumentFile: ReferenceFileDocument {
 
     required init(configuration: ReadConfiguration) throws {
         let wrapper = configuration.file
+        // A .bs archive arrives as a regular file (zipped .bannyshow); the
+        // native .bannyshow arrives as a directory package.
+        if wrapper.isRegularFile, let zipData = wrapper.regularFileContents {
+            let loaded = try Self.readArchive(zipData)
+            self.initialDocument = loaded.document
+            self.audio = loaded.audio
+            self.assetsMedia = loaded.assets
+            return
+        }
         guard let showData = wrapper.fileWrappers?["show.json"]?.regularFileContents else {
             throw CocoaError(.fileReadCorruptFile)
         }
@@ -79,6 +88,58 @@ final class ShowDocumentFile: ReferenceFileDocument {
         assets.merge(media(in: "assets")) { _, new in new }
         self.assetsMedia = assets
         self.initialDocument = doc
+    }
+
+    /// Expands a .bs (zipped .bannyshow) and reads its document + media.
+    /// Same `ditto` path the exporter uses in reverse.
+    private static func readArchive(_ zip: Data)
+        throws -> (document: ShowDocument, audio: [String: (data: Data, ext: String)],
+                   assets: [String: (data: Data, ext: String)]) {
+        let tmp = FileManager.default.temporaryDirectory
+            .appendingPathComponent("banny-open-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: tmp, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tmp) }
+        let zipURL = tmp.appendingPathComponent("in.bs")
+        try zip.write(to: zipURL)
+        let outDir = tmp.appendingPathComponent("out", isDirectory: true)
+        try FileManager.default.createDirectory(at: outDir, withIntermediateDirectories: true)
+
+        let ditto = Process()
+        ditto.executableURL = URL(fileURLWithPath: "/usr/bin/ditto")
+        ditto.arguments = ["-x", "-k", zipURL.path, outDir.path]
+        try ditto.run()
+        ditto.waitUntilExit()
+        guard ditto.terminationStatus == 0 else { throw CocoaError(.fileReadCorruptFile) }
+
+        // The package root is wherever show.json landed (ditto's root layout
+        // varies), so find it rather than assume a fixed depth.
+        guard let showURL = Self.findFile(named: "show.json", under: outDir) else {
+            throw CocoaError(.fileReadCorruptFile)
+        }
+        let root = showURL.deletingLastPathComponent()
+        let doc = try JSONDecoder().decode(ShowDocument.self,
+                                           from: Data(contentsOf: showURL))
+        func media(_ folder: String) -> [String: (data: Data, ext: String)] {
+            var out: [String: (data: Data, ext: String)] = [:]
+            let dir = root.appendingPathComponent(folder)
+            for f in (try? FileManager.default.contentsOfDirectory(
+                        at: dir, includingPropertiesForKeys: nil)) ?? [] {
+                guard !f.lastPathComponent.hasPrefix("."), let data = try? Data(contentsOf: f)
+                else { continue }
+                out[f.deletingPathExtension().lastPathComponent] = (data, f.pathExtension)
+            }
+            return out
+        }
+        var assets = media("bg")
+        assets.merge(media("assets")) { _, new in new }
+        return (doc, media("audio"), assets)
+    }
+
+    private static func findFile(named name: String, under dir: URL) -> URL? {
+        guard let e = FileManager.default.enumerator(at: dir,
+                                                     includingPropertiesForKeys: nil) else { return nil }
+        for case let url as URL in e where url.lastPathComponent == name { return url }
+        return nil
     }
 
     @MainActor

@@ -182,6 +182,11 @@ struct StudioTimelineView: View {
     @State private var snapGuide: Double?
     /// Whole-chain light drag: (track, [id: base start], run start).
     @State private var runDrag: (track: Int, base: [(id: String, start: Double)], runStart: Double)?
+    /// Multi-scene-cue drag: base starts + the grabbed cue's start (drag anchor).
+    @State private var bgGroupDrag: (base: [(id: String, start: Double)], anchor: Double)?
+    /// Dragging an outfit-change dot: the character's events WITHOUT the dot,
+    /// plus its slot/name — rebuilt at the new time each change.
+    @State private var draggingOutfit: (char: Int, slot: Int, name: String?, base: [PerfEvent])?
     /// Group-drag base positions for selected clips.
     @State private var dragStartClips: [String: Double]?
     /// Pointer position over the lanes (content coords) for context menus.
@@ -1519,6 +1524,9 @@ struct StudioTimelineView: View {
             }
         case .background(let i):
             let cues = model.scene.backgroundTracks[i].cues
+            // The scene artwork leaves a strip at the bottom for the camera
+            // motion bars, so they sit UNDER the image instead of over it.
+            let imageH = max(12, h - presenceStripH - 6 - sceneCameraStripH)
             for cue in cues {
                 let leadButt = cues.contains { abs(($0.start + $0.dur) - cue.start) < 0.02 }
                 let trailButt = cues.contains { abs($0.start - (cue.start + cue.dur)) < 0.02 }
@@ -1531,24 +1539,27 @@ struct StudioTimelineView: View {
                            color: Color(red: 0.45, green: 0.4, blue: 0.85),
                            label: chained ? "" : (cue.label ?? assetName(cue.assetID)),
                            assetID: cue.assetID,
-                           selected: model.selectedBackgroundCue == cue.id,
+                           selected: model.selectedBackgroundCue == cue.id
+                               || model.selectedBackgroundCues.contains(cue.id),
                            animated: false,
                            squareLeading: leadButt, squareTrailing: trailButt,
+                           barHeight: collapsedSections.contains(cue.id) ? nil : imageH,
                            collapsed: collapsedSections.contains(cue.id), ctx: content)
-                // Camera motion bars (same idiom as the light lane): blue =
-                // the focus pans, purple = the zoom changes.
+                // Camera motion bars in the reserved strip below the image:
+                // blue = the focus pans, purple = the zoom changes.
                 if let from = cue.camFrom, !collapsedSections.contains(cue.id) {
                     let to = cue.camTo ?? from
                     let bx = x(forTime: cue.start)
                     let bw = max(2, xw(cue.start, cue.dur))
+                    let stripTop = y + presenceStripH + 2 + imageH + 2
                     if abs(to.x - from.x) > 0.002 || abs(to.y - from.y) > 0.002 {
-                        content.fill(Path(roundedRect: CGRect(x: bx + 1, y: y + h - 13,
+                        content.fill(Path(roundedRect: CGRect(x: bx + 1, y: stripTop,
                                                               width: bw - 2, height: 3),
                                           cornerRadius: 1.5),
                                      with: .color(Color(red: 0.45, green: 0.62, blue: 0.95)))
                     }
                     if abs(to.zoom - from.zoom) > 0.005 {
-                        content.fill(Path(roundedRect: CGRect(x: bx + 1, y: y + h - 9,
+                        content.fill(Path(roundedRect: CGRect(x: bx + 1, y: stripTop + 4,
                                                               width: bw - 2, height: 3),
                                           cornerRadius: 1.5),
                                      with: .color(Color(red: 0.75, green: 0.55, blue: 0.95)))
@@ -1585,6 +1596,8 @@ struct StudioTimelineView: View {
     private let captionStripH: CGFloat = 13
     /// Per-lane presence strip (eye markers) at the top of every row.
     private let presenceStripH: CGFloat = 18
+    /// Strip under the Scenes image for the camera pan/zoom motion bars.
+    private let sceneCameraStripH: CGFloat = 10
 
     /// Character lane vertical layout: captions strip, then audio clips, then
     /// the seven event sub-lanes. Everything gets its own band — no overlap.
@@ -1979,7 +1992,7 @@ struct StudioTimelineView: View {
                 }
                 if dragStartMarks != nil || resizing != nil || draggingClip != nil
                     || draggingCue != nil || draggingSub != nil || draggingPresence != nil
-                    || runDrag != nil {
+                    || runDrag != nil || bgGroupDrag != nil || draggingOutfit != nil {
                     model.registerUndoSnapshot(label: "Edit Timeline")
                 }
                 stopAutoScroll()
@@ -1995,6 +2008,8 @@ struct StudioTimelineView: View {
                 dragStartMarks = nil
                 resizing = nil
                 runDrag = nil
+                bgGroupDrag = nil
+                draggingOutfit = nil
                 draggingClip = nil
                 draggingCue = nil
                 draggingSub = nil
@@ -2057,6 +2072,31 @@ struct StudioTimelineView: View {
             for (id, s) in rd.base {
                 model.setLightCueStart(track: rd.track, id: id, start: s + shift)
             }
+            return
+        }
+        if let g = bgGroupDrag {
+            let dt = Double(value.translation.width / pxPerSecond)
+            let newAnchor = max(0, snapped(g.anchor + dt))
+            let shift = newAnchor - g.anchor
+            for (id, s) in g.base {
+                for ti in model.scene.backgroundTracks.indices {
+                    if let ci = model.scene.backgroundTracks[ti].cues.firstIndex(where: { $0.id == id }) {
+                        model.scene.backgroundTracks[ti].cues[ci].start = max(0, s + shift)
+                    }
+                }
+            }
+            return
+        }
+        if let o = draggingOutfit {
+            let dt = Double(value.translation.width / pxPerSecond)
+            let nt = max(0, snapped((time(forX: value.location.x))))
+            _ = dt
+            var events = o.base
+            let ev = PerfEvent.outfit(t: (nt * 1000).rounded() / 1000, slot: o.slot, name: o.name)
+            let at = events.firstIndex { $0.t > ev.t } ?? events.count
+            events.insert(ev, at: at)
+            model.scene.characters[o.char].events = events
+            model.selectedOutfitEvent = (o.char, at)
             return
         }
         if let dc = draggingCue {
@@ -2188,6 +2228,16 @@ struct StudioTimelineView: View {
                         return
                     }
                 }
+                // Scene multi-selection: grabbing the body of a selected cue
+                // drags the whole marquee'd group together.
+                if case .background = row, e == 0, model.selectedBackgroundCues.count > 1,
+                   model.selectedBackgroundCues.contains(cue.id) {
+                    let base = model.scene.backgroundTracks.flatMap { $0.cues }
+                        .filter { model.selectedBackgroundCues.contains($0.id) }
+                        .map { (id: $0.id, start: $0.start) }
+                    bgGroupDrag = (base, cue.start)
+                    return
+                }
                 var cueID = cue.id
                 #if os(macOS)
                 // ⌘-drag duplicates the cue and drags the copy.
@@ -2198,6 +2248,17 @@ struct StudioTimelineView: View {
                 #endif
                 draggingCue = (row, cueID, cue.start, cue.dur, e)
                 selectCue(row: row, id: cueID)
+                return
+            } else if let dot = outfitEvent(at: value.startLocation),
+                      model.scene.characters.indices.contains(dot.char),
+                      model.scene.characters[dot.char].events.indices.contains(dot.index),
+                      case .outfit(_, let slot, let name) =
+                        model.scene.characters[dot.char].events[dot.index] {
+                // Grab an outfit-change dot and slide it in time.
+                var base = model.scene.characters[dot.char].events
+                base.remove(at: dot.index)
+                draggingOutfit = (dot.char, slot, name, base)
+                model.selectedOutfitEvent = dot
                 return
             } else {
                 // Empty space: rubber-band select a region.
@@ -2317,11 +2378,17 @@ struct StudioTimelineView: View {
         let t1 = time(forX: rect.maxX)
         var marks: Set<PerfMark> = []
         var clips: Set<String> = []
+        var bgCues: Set<String> = []
         for row in rows {
             let top = laneTop(of: row)
             let h = height(of: row)
             guard rect.maxY > top, rect.minY < top + h else { continue }
             switch row {
+            case .background(let i):
+                for cue in model.scene.backgroundTracks[i].cues
+                    where cue.start < t1 && cue.start + cue.dur > t0 {
+                    bgCues.insert(cue.id)
+                }
             case .character(let i):
                 let zones = characterLaneZones(h: h)
                 if rect.maxY > top + zones.clipTop, rect.minY < top + zones.clipTop + zones.clipH {
@@ -2351,6 +2418,9 @@ struct StudioTimelineView: View {
         }
         model.selectedMarks = marks
         model.selectedClips = clips
+        model.selectedBackgroundCues = bgCues
+        // Keep the inspector focus on one of the marquee'd scenes.
+        if !bgCues.isEmpty { model.selectedBackgroundCue = bgCues.first }
     }
 
     /// Background cue boundaries: the show's scene-change anchor points.
@@ -2438,7 +2508,9 @@ struct StudioTimelineView: View {
         switch row {
         case .image, .audio: model.selectedImageCue = id
         case .light: model.selectedLightCue = id
-        case .background: model.selectedBackgroundCue = id
+        case .background:
+            model.selectedBackgroundCue = id
+            model.selectedBackgroundCues = [] // single click clears the marquee group
         default: break
         }
     }
@@ -2574,6 +2646,8 @@ struct StudioTimelineView: View {
             model.selectedClips = []
             model.selectedImageCue = nil
             model.selectedBackgroundCue = nil
+            model.selectedBackgroundCues = []
+            model.selectedLightCue = nil
             if case .character(let i) = row(at: y) {
                 model.selection = [i]
             }
