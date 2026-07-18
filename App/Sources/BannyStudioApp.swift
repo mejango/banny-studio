@@ -36,7 +36,7 @@ struct BannyStudioApp: App {
         #if os(macOS)
         .commands {
             CommandGroup(after: .newItem) {
-                ImportLegacyCommand()
+                ImportProjectCommand()
             }
         }
         #endif
@@ -124,22 +124,57 @@ struct SnapshotOnLaunch: NSViewRepresentable {
     func updateNSView(_ nsView: NSView, context: Context) {}
 }
 
-/// File > Import Web Studio JSON… converts a v1 export into a new document.
-/// (iOS gets legacy import by opening the JSON via the Files app in a later pass.)
-struct ImportLegacyCommand: View {
+/// File > Import Project (.bs)… — the single import path. Shared projects are
+/// always .bs files (a zipped .bannyshow); the legacy web-studio JSON import
+/// was removed (it confused the workflow and only ever accepted one exact
+/// format). One-off web→native migration still lives in `banny-tool import`.
+struct ImportProjectCommand: View {
     @State private var importing = false
-    @Environment(\.newDocument) private var newDocument
+    @State private var importError: String?
 
     var body: some View {
-        Button("Import Web Studio JSON…") { importing = true }
-            .fileImporter(isPresented: $importing, allowedContentTypes: [.json]) { result in
-                guard case .success(let url) = result else { return }
-                let scoped = url.startAccessingSecurityScopedResource()
-                defer { if scoped { url.stopAccessingSecurityScopedResource() } }
-                guard let data = try? Data(contentsOf: url),
-                      let imported = try? V1Importer.importStudio(json: data) else { return }
-                newDocument { ShowDocumentFile(imported: imported) }
+        Button("Import Project (.bs)…") { importing = true }
+            .fileImporter(isPresented: $importing,
+                          allowedContentTypes: [UTType(filenameExtension: "bs") ?? .data,
+                                                .zip, .data]) { result in
+                if case .success(let url) = result {
+                    importError = BannyProjectImport.open(url)
+                }
             }
+            .alert("Import failed", isPresented: .init(get: { importError != nil },
+                                                       set: { if !$0 { importError = nil } })) {
+                Button("OK") { importError = nil }
+            } message: { Text(importError ?? "") }
+    }
+}
+
+/// Unpacks a .bs archive into a temp .bannyshow package and opens it as a
+/// document. Returns an error message on failure, nil on success.
+enum BannyProjectImport {
+    static func open(_ url: URL) -> String? {
+        let scoped = url.startAccessingSecurityScopedResource()
+        defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+        do {
+            let dir = FileManager.default.temporaryDirectory
+                .appendingPathComponent("banny-import-\(UUID().uuidString)", isDirectory: true)
+            try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            let pkg = dir.appendingPathComponent(
+                url.deletingPathExtension().lastPathComponent + ".bannyshow")
+            let ditto = Process()
+            ditto.executableURL = URL(fileURLWithPath: "/usr/bin/ditto")
+            ditto.arguments = ["-x", "-k", url.path, pkg.path]
+            try ditto.run()
+            ditto.waitUntilExit()
+            guard ditto.terminationStatus == 0,
+                  FileManager.default.fileExists(
+                    atPath: pkg.appendingPathComponent("show.json").path) else {
+                return "That file doesn't look like a Banny Studio project."
+            }
+            NSDocumentController.shared.openDocument(withContentsOf: pkg, display: true) { _, _, _ in }
+            return nil
+        } catch {
+            return error.localizedDescription
+        }
     }
 }
 #endif

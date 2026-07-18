@@ -82,34 +82,7 @@ struct ProjectMenu: View {
     /// it as a normal document; the user saves it wherever they like.
     private func importBS(_ url: URL) {
         #if os(macOS)
-        let scoped = url.startAccessingSecurityScopedResource()
-        defer { if scoped { url.stopAccessingSecurityScopedResource() } }
-        do {
-            let dir = FileManager.default.temporaryDirectory
-                .appendingPathComponent("banny-import-\(UUID().uuidString)",
-                                        isDirectory: true)
-            try FileManager.default.createDirectory(at: dir,
-                                                    withIntermediateDirectories: true)
-            let pkg = dir.appendingPathComponent(
-                url.deletingPathExtension().lastPathComponent + ".bannyshow")
-            let ditto = Process()
-            ditto.executableURL = URL(fileURLWithPath: "/usr/bin/ditto")
-            ditto.arguments = ["-x", "-k", url.path, pkg.path]
-            try ditto.run()
-            ditto.waitUntilExit()
-            guard ditto.terminationStatus == 0,
-                  FileManager.default.fileExists(
-                    atPath: pkg.appendingPathComponent("show.json").path) else {
-                importError = "That file doesn't look like a Banny Studio project."
-                return
-            }
-            NSDocumentController.shared.openDocument(withContentsOf: pkg,
-                                                     display: true) { _, _, error in
-                if let error { importError = error.localizedDescription }
-            }
-        } catch {
-            importError = error.localizedDescription
-        }
+        importError = BannyProjectImport.open(url)
         #endif
     }
 }
