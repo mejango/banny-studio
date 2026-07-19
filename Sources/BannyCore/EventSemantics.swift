@@ -12,6 +12,14 @@ public enum EventCode: String, Codable, CaseIterable, Sendable {
     case keyT = "KeyT"
     case keyB = "KeyB"
     case keyJ = "KeyJ"
+    // Not in the web v1 vocabulary — held like movement, integrated over time.
+    case rotateLeft = "RotateLeft"
+    case rotateRight = "RotateRight"
+    case zoomIn = "ZoomIn"
+    case zoomOut = "ZoomOut"
+    // Instantaneous resets (chord gestures): snap spin→0 / zoom→1 at that time.
+    case spinReset = "SpinReset"
+    case zoomReset = "ZoomReset"
 
     public var group: EventGroup {
         switch self {
@@ -21,13 +29,15 @@ public enum EventCode: String, Codable, CaseIterable, Sendable {
         case .keyM: return .talk
         case .comma, .slash, .period: return .blink
         case .keyJ: return .jump
+        case .rotateLeft, .rotateRight, .spinReset: return .spin
+        case .zoomIn, .zoomOut, .zoomReset: return .zoom
         }
     }
 }
 
-/// The six recordable/armable event groups.
+/// The recordable/armable event groups (order drives timeline sub-lane order).
 public enum EventGroup: String, Codable, CaseIterable, Sendable {
-    case move, depth, tilt, talk, blink, jump
+    case move, depth, tilt, talk, blink, jump, spin, zoom
 }
 
 public enum EyeExpression: String, Sendable {

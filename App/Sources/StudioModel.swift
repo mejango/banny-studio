@@ -44,6 +44,8 @@ final class StudioModel {
     var selectedBackgroundCues: Set<String> = []
     /// A clicked outfit-change dot: (character, index into its events).
     var selectedOutfitEvent: (char: Int, index: Int)?
+    /// A clicked motion-change keyframe: (character, index into its events).
+    var selectedMotionEvent: (char: Int, index: Int)?
     /// Track key whose gutter-card popover should open (double-click on the cell).
     var inspectorRequest: String?
     var selectedLightCue: String?
@@ -202,6 +204,7 @@ final class StudioModel {
         !selectedMarks.isEmpty || !selectedClips.isEmpty || selectedImageCue != nil
             || selectedLightCue != nil || selectedBackgroundCue != nil
             || !selectedBackgroundCues.isEmpty || selectedOutfitEvent != nil
+            || selectedMotionEvent != nil
     }
 
     /// True when ← / → should shift the timeline selection rather than drive a
@@ -209,7 +212,8 @@ final class StudioModel {
     /// drag-only — this excludes them to avoid hijacking light/camera arrows).
     var hasArrowMovableSelection: Bool {
         !selectedMarks.isEmpty || !selectedClips.isEmpty
-            || selectedOutfitEvent != nil || !selectedBackgroundCues.isEmpty
+            || selectedOutfitEvent != nil || selectedMotionEvent != nil
+            || !selectedBackgroundCues.isEmpty
     }
 
     /// ← / → on the timeline: shift every arrow-movable selected element. dt sec.
@@ -262,12 +266,76 @@ final class StudioModel {
            case .outfit(let t, _, _) = scene.characters[sel.char].events[sel.index] {
             moveOutfitEvent(char: sel.char, index: sel.index, to: t + dt)
         }
+        // Motion keyframe.
+        if let sel = selectedMotionEvent, scene.characters.indices.contains(sel.char),
+           scene.characters[sel.char].events.indices.contains(sel.index),
+           case .motion(let t, _, _, _) = scene.characters[sel.char].events[sel.index] {
+            moveMotionEvent(char: sel.char, index: sel.index, to: t + dt)
+        }
     }
 
     /// Every selected scene cue (the multi-set, else the single).
     func bgCueSelection() -> Set<String> {
         if !selectedBackgroundCues.isEmpty { return selectedBackgroundCues }
         return selectedBackgroundCue.map { [$0] } ?? []
+    }
+
+    // MARK: - Motion keyframes (timed speed/wobble/size like outfit changes)
+
+    /// Motion params effective at t: the base value overridden by the last
+    /// timed `.motion` change at or before t.
+    func resolvedMotion(characterIndex i: Int, at t: Double) -> (speed: Double, wobble: Double, size: Double) {
+        guard let c = scene.characters[safe: i] else { return (320, 7, 1) }
+        var speed = c.speed, wobble = c.wobble, size = c.size
+        for ev in c.events {
+            guard ev.t <= t + 1e-9 else { break }
+            if case .motion(_, let s, let w, let z) = ev {
+                if let s { speed = s }; if let w { wobble = w }; if let z { size = z }
+            }
+        }
+        return (speed, wobble, size)
+    }
+
+    /// Edits a motion param at time t: at the very start it moves the base
+    /// value; later it creates or updates a timed keyframe (merging into one
+    /// within 30ms). Mirrors how `setOutfit` splits base vs timed.
+    func setMotionParam(characterIndex i: Int, at t: Double,
+                        speed: Double? = nil, wobble: Double? = nil, size: Double? = nil) {
+        guard scene.characters.indices.contains(i) else { return }
+        if t < 0.05 {
+            if let speed { scene.characters[i].speed = speed }
+            if let wobble { scene.characters[i].wobble = wobble }
+            if let size { scene.characters[i].size = size }
+            return
+        }
+        var events = scene.characters[i].events
+        let stamp = (t * 1000).rounded() / 1000
+        if let idx = events.firstIndex(where: {
+            if case .motion(let mt, _, _, _) = $0 { return abs(mt - stamp) < 0.03 }; return false
+        }), case .motion(let mt, let s0, let w0, let z0) = events[idx] {
+            events[idx] = .motion(t: mt, speed: speed ?? s0, wobble: wobble ?? w0, size: size ?? z0)
+        } else {
+            registerUndoSnapshot(label: "Motion Keyframe")
+            events.append(.motion(t: stamp, speed: speed, wobble: wobble, size: size))
+            events.sort { $0.t < $1.t }
+        }
+        scene.characters[i].events = events
+    }
+
+    /// Moves a motion keyframe to time t (arrow-nudge / drag), keeping the
+    /// selection on it.
+    func moveMotionEvent(char: Int, index: Int, to t: Double) {
+        guard scene.characters.indices.contains(char),
+              scene.characters[char].events.indices.contains(index),
+              case .motion(_, let s, let w, let z) = scene.characters[char].events[index] else { return }
+        let nt = max(0, (t * 1000).rounded() / 1000)
+        var events = scene.characters[char].events
+        events.remove(at: index)
+        let moved = PerfEvent.motion(t: nt, speed: s, wobble: w, size: z)
+        let insertAt = events.firstIndex { $0.t > nt } ?? events.count
+        events.insert(moved, at: insertAt)
+        scene.characters[char].events = events
+        selectedMotionEvent = (char, insertAt)
     }
 
     /// Moves an outfit-change event to time t, keeping events sorted and the
@@ -458,6 +526,15 @@ final class StudioModel {
                 scene.characters[sel.char].events.remove(at: sel.index)
             }
             selectedOutfitEvent = nil
+        }
+        if let sel = selectedMotionEvent {
+            if scene.characters.indices.contains(sel.char),
+               scene.characters[sel.char].events.indices.contains(sel.index),
+               case .motion = scene.characters[sel.char].events[sel.index] {
+                registerUndoSnapshot(label: "Delete Motion Keyframe")
+                scene.characters[sel.char].events.remove(at: sel.index)
+            }
+            selectedMotionEvent = nil
         }
         let bgKill = bgCueSelection()
         if !bgKill.isEmpty {
@@ -899,7 +976,8 @@ final class StudioModel {
         if isImageRecording {
             imagePen.x = min(1.2, max(-0.2, imagePen.x + dx * 0.4 * dt))
             imagePen.y = min(1.2, max(-0.2, imagePen.y + dy * 0.4 * dt))
-            imagePen.scale = min(1.2, max(0.05, imagePen.scale + ds * 0.35 * dt))
+            // Zoom via 1/2 OR +/− (parity with character zoom keys).
+            imagePen.scale = min(1.2, max(0.05, imagePen.scale + (ds + di) * 0.35 * dt))
             imageRecordSample(x: imagePen.x, y: imagePen.y)
             return
         }

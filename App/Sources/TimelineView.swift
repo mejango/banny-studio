@@ -15,6 +15,8 @@ extension EventGroup {
         case .talk: return Color(red: 1, green: 0.88, blue: 0.29)      // #ffe14a
         case .blink: return Color(red: 1, green: 0.60, blue: 0.24)     // #ff9a3c
         case .jump: return Color(red: 0.71, green: 0.49, blue: 1)      // #b57cff
+        case .spin: return Color(red: 0.36, green: 0.83, blue: 0.85)   // teal
+        case .zoom: return Color(red: 0.95, green: 0.45, blue: 0.72)   // pink
         }
     }
 
@@ -30,6 +32,8 @@ extension EventGroup {
         case .talk: return Color(red: 0.85, green: 0.64, blue: 0.07)
         case .blink: return Color(red: 0.82, green: 0.45, blue: 0.08)
         case .jump: return Color(red: 0.63, green: 0.47, blue: 0.93)
+        case .spin: return Color(red: 0.12, green: 0.55, blue: 0.58)
+        case .zoom: return Color(red: 0.78, green: 0.2, blue: 0.5)
         }
     }
 }
@@ -604,6 +608,19 @@ struct StudioTimelineView: View {
         guard abs(point.y - cy) < 9 else { return nil }
         for (i, ev) in model.scene.characters[ci].events.enumerated() {
             guard case .outfit(let t, _, _) = ev else { continue }
+            if abs(x(forTime: t) - point.x) < 7 { return (ci, i) }
+        }
+        return nil
+    }
+
+    /// The motion keyframe (pink diamond) near a click, if any.
+    private func motionEvent(at point: CGPoint) -> (char: Int, index: Int)? {
+        guard let row = row(at: point.y), case .character(let ci) = row,
+              model.scene.characters.indices.contains(ci) else { return nil }
+        let cy = laneTop(of: row) + height(of: row) - wardrobeStripH / 2
+        guard abs(point.y - cy) < 9 else { return nil }
+        for (i, ev) in model.scene.characters[ci].events.enumerated() {
+            guard case .motion(let t, _, _, _) = ev else { continue }
             if abs(x(forTime: t) - point.x) < 7 { return (ci, i) }
         }
         return nil
@@ -1610,7 +1627,7 @@ struct StudioTimelineView: View {
         let clipH: CGFloat = max(14, (h - presenceStripH - 8) * 0.45)
         let clipTop = presenceStripH + 2
         let eventTop = clipTop + clipH + 2
-        let subH = max(2, (h - eventTop - 4) / 6)
+        let subH = max(2, (h - eventTop - 4) / CGFloat(EventGroup.allCases.count))
         return (clipTop, clipH, eventTop, subH)
     }
 
@@ -1731,6 +1748,36 @@ struct StudioTimelineView: View {
                          with: .color(Color.black.opacity(0.85)))
                 ctx.stroke(Path(roundedRect: bubble, cornerRadius: 4),
                            with: .color(.orange), lineWidth: 1)
+                ctx.draw(resolved, at: CGPoint(x: cx, y: bubble.midY), anchor: .center)
+            }
+        }
+        // Motion keyframes: pink diamonds on the same strip (speed/wobble/size).
+        for (ei, ev) in character.events.enumerated() {
+            guard case .motion(let t, let s, let w, let z) = ev else { continue }
+            let cx = x(forTime: t)
+            let cy = stripY + wardrobeStripH / 2
+            let selected = model.selectedMotionEvent.map { $0.char == i && $0.index == ei } ?? false
+            var diamond = Path()
+            diamond.move(to: CGPoint(x: cx, y: cy - 4))
+            diamond.addLine(to: CGPoint(x: cx + 4, y: cy))
+            diamond.addLine(to: CGPoint(x: cx, y: cy + 4))
+            diamond.addLine(to: CGPoint(x: cx - 4, y: cy))
+            diamond.closeSubpath()
+            ctx.fill(diamond, with: .color(Color(red: 0.95, green: 0.45, blue: 0.72)))
+            if selected {
+                ctx.stroke(Path(ellipseIn: CGRect(x: cx - 6, y: cy - 6, width: 12, height: 12)),
+                           with: .color(.orange), lineWidth: 1.5)
+                var parts: [String] = []
+                if let s { parts.append(String(format: "spd %.1f", StudioModel.uiSpeed(s))) }
+                if let w { parts.append(String(format: "wob %.1f", StudioModel.uiWobble(w))) }
+                if let z { parts.append(z == 1 ? "size N" : z == 0.62 ? "size S" : z == 0.38 ? "size B"
+                                        : String(format: "size %.2f", z)) }
+                let resolved = ctx.resolve(Text(parts.joined(separator: "  "))
+                    .font(.system(size: 9, weight: .semibold)).foregroundStyle(.white))
+                let sz = resolved.measure(in: CGSize(width: 260, height: 20))
+                let bubble = CGRect(x: cx - sz.width / 2 - 6, y: cy - 27, width: sz.width + 12, height: 17)
+                ctx.fill(Path(roundedRect: bubble, cornerRadius: 4), with: .color(.black.opacity(0.85)))
+                ctx.stroke(Path(roundedRect: bubble, cornerRadius: 4), with: .color(.orange), lineWidth: 1)
                 ctx.draw(resolved, at: CGPoint(x: cx, y: bubble.midY), anchor: .center)
             }
         }
@@ -2539,10 +2586,12 @@ struct StudioTimelineView: View {
                 }
                 return
             }
-            if selectedPresence != nil || model.selectedOutfitEvent != nil {
+            if selectedPresence != nil || model.selectedOutfitEvent != nil
+                || model.selectedMotionEvent != nil {
                 // Click-away from a selection only deselects.
                 selectedPresence = nil
                 model.selectedOutfitEvent = nil
+                model.selectedMotionEvent = nil
                 return
             }
             if isHidden(row) {
@@ -2578,8 +2627,27 @@ struct StudioTimelineView: View {
             selectCue(row: row, id: cueHit.id)
             return
         }
+        // Motion keyframes (pink diamonds): click selects (Delete removes).
+        if let dot = motionEvent(at: point) {
+            model.selectedOutfitEvent = nil
+            if isCommandDown() {
+                model.selectedMotionEvent = dot
+                model.deleteTimelineSelection()
+            } else if model.selectedMotionEvent?.char == dot.char,
+                      model.selectedMotionEvent?.index == dot.index {
+                model.selectedMotionEvent = nil
+            } else {
+                model.selectedMotionEvent = dot
+                // Park the playhead on it so the card edits this keyframe.
+                if case .motion(let t, _, _, _) = model.scene.characters[dot.char].events[dot.index] {
+                    model.seek(to: t)
+                }
+            }
+            return
+        }
         // Outfit-change dots: click selects (Delete removes); ⌘-click removes.
         if let dot = outfitEvent(at: point) {
+            model.selectedMotionEvent = nil
             if isCommandDown() {
                 model.selectedOutfitEvent = dot
                 model.deleteTimelineSelection()
@@ -2601,6 +2669,7 @@ struct StudioTimelineView: View {
             return
         }
         if model.selectedOutfitEvent != nil { model.selectedOutfitEvent = nil }
+        if model.selectedMotionEvent != nil { model.selectedMotionEvent = nil }
         let splitting = isCommandDown()
         if let hit = mark(at: point) {
             if splitting {
@@ -2950,6 +3019,8 @@ struct TransportBar: View {
         case .jump: return pose.jump != nil
         case .tilt: return abs(pose.tilt) > 0.5
         case .move, .depth: return pose.moving
+        // No steady-state playback glow (they hold a value, not a "doing" state).
+        case .spin, .zoom: return false
         }
     }
 
@@ -3010,6 +3081,8 @@ struct TransportBar: View {
         case .talk: return ["M"]
         case .blink: return [",", ".", "/"]
         case .jump: return ["J"]
+        case .spin: return ["⇧←", "⇧→"]
+        case .zoom: return ["−", "+"]
         }
     }
 
@@ -3018,6 +3091,8 @@ struct TransportBar: View {
         case .move: return "Move L/R"
         case .depth: return "Move F/B"
         case .talk: return "mouth"
+        case .spin: return "rotate"
+        case .zoom: return "zoom"
         default: return group.rawValue
         }
     }

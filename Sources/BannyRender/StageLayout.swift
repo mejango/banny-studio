@@ -56,7 +56,10 @@ public enum StageLayout {
     public static func place(pose: CharacterPose, character: Character, scene: SceneState,
                              stageWidth W: Double, virtualHeight H: Double) -> Placement {
         let dFar = max(0, pose.depth)
-        let scale = character.size * scene.gSize * (1 - pose.depth * scene.gScale) * (H / 900)
+        // pose.size/pose.wobble are the time-resolved motion params (base value
+        // overridden by any timed .motion changes before t).
+        let scale = pose.size * scene.gSize * (1 - pose.depth * scene.gScale) * (H / 900)
+            * max(0.05, pose.zoom)
         let lift = dFar * H * 0.42
         let footX = pose.x * W
 
@@ -71,7 +74,7 @@ public enum StageLayout {
         if faceY < margin { ty += margin - faceY }
         else if faceY > H - margin { ty -= faceY - (H - margin) }
 
-        let bob = pose.moving ? -abs(sin(pose.phase)) * character.wobble : 0
+        let bob = pose.moving ? -abs(sin(pose.phase)) * pose.wobble : 0
         let sway = pose.moving ? sin(pose.phase) * 2.5 : 0
         var jumpY = 0.0
         var jumpWob = 0.0
@@ -81,7 +84,7 @@ public enum StageLayout {
         }
 
         return Placement(tx: tx, ty: ty, scale: scale, face: pose.face,
-                         bobY: bob + jumpY, rotation: sway + pose.tilt + jumpWob,
+                         bobY: bob + jumpY, rotation: sway + pose.tilt + jumpWob + pose.spin,
                          zIndex: Int(((2 - pose.depth) * 100).rounded()),
                          footX: footX, footY: ty + footPivot.y * scale)
     }

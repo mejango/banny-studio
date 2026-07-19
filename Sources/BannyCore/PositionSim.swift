@@ -8,6 +8,10 @@ public struct SimPose: Equatable, Sendable {
     /// Accumulated gait phase (radians); advances at speed/22 while moving.
     public var phase: Double
     public var face: Int
+    /// Free rotation in degrees, accumulated while shift+←/→ held.
+    public var spin: Double = 0
+    /// Extra scale multiplier, accumulated while +/− held (1 = neutral).
+    public var zoom: Double = 1
 }
 
 /// The integration loop's full state. A value captured at a FULL-step boundary
@@ -21,6 +25,12 @@ struct SimState: Equatable {
     var turnUntil: Double
     var ei: Int
     var heldLeft = false, heldRight = false, heldUp = false, heldDown = false
+    var spin = 0.0
+    var zoom = 1.0
+    var heldSpinL = false, heldSpinR = false, heldZoomIn = false, heldZoomOut = false
+    /// Working walk speed — starts at the character's base, updated by
+    /// `.motion` events over time. Drives position, gait phase, and rotation.
+    var speed = 320.0
     var tt: Double
 }
 
@@ -28,8 +38,7 @@ struct SimState: Equatable {
 /// partial final step. ONE implementation — the one-shot query, the timeline
 /// builder, and checkpoint resume all run this same code.
 @inline(__always)
-func integrate(_ s: inout SimState, events: [PerfEvent], speed: Double,
-               depthRate: Double, to t: Double,
+func integrate(_ s: inout SimState, events: [PerfEvent], gScale: Double, to t: Double,
                onFullStep: ((SimState) -> Void)? = nil) {
     let dt = 1.0 / 60.0
     let edge = 0.044
@@ -37,6 +46,8 @@ func integrate(_ s: inout SimState, events: [PerfEvent], speed: Double,
         while s.ei < events.count, events[s.ei].t <= s.tt {
             let ev = events[s.ei]
             s.ei += 1
+            // Timed speed changes take effect from here on.
+            if case .motion(_, let sp, _, _) = ev { if let sp { s.speed = sp }; continue }
             guard case .key(_, let code, let down) = ev else { continue }
             switch code {
             case .arrowRight, .arrowLeft:
@@ -53,26 +64,41 @@ func integrate(_ s: inout SimState, events: [PerfEvent], speed: Double,
                 }
             case .arrowUp: s.heldUp = down
             case .arrowDown: s.heldDown = down
+            case .rotateLeft: s.heldSpinL = down
+            case .rotateRight: s.heldSpinR = down
+            case .zoomIn: s.heldZoomIn = down
+            case .zoomOut: s.heldZoomOut = down
+            case .spinReset: if down { s.spin = 0 }
+            case .zoomReset: if down { s.zoom = 1 }
             default: break
             }
         }
         let h = min(dt, t - s.tt)
+        let depthRate = simDepthRate(speed: s.speed, gScale: gScale)
         var dx = 0.0
         let dz = (s.heldUp ? 1.0 : 0) - (s.heldDown ? 1.0 : 0)
         if s.heldRight && s.face == 1 && s.tt >= s.turnUntil { dx = 1 }
         else if s.heldLeft && s.face == -1 && s.tt >= s.turnUntil { dx = -1 }
-        s.x = min(1 - edge, max(edge, s.x + speed / 900 * dx * h))
+        s.x = min(1 - edge, max(edge, s.x + s.speed / 900 * dx * h))
         s.depth = min(1, max(-12, s.depth + dz * h * depthRate))
-        if dx != 0 || dz != 0 { s.phase += h * speed / 22 }
+        if dx != 0 || dz != 0 { s.phase += h * s.speed / 22 }
+        // Rotate at a rate that tracks the speed dial (90°/s at base 320);
+        // zoom multiplicatively (~1.6×/s), clamped 0.2–5×.
+        let dspin = (s.heldSpinR ? 1.0 : 0) - (s.heldSpinL ? 1.0 : 0)
+        s.spin += dspin * (s.speed / 320 * 90) * h
+        let dzoom = (s.heldZoomIn ? 1.0 : 0) - (s.heldZoomOut ? 1.0 : 0)
+        if dzoom != 0 { s.zoom = min(5, max(0.2, s.zoom * (1 + dzoom * 1.6 * h))) }
         s.tt += h
         if h == dt { onFullStep?(s) }
     }
 }
 
-func initialSimState(recStart: StartPose?) -> SimState {
+func initialSimState(recStart: StartPose?, speed: Double) -> SimState {
     let start = recStart ?? StartPose(x: 0.5, depth: 0, face: 1)
-    return SimState(x: start.x, depth: start.depth, phase: 0, face: start.face,
-                    turnUntil: 0, ei: 0, tt: 0)
+    var s = SimState(x: start.x, depth: start.depth, phase: 0, face: start.face,
+                     turnUntil: 0, ei: 0, tt: 0)
+    s.speed = speed
+    return s
 }
 
 func simDepthRate(speed: Double, gScale: Double) -> Double {
@@ -89,10 +115,10 @@ func simDepthRate(speed: Double, gScale: Double) -> Double {
 /// `PositionTimelineCache` (SceneSimulator does), which answers in O(10s).
 public func simulatePosition(events: [PerfEvent], recStart: StartPose?, speed: Double,
                              gScale: Double, at t: Double) -> SimPose {
-    var s = initialSimState(recStart: recStart)
-    integrate(&s, events: events, speed: speed,
-              depthRate: simDepthRate(speed: speed, gScale: gScale), to: t)
-    return SimPose(x: s.x, depth: s.depth, phase: s.phase, face: s.face)
+    var s = initialSimState(recStart: recStart, speed: speed)
+    integrate(&s, events: events, gScale: gScale, to: t)
+    return SimPose(x: s.x, depth: s.depth, phase: s.phase, face: s.face,
+                   spin: s.spin, zoom: s.zoom)
 }
 
 /// Checkpointed position timeline for one character's event stream: pose
@@ -101,8 +127,7 @@ public func simulatePosition(events: [PerfEvent], recStart: StartPose?, speed: D
 /// `simulatePosition` (checkpoints sit on full-step boundaries only).
 public final class PositionTimeline: @unchecked Sendable { // immutable after init
     private let events: [PerfEvent]
-    private let speed: Double
-    private let depthRate: Double
+    private let gScale: Double
     private let checkpoints: [SimState] // [0] is the t=0 state; ~10s apart
     let horizon: Double
 
@@ -112,13 +137,12 @@ public final class PositionTimeline: @unchecked Sendable { // immutable after in
     init(events: [PerfEvent], recStart: StartPose?, speed: Double, gScale: Double,
          upTo horizon: Double) {
         self.events = events
-        self.speed = speed
-        self.depthRate = simDepthRate(speed: speed, gScale: gScale)
+        self.gScale = gScale
         self.horizon = horizon
-        var s = initialSimState(recStart: recStart)
+        var s = initialSimState(recStart: recStart, speed: speed)
         var cps = [s]
         var step = 0
-        integrate(&s, events: events, speed: speed, depthRate: depthRate, to: horizon) { st in
+        integrate(&s, events: events, gScale: gScale, to: horizon) { st in
             step += 1
             if step % Self.strideSteps == 0 { cps.append(st) }
         }
@@ -134,8 +158,9 @@ public final class PositionTimeline: @unchecked Sendable { // immutable after in
             if checkpoints[mid].tt <= t { lo = mid } else { hi = mid - 1 }
         }
         var s = checkpoints[lo]
-        integrate(&s, events: events, speed: speed, depthRate: depthRate, to: t)
-        return SimPose(x: s.x, depth: s.depth, phase: s.phase, face: s.face)
+        integrate(&s, events: events, gScale: gScale, to: t)
+        return SimPose(x: s.x, depth: s.depth, phase: s.phase, face: s.face,
+                       spin: s.spin, zoom: s.zoom)
     }
 }
 

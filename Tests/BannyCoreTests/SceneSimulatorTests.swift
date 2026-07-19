@@ -27,6 +27,35 @@ private func makeScene(_ character: Character, gravity: Double = 1) -> SceneStat
     }
 }
 
+@Test func outfitChangeDissolvesOverWindow() {
+    // Add an outfit to slot 11 at t=1; it dissolves over the next 0.8s.
+    let c = Character(body: .orange, events: [.outfit(t: 1, slot: 11, name: "doc-coat")])
+    let sim = SceneSimulator(state: makeScene(c))
+
+    // Before the change: nothing on slot 11, no animation.
+    #expect(sim.pose(characterIndex: 0, at: 0.5).outfit[11] == nil)
+    #expect(sim.pose(characterIndex: 0, at: 0.5).outfitAnim[11] == nil)
+
+    // Mid-dissolve (0.2s into a 0.4s window): new item resolved, animating.
+    let mid = sim.pose(characterIndex: 0, at: 1.2)
+    #expect(mid.outfit[11] == "doc-coat")
+    let a = try! #require(mid.outfitAnim[11])
+    #expect(a.prev == nil)                       // slot was empty → pure reveal
+    #expect(abs(a.progress - 0.5) < 0.05)        // 0.2s of 0.4s
+
+    // After the window: settled, no animation.
+    #expect(sim.pose(characterIndex: 0, at: 1.6).outfitAnim[11] == nil)
+    #expect(sim.pose(characterIndex: 0, at: 1.6).outfit[11] == "doc-coat")
+
+    // Swap keeps the outgoing item as `prev` for the crossfade.
+    let c2 = Character(body: .orange, baseOutfit: [11: "doc-coat"],
+                       events: [.outfit(t: 1, slot: 11, name: "overalls")])
+    let sim2 = SceneSimulator(state: makeScene(c2))
+    let swap = sim2.pose(characterIndex: 0, at: 1.1)
+    #expect(swap.outfit[11] == "overalls")
+    #expect(swap.outfitAnim[11]?.prev == "doc-coat")
+}
+
 @Test func jumpWindowFollowsGravity() {
     let c = Character(body: .pink, events: [.key(t: 1, code: .keyJ, down: true)])
     // gravity 1 → dur 460 ms, height 30

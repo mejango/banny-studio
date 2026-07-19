@@ -212,22 +212,37 @@ public struct ImageCue: Codable, Equatable, Identifiable, Sendable {
         let k = min(1, max(0, (t - start) / dur))
         return ImagePlacement(x: from.x + (to.x - from.x) * k,
                               y: from.y + (to.y - from.y) * k,
-                              scale: from.scale + (to.scale - from.scale) * k)
+                              scale: from.scale + (to.scale - from.scale) * k,
+                              rotation: from.rotation + (to.rotation - from.rotation) * k)
     }
 }
 
-/// Center position (fractions of stage width/height) + width as a fraction of stage width.
-public struct ImagePlacement: Codable, Equatable, Sendable {
+/// Center position (fractions of stage width/height) + width as a fraction of
+/// stage width + rotation in degrees (clockwise about the image center).
+public struct ImagePlacement: Equatable, Sendable {
     public var x: Double
     public var y: Double
     public var scale: Double
+    public var rotation: Double
 
-    public init(x: Double = 0.5, y: Double = 0.5, scale: Double = 0.3) {
+    public init(x: Double = 0.5, y: Double = 0.5, scale: Double = 0.3, rotation: Double = 0) {
         self.x = x
         self.y = y
         self.scale = scale
+        self.rotation = rotation
+    }
+
+    private enum CodingKeys: String, CodingKey { case x, y, scale, rotation }
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        x = try c.decodeIfPresent(Double.self, forKey: .x) ?? 0.5
+        y = try c.decodeIfPresent(Double.self, forKey: .y) ?? 0.5
+        scale = try c.decodeIfPresent(Double.self, forKey: .scale) ?? 0.3
+        rotation = try c.decodeIfPresent(Double.self, forKey: .rotation) ?? 0
     }
 }
+
+extension ImagePlacement: Codable {}
 
 /// Full-screen backdrop cues; the active cue at t paints the background.
 public struct BackgroundTrack: Codable, Equatable, Identifiable, Sendable {
@@ -617,10 +632,13 @@ public struct Subtitle: Codable, Equatable, Sendable {
 public enum PerfEvent: Equatable, Sendable {
     case key(t: Double, code: EventCode, down: Bool)
     case outfit(t: Double, slot: Int, name: String?)
+    /// A timed change to the character's motion params (nil = leave unchanged).
+    /// Resolved last-writer-wins before t, exactly like outfit changes.
+    case motion(t: Double, speed: Double?, wobble: Double?, size: Double?)
 
     public var t: Double {
         switch self {
-        case .key(let t, _, _), .outfit(let t, _, _): return t
+        case .key(let t, _, _), .outfit(let t, _, _), .motion(let t, _, _, _): return t
         }
     }
 
@@ -629,6 +647,7 @@ public enum PerfEvent: Equatable, Sendable {
         switch self {
         case .key(let t, let code, let down): return .key(t: t + dt, code: code, down: down)
         case .outfit(let t, let slot, let name): return .outfit(t: t + dt, slot: slot, name: name)
+        case .motion(let t, let s, let w, let z): return .motion(t: t + dt, speed: s, wobble: w, size: z)
         }
     }
 }
@@ -638,9 +657,14 @@ extension PerfEvent: Codable {
         var slot: Int
         var name: String?
     }
+    private struct MotionChange: Codable {
+        var speed: Double?
+        var wobble: Double?
+        var size: Double?
+    }
 
     private enum CodingKeys: String, CodingKey {
-        case t, code, down, outfit
+        case t, code, down, outfit, motion
     }
 
     public init(from decoder: Decoder) throws {
@@ -648,6 +672,8 @@ extension PerfEvent: Codable {
         let t = try c.decode(Double.self, forKey: .t)
         if let change = try c.decodeIfPresent(OutfitChange.self, forKey: .outfit) {
             self = .outfit(t: t, slot: change.slot, name: change.name)
+        } else if let m = try c.decodeIfPresent(MotionChange.self, forKey: .motion) {
+            self = .motion(t: t, speed: m.speed, wobble: m.wobble, size: m.size)
         } else {
             self = .key(t: t,
                         code: try c.decode(EventCode.self, forKey: .code),
@@ -665,6 +691,9 @@ extension PerfEvent: Codable {
         case .outfit(let t, let slot, let name):
             try c.encode(t, forKey: .t)
             try c.encode(OutfitChange(slot: slot, name: name), forKey: .outfit)
+        case .motion(let t, let s, let w, let z):
+            try c.encode(t, forKey: .t)
+            try c.encode(MotionChange(speed: s, wobble: w, size: z), forKey: .motion)
         }
     }
 }

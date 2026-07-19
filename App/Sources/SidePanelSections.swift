@@ -187,6 +187,14 @@ struct ImageCueInspector: View {
                         if cue.to != nil { cue.to?.scale = v }
                         binding.wrappedValue = cue
                     }), range: 0.05...1.2)
+                placement("rotate °", value: Binding(
+                    get: { binding.wrappedValue.from.rotation },
+                    set: { v in
+                        var cue = binding.wrappedValue
+                        cue.from.rotation = v
+                        if cue.to != nil { cue.to?.rotation = v }
+                        binding.wrappedValue = cue
+                    }), range: -180...180)
                 Toggle(isOn: Binding(
                     get: { binding.wrappedValue.to != nil },
                     set: { on in
@@ -509,32 +517,41 @@ struct MotionSection: View {
     @Bindable var model: StudioModel
     let characterIndex: Int
 
+    /// Motion params resolved at the playhead: editing writes the base value
+    /// at t≈0, otherwise a timed keyframe (like outfits/visibility).
+    private var m: (speed: Double, wobble: Double, size: Double) {
+        model.resolvedMotion(characterIndex: characterIndex, at: model.time)
+    }
+    private var keyframing: Bool { model.time >= 0.05 }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text("MOTION").font(.caption.bold()).foregroundStyle(.secondary)
+            HStack {
+                Text("MOTION").font(.caption.bold()).foregroundStyle(.secondary)
+                Spacer()
+                Text(keyframing ? String(format: "keyframe @ %.1fs", model.time) : "base")
+                    .font(.system(size: 8, weight: .semibold))
+                    .foregroundStyle(keyframing ? .orange : .secondary)
+            }
             HStack {
                 Text("speed").font(.caption2).frame(width: 80, alignment: .leading)
                 Slider(value: Binding(
-                    get: { StudioModel.uiSpeed(model.scene.characters[safe: characterIndex]?.speed ?? 320) },
-                    set: { if model.scene.characters.indices.contains(characterIndex) {
-                        model.scene.characters[characterIndex].speed =
-                            StudioModel.speed(fromUI: ($0 * 10).rounded() / 10) } }),
+                    get: { StudioModel.uiSpeed(m.speed) },
+                    set: { model.setMotionParam(characterIndex: characterIndex, at: model.time,
+                                                speed: StudioModel.speed(fromUI: ($0 * 10).rounded() / 10)) }),
                     in: 1...10)
-                Text(String(format: "%.1f",
-                            StudioModel.uiSpeed(model.scene.characters[safe: characterIndex]?.speed ?? 320)))
+                Text(String(format: "%.1f", StudioModel.uiSpeed(m.speed)))
                     .font(.system(size: 9, design: .monospaced)).foregroundStyle(.secondary)
                     .frame(width: 28, alignment: .trailing)
             }
             HStack {
                 Text("wobble").font(.caption2).frame(width: 80, alignment: .leading)
                 Slider(value: Binding(
-                    get: { StudioModel.uiWobble(model.scene.characters[safe: characterIndex]?.wobble ?? 7) },
-                    set: { if model.scene.characters.indices.contains(characterIndex) {
-                        model.scene.characters[characterIndex].wobble =
-                            StudioModel.wobble(fromUI: ($0 * 10).rounded() / 10) } }),
+                    get: { StudioModel.uiWobble(m.wobble) },
+                    set: { model.setMotionParam(characterIndex: characterIndex, at: model.time,
+                                                wobble: StudioModel.wobble(fromUI: ($0 * 10).rounded() / 10)) }),
                     in: 1...10)
-                Text(String(format: "%.1f",
-                            StudioModel.uiWobble(model.scene.characters[safe: characterIndex]?.wobble ?? 7)))
+                Text(String(format: "%.1f", StudioModel.uiWobble(m.wobble)))
                     .font(.system(size: 9, design: .monospaced)).foregroundStyle(.secondary)
                     .frame(width: 28, alignment: .trailing)
             }
@@ -542,16 +559,16 @@ struct MotionSection: View {
                 Text("size").font(.caption2).frame(width: 80, alignment: .leading)
                 ForEach([("Normal", 1.0), ("Small", 0.62), ("Baby", 0.38)], id: \.0) { name, value in
                     Button(name) {
-                        if model.scene.characters.indices.contains(characterIndex) {
-                            model.registerUndoSnapshot(label: "Size")
-                            model.scene.characters[characterIndex].size = value
-                        }
+                        model.setMotionParam(characterIndex: characterIndex, at: model.time, size: value)
                     }
                     .font(.caption2)
                     .buttonStyle(.bordered)
-                    .tint(abs((model.scene.characters[safe: characterIndex]?.size ?? 1) - value) < 0.01
-                          ? .orange : .gray)
+                    .tint(abs(m.size - value) < 0.01 ? .orange : .gray)
                 }
+            }
+            if keyframing {
+                Text("Editing at the playhead — creates a timed change. Park at 0s to edit the base.")
+                    .font(.caption2).foregroundStyle(.secondary)
             }
         }
     }

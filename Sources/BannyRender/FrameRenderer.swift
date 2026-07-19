@@ -87,8 +87,17 @@ public struct FrameRenderer: Sendable {
                     let p = cue.placement(at: t)
                     let w = p.scale * W
                     let h = w * Double(img.height) / Double(max(1, img.width))
-                    drawImage(img, in: CGRect(x: p.x * W - w / 2, y: p.y * outH - h / 2,
-                                              width: w, height: h), ctx: ctx)
+                    if abs(p.rotation) > 0.001 {
+                        // Rotate about the image's center.
+                        ctx.saveGState()
+                        ctx.translateBy(x: CGFloat(p.x * W), y: CGFloat(p.y * outH))
+                        ctx.rotate(by: CGFloat(p.rotation * .pi / 180))
+                        drawImage(img, in: CGRect(x: -w / 2, y: -h / 2, width: w, height: h), ctx: ctx)
+                        ctx.restoreGState()
+                    } else {
+                        drawImage(img, in: CGRect(x: p.x * W - w / 2, y: p.y * outH - h / 2,
+                                                  width: w, height: h), ctx: ctx)
+                    }
                 }
             }
         }
@@ -199,18 +208,81 @@ public struct FrameRenderer: Sendable {
                 }
             case .outfit(let id):
                 guard !hidden.contains(id) else { continue }
-                if id == 3 {
-                    // Necklace slot falls back to the default block chain.
-                    if let name = outfit[3], let img = assets.outfitImage(name, body: character.body) {
-                        drawImage(img, in: box, ctx: ctx)
-                    } else if let img = assets.necklaceImage(body: character.body) {
+                let anim = pose.outfitAnim[id]
+                let currentName = outfit[id]
+                if let anim {
+                    // banny-minter "fuzz": 4 stepped frames, each an independent
+                    // random scatter of 4px chunks at ramping density.
+                    let n = Self.fuzzSteps
+                    let step = min(n - 1, max(0, Int(anim.progress * Double(n))))
+                    if let name = currentName, let img = assets.outfitImage(name, body: character.body) {
+                        // Equip / swap-in: density climbs 0.2→0.8, then snaps full.
+                        let density = Double(step + 1) / Double(n) * Self.fuzzMaxDensity
+                        withFuzzClip(box: box, seed: id * 131 + step, density: density, ctx: ctx) {
+                            drawImage(img, in: box, ctx: ctx)
+                        }
+                    } else if let prev = anim.prev,
+                              let pimg = assets.outfitImage(prev, body: character.body) {
+                        // Unequip: density falls 0.8→0.2, then gone.
+                        let density = Double(n - step) / Double(n) * Self.fuzzMaxDensity
+                        withFuzzClip(box: box, seed: id * 131 + step, density: density, ctx: ctx) {
+                            drawImage(pimg, in: box, ctx: ctx)
+                        }
+                    } else if id == 3, let img = assets.necklaceImage(body: character.body) {
                         drawImage(img, in: box, ctx: ctx)
                     }
-                } else if let name = outfit[id], let img = assets.outfitImage(name, body: character.body) {
+                } else if id == 3, currentName == nil {
+                    // Necklace slot falls back to the default block chain.
+                    if let img = assets.necklaceImage(body: character.body) {
+                        drawImage(img, in: box, ctx: ctx)
+                    }
+                } else if let name = currentName, let img = assets.outfitImage(name, body: character.body) {
                     drawImage(img, in: box, ctx: ctx)
                 }
             }
         }
+        ctx.restoreGState()
+    }
+
+    // MARK: - Outfit "fuzz" dissolve (ported from banny-minter useFuzz)
+
+    /// Frames in the dissolve (banny-minter fuzzStepCount).
+    static let fuzzSteps = 4
+    /// Peak coverage before the mask is dropped and the item snaps to full.
+    private static let fuzzMaxDensity = 0.8
+    /// Chunk size in the 400 art box (banny-minter pixelSize = 4 → 100×100 grid).
+    private static let fuzzPixel = 4.0
+
+    /// A stable pseudo-random value in [0,1) for a chunk in a given frame seed.
+    private func chunkHash(_ x: Int, _ y: Int, _ seed: Int) -> Double {
+        var h = UInt64(truncatingIfNeeded: x) &* 374761393
+        h = h &+ UInt64(truncatingIfNeeded: y) &* 668265263
+        h = h &+ UInt64(truncatingIfNeeded: seed) &* 2246822519
+        h ^= h >> 15; h = h &* 2654435761; h ^= h >> 13
+        return Double(h % 100_000) / 100_000.0
+    }
+
+    /// Reveals `draw` through a fresh random scatter of chunks covering
+    /// `density` of the box (0 = nothing, 1 = full). `seed` re-rolls per frame
+    /// so the scatter flickers between steps like the web fuzz.
+    private func withFuzzClip(box: CGRect, seed: Int, density: Double,
+                              ctx: CGContext, _ draw: () -> Void) {
+        if density >= 0.999 { draw(); return }
+        if density <= 0.001 { return }
+        let n = max(1, Int((box.width / CGFloat(Self.fuzzPixel)).rounded()))
+        let cw = box.width / CGFloat(n), ch = box.height / CGFloat(n)
+        let path = CGMutablePath()
+        for gy in 0..<n {
+            for gx in 0..<n where chunkHash(gx, gy, seed) < density {
+                path.addRect(CGRect(x: box.minX + CGFloat(gx) * cw, y: box.minY + CGFloat(gy) * ch,
+                                    width: cw + 0.6, height: ch + 0.6))
+            }
+        }
+        if path.isEmpty { return }
+        ctx.saveGState()
+        ctx.addPath(path)
+        ctx.clip()
+        draw()
         ctx.restoreGState()
     }
 

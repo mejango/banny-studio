@@ -123,20 +123,71 @@ let ep1Exists = FileManager.default.fileExists(atPath: "/Users/jango/Documents/b
 /// The checkpointed timeline must be BIT-identical to the from-zero pure
 /// function — same float ops in the same order — across a fuzz of event
 /// streams and query times. This is the license for SceneSimulator to use it.
+@Test func resetEventsSnapSpinAndZoom() {
+    // Spin up and zoom in, then reset each — spin returns to 0, zoom to 1.
+    let events: [PerfEvent] = [
+        .key(t: 0, code: .rotateRight, down: true),
+        .key(t: 0, code: .zoomIn, down: true),
+        .key(t: 1, code: .rotateRight, down: false),
+        .key(t: 1, code: .zoomIn, down: false),
+        .key(t: 2, code: .spinReset, down: true),
+        .key(t: 2, code: .zoomReset, down: true),
+    ]
+    func pose(_ t: Double) -> SimPose {
+        simulatePosition(events: events, recStart: nil, speed: 320, gScale: 0.6, at: t)
+    }
+    let before = pose(1.5)
+    #expect(before.spin > 1 && before.zoom > 1) // accumulated
+    let after = pose(2.5)
+    #expect(after.spin == 0 && after.zoom == 1) // reset snapped them back
+}
+
+@Test func motionEventChangesSpeedOverTime() {
+    // Walk right the whole time; halve speed at t=1. Distance covered in
+    // [1,2] must be ~half of [0,1], and rotation rate scales with speed too.
+    let events: [PerfEvent] = [
+        .key(t: 0, code: .arrowRight, down: true),
+        .key(t: 0, code: .rotateRight, down: true),
+        .motion(t: 1, speed: 160, wobble: nil, size: nil),  // base 320 → 160
+    ]
+    let rs = StartPose(x: 0.1, depth: 0, face: 1)
+    func x(_ t: Double) -> Double {
+        simulatePosition(events: events, recStart: rs, speed: 320, gScale: 0.6, at: t).x
+    }
+    func spin(_ t: Double) -> Double {
+        simulatePosition(events: events, recStart: rs, speed: 320, gScale: 0.6, at: t).spin
+    }
+    let d01 = x(1) - x(0)
+    let d12 = x(2) - x(1)
+    #expect(d01 > 0 && d12 > 0)
+    #expect(abs(d12 - d01 / 2) < 0.01, "speed halved → half the distance")
+    // Spin: 90°/s for [0,1], 45°/s for [1,2].
+    #expect(abs(spin(1) - 90) < 1)
+    #expect(abs(spin(2) - 135) < 1)
+
+    // Checkpointed timeline stays bit-identical with motion events present.
+    let tl = PositionTimeline(events: events, recStart: rs, speed: 320, gScale: 0.6, upTo: 30)
+    for q in stride(from: 0.0, through: 3.0, by: 0.137) {
+        #expect(tl.pose(at: q) == simulatePosition(events: events, recStart: rs,
+                                                   speed: 320, gScale: 0.6, at: q))
+    }
+}
+
 @Test func timelineMatchesFromZeroExactly() {
     var seed: UInt64 = 0x5EED
     func rand() -> Double {
         seed = seed &* 6364136223846793005 &+ 1442695040888963407
         return Double(seed >> 11) / Double(UInt64.max >> 11)
     }
-    let codes: [EventCode] = [.arrowLeft, .arrowRight, .arrowUp, .arrowDown, .keyJ]
+    let codes: [EventCode] = [.arrowLeft, .arrowRight, .arrowUp, .arrowDown, .keyJ,
+                              .rotateLeft, .rotateRight, .zoomIn, .zoomOut]
     for round in 0..<5 {
         var events: [PerfEvent] = []
         var t = 0.0
         for _ in 0..<300 {
             t += rand() * 1.2
             events.append(.key(t: (t * 1000).rounded() / 1000,
-                               code: codes[Int(rand() * 4.99)], down: rand() < 0.5))
+                               code: codes[Int(rand() * Double(codes.count - 1) + 0.0001)], down: rand() < 0.5))
         }
         let recStart = StartPose(x: 0.2 + rand() * 0.6, depth: rand() - 0.5, face: rand() < 0.5 ? 1 : -1)
         let speed = 40 + rand() * 560

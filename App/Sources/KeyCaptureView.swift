@@ -27,6 +27,8 @@ struct KeyCaptureView: NSViewRepresentable {
         /// each one must ignore events unless ITS window is key — otherwise a
         /// background document hijacks the keystrokes of the focused one.
         private weak var view: NSView?
+        /// Currently-pressed key codes, for chord detection (reset gestures).
+        private var downKeys: Set<UInt16> = []
 
         func install(model: StudioModel, view: NSView) {
             self.view = view
@@ -54,10 +56,40 @@ struct KeyCaptureView: NSViewRepresentable {
                 MainActor.assumeIsolated {
                     // Only the capture view in the focused document acts; every
                     // other open document's monitor passes the event through.
-                    guard let win = self?.view?.window, win.isKeyWindow else { return event }
-                    return Self.handle(event: event, model: model) ? nil : event
+                    guard let self, let win = self.view?.window, win.isKeyWindow else { return event }
+                    return self.route(event: event, model: model) ? nil : event
                 }
             }
+        }
+
+        /// Tracks pressed keys and fires reset chords (shift+←+→ resets
+        /// rotation; +/− together resets zoom/size), then delegates the rest.
+        private func route(event: NSEvent, model: StudioModel) -> Bool {
+            let plus: Set<UInt16> = [24, 69], minus: Set<UInt16> = [27, 78]
+            if event.type == .keyUp {
+                downKeys.remove(event.keyCode)
+                return Self.handle(event: event, model: model)
+            }
+            let charCtx = model.selectedTrackKey?.hasPrefix("c-") ?? true
+            if !event.isARepeat, charCtx, !model.playing || model.recording {
+                // Rotation reset: both arrows held with shift.
+                if event.modifierFlags.contains(.shift),
+                   (event.keyCode == 123 && downKeys.contains(124))
+                     || (event.keyCode == 124 && downKeys.contains(123)) {
+                    model.liveKey(code: .spinReset, down: true)
+                    model.liveKey(code: .spinReset, down: false)
+                }
+                // Zoom/size reset: + and − held together.
+                if (plus.contains(event.keyCode) && !downKeys.isDisjoint(with: minus))
+                     || (minus.contains(event.keyCode) && !downKeys.isDisjoint(with: plus)) {
+                    model.liveKey(code: .zoomReset, down: true)
+                    model.liveKey(code: .zoomReset, down: false)
+                }
+            }
+            downKeys.insert(event.keyCode)
+            // Let the keys also register normally — both of a pair held nets to
+            // zero change, so the reset value holds until they're released.
+            return Self.handle(event: event, model: model)
         }
 
         deinit {
@@ -116,8 +148,9 @@ struct KeyCaptureView: NSViewRepresentable {
                 return false
             }
             // A picked timeline element (marks, clips, outfit dot, scene group)
-            // moves with ← / → — takes arrows before any pen/freeform use.
-            if !event.modifierFlags.contains(.command),
+            // moves with ← / → — takes plain arrows before any pen/freeform use.
+            // (Shift+arrow is reserved for character rotation, below.)
+            if !event.modifierFlags.contains(.command), !event.modifierFlags.contains(.shift),
                event.keyCode == 123 || event.keyCode == 124,
                model.hasArrowMovableSelection, !model.recording {
                 if down { model.nudgeTimelineSelection(by: event.keyCode == 124 ? 1.0/30 : -1.0/30) }
@@ -137,6 +170,20 @@ struct KeyCaptureView: NSViewRepresentable {
                 ]
                 if let lk = lightMap[event.keyCode] {
                     if !event.isARepeat { model.lightKey(lk, down: down) }
+                    return true
+                }
+            }
+            // Character rotate (shift+←/→) and zoom (+/−): held keys integrated
+            // like movement. Only in a character context (no light/scene/media
+            // pen is claiming these — that was handled above).
+            if model.selectedTrackKey?.hasPrefix("c-") ?? true {
+                var rz: EventCode?
+                if event.modifierFlags.contains(.shift), event.keyCode == 123 { rz = .rotateLeft }
+                else if event.modifierFlags.contains(.shift), event.keyCode == 124 { rz = .rotateRight }
+                else if event.keyCode == 24 || event.keyCode == 69 { rz = .zoomIn }   // = / keypad +
+                else if event.keyCode == 27 || event.keyCode == 78 { rz = .zoomOut }  // - / keypad −
+                if let rz {
+                    if !event.isARepeat { model.liveKey(code: rz, down: down) }
                     return true
                 }
             }

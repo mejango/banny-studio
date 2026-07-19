@@ -48,6 +48,23 @@ private func writePNG(_ image: CGImage, to url: URL) throws {
     #expect(pf.ty < p.ty) // lifted toward the horizon
 }
 
+@Test func zoomScalesAndSpinRotatesPlacement() {
+    let c = Character(body: .orange)
+    func place(spin: Double, zoom: Double) -> StageLayout.Placement {
+        let pose = CharacterPose(x: 0.5, depth: 0, phase: 0, tilt: 0, face: 1, eye: .open,
+                                 talking: false, jump: nil, outfit: [:], activeSubtitle: nil,
+                                 moving: false, spin: spin, zoom: zoom)
+        return StageLayout.place(pose: pose, character: c, scene: SceneState(),
+                                 stageWidth: 1600, virtualHeight: 900)
+    }
+    let base = place(spin: 0, zoom: 1)
+    let zoomed = place(spin: 0, zoom: 2)
+    #expect(abs(zoomed.scale - base.scale * 2) < 1e-9) // zoom multiplies scale
+    let spun = place(spin: 30, zoom: 1)
+    #expect(abs((spun.rotation - base.rotation) - 30) < 1e-9) // spin adds to rotation
+    #expect(spun.scale == base.scale) // spin doesn't touch scale
+}
+
 @Test func shadowOpacityFadesWithDepthAndAngle() {
     let c = Character(body: .orange)
     let pose = CharacterPose(x: 0.5, depth: 0, phase: 0, tilt: 0, face: 1, eye: .open,
