@@ -56,6 +56,17 @@ private func makeScene(_ character: Character, gravity: Double = 1) -> SceneStat
     #expect(swap.outfitAnim[11]?.prev == "doc-coat")
 }
 
+@Test func tiltEasesButInstantValueStaysExact() {
+    // keyT down at t=1 → instant tilt jumps to 9, but leanTilt eases in.
+    let c = Character(body: .orange, events: [.key(t: 1, code: .keyT, down: true)])
+    let sim = SceneSimulator(state: makeScene(c))
+    let mid = sim.pose(characterIndex: 0, at: 1.05)   // 0.05s into a 0.15s ease
+    #expect(mid.tilt == 9)                             // instant value exact (fidelity)
+    #expect(mid.leanTilt > 0 && mid.leanTilt < 9)      // render lean still ramping
+    let settled = sim.pose(characterIndex: 0, at: 1.3)
+    #expect(settled.tilt == 9 && abs(settled.leanTilt - 9) < 1e-9)
+}
+
 @Test func jumpWindowFollowsGravity() {
     let c = Character(body: .pink, events: [.key(t: 1, code: .keyJ, down: true)])
     // gravity 1 → dur 460 ms, height 30

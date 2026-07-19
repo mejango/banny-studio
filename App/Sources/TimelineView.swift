@@ -1312,6 +1312,7 @@ struct StudioTimelineView: View {
         }
         #endif
         .contextMenu {
+            if let p = hoverLanePoint { eventContextItems(at: p) }
             if let p = hoverLanePoint, case .background(let bi) = row(at: p.y) {
                 let t = (time(forX: p.x) * 10).rounded() / 10
                 let hitCue = model.scene.backgroundTracks[safe: bi]?.cues
@@ -1354,6 +1355,49 @@ struct StudioTimelineView: View {
                     model.pasteTimeline(at: (time(forX: p.x) * 10).rounded() / 10)
                 }
             }
+        }
+    }
+
+    /// Right-click actions for whichever recorded event sits under the cursor —
+    /// works for any event type (marks incl. rotate/zoom/reset, outfit dots,
+    /// motion keyframes, cues, clips).
+    @ViewBuilder
+    private func eventContextItems(at p: CGPoint) -> some View {
+        if let m = mark(at: p) {
+            Button("Delete \(m.code.group.rawValue)", role: .destructive) {
+                model.selectedMarks = [m]; model.deleteTimelineSelection()
+            }
+            Divider()
+        } else if let dot = outfitEvent(at: p) {
+            Button("Delete outfit change", role: .destructive) {
+                model.selectedOutfitEvent = dot; model.deleteTimelineSelection()
+            }
+            Divider()
+        } else if let dot = motionEvent(at: p) {
+            Button("Edit motion…") {
+                model.selectedMotionEvent = dot
+                model.selection = [dot.char]
+                if case .motion(let mt, _, _, _) = model.scene.characters[dot.char].events[dot.index] {
+                    model.seek(to: mt)
+                }
+                let key = TrackRow.character(dot.char).key(in: model.scene)
+                model.selectedTrackKey = key
+                model.inspectorRequest = key
+            }
+            Button("Delete motion keyframe", role: .destructive) {
+                model.selectedMotionEvent = dot; model.deleteTimelineSelection()
+            }
+            Divider()
+        } else if let (row, cue) = cue(at: p) {
+            Button("Delete", role: .destructive) {
+                selectCue(row: row, id: cue.id); model.deleteTimelineSelection()
+            }
+            Divider()
+        } else if let c = clip(at: p) {
+            Button("Delete clip", role: .destructive) {
+                model.selectedClips = [c.id]; model.deleteTimelineSelection()
+            }
+            Divider()
         }
     }
 
@@ -3081,7 +3125,7 @@ struct TransportBar: View {
         case .talk: return ["M"]
         case .blink: return [",", ".", "/"]
         case .jump: return ["J"]
-        case .spin: return ["⇧←", "⇧→"]
+        case .spin: return ["⇧", "sep:+", "←", "→"]
         case .zoom: return ["−", "+"]
         }
     }
@@ -3114,13 +3158,19 @@ struct TransportBar: View {
                         .font(.system(size: 9, weight: .bold))
                     HStack(spacing: 2) {
                         ForEach(chipKeys(group), id: \.self) { key in
-                            Text(key)
-                                .font(.system(size: 7.5, weight: .bold, design: .monospaced))
-                                .frame(width: 11, height: 11)
-                                .background((armed ? Color.black : tint).opacity(0.14),
-                                            in: RoundedRectangle(cornerRadius: 3))
-                                .overlay(RoundedRectangle(cornerRadius: 3)
-                                    .stroke((armed ? Color.black : tint).opacity(0.4), lineWidth: 0.5))
+                            if key.hasPrefix("sep:") {
+                                // A plain glyph between keycaps (e.g. the "+" in ⇧ + ←).
+                                Text(String(key.dropFirst(4)))
+                                    .font(.system(size: 8, weight: .bold))
+                            } else {
+                                Text(key)
+                                    .font(.system(size: 7.5, weight: .bold, design: .monospaced))
+                                    .frame(width: 11, height: 11)
+                                    .background((armed ? Color.black : tint).opacity(0.14),
+                                                in: RoundedRectangle(cornerRadius: 3))
+                                    .overlay(RoundedRectangle(cornerRadius: 3)
+                                        .stroke((armed ? Color.black : tint).opacity(0.4), lineWidth: 0.5))
+                            }
                         }
                     }
                 }

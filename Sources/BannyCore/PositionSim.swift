@@ -31,8 +31,18 @@ struct SimState: Equatable {
     /// Working walk speed — starts at the character's base, updated by
     /// `.motion` events over time. Drives position, gait phase, and rotation.
     var speed = 320.0
+    /// Active reset ramps: when set, spin/zoom eases from `*ResetFrom` toward
+    /// neutral (0 / 1) over `simResetDuration`. Cleared when the ramp finishes
+    /// or the user rotates/zooms again.
+    var spinResetStart: Double?
+    var spinResetFrom = 0.0
+    var zoomResetStart: Double?
+    var zoomResetFrom = 1.0
     var tt: Double
 }
+
+/// How long a rotation/zoom reset chord takes to ease back to neutral.
+let simResetDuration = 0.3
 
 /// The webapp's `simulatePos` stepping: fixed 1/60 s steps with an exact
 /// partial final step. ONE implementation — the one-shot query, the timeline
@@ -68,8 +78,8 @@ func integrate(_ s: inout SimState, events: [PerfEvent], gScale: Double, to t: D
             case .rotateRight: s.heldSpinR = down
             case .zoomIn: s.heldZoomIn = down
             case .zoomOut: s.heldZoomOut = down
-            case .spinReset: if down { s.spin = 0 }
-            case .zoomReset: if down { s.zoom = 1 }
+            case .spinReset: if down { s.spinResetStart = s.tt; s.spinResetFrom = s.spin }
+            case .zoomReset: if down { s.zoomResetStart = s.tt; s.zoomResetFrom = s.zoom }
             default: break
             }
         }
@@ -83,11 +93,27 @@ func integrate(_ s: inout SimState, events: [PerfEvent], gScale: Double, to t: D
         s.depth = min(1, max(-12, s.depth + dz * h * depthRate))
         if dx != 0 || dz != 0 { s.phase += h * s.speed / 22 }
         // Rotate at a rate that tracks the speed dial (90°/s at base 320);
-        // zoom multiplicatively (~1.6×/s), clamped 0.2–5×.
+        // zoom multiplicatively (~1.6×/s), clamped 0.2–5×. Reset chords ease
+        // back to neutral over simResetDuration; rotating/zooming cancels it.
+        func easeOut(_ e: Double) -> Double { let k = 1 - e; return 1 - k * k * k }
         let dspin = (s.heldSpinR ? 1.0 : 0) - (s.heldSpinL ? 1.0 : 0)
-        s.spin += dspin * (s.speed / 320 * 90) * h
+        if dspin != 0 {
+            s.spin += dspin * (s.speed / 320 * 90) * h
+            s.spinResetStart = nil
+        } else if let rs = s.spinResetStart {
+            let e = (s.tt - rs) / simResetDuration
+            if e >= 1 { s.spin = 0; s.spinResetStart = nil }
+            else { s.spin = s.spinResetFrom * (1 - easeOut(e)) }
+        }
         let dzoom = (s.heldZoomIn ? 1.0 : 0) - (s.heldZoomOut ? 1.0 : 0)
-        if dzoom != 0 { s.zoom = min(5, max(0.2, s.zoom * (1 + dzoom * 1.6 * h))) }
+        if dzoom != 0 {
+            s.zoom = min(5, max(0.2, s.zoom * (1 + dzoom * 1.6 * h)))
+            s.zoomResetStart = nil
+        } else if let rz = s.zoomResetStart {
+            let e = (s.tt - rz) / simResetDuration
+            if e >= 1 { s.zoom = 1; s.zoomResetStart = nil }
+            else { s.zoom = s.zoomResetFrom + (1 - s.zoomResetFrom) * easeOut(e) }
+        }
         s.tt += h
         if h == dt { onFullStep?(s) }
     }

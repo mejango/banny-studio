@@ -138,8 +138,13 @@ let ep1Exists = FileManager.default.fileExists(atPath: "/Users/jango/Documents/b
     }
     let before = pose(1.5)
     #expect(before.spin > 1 && before.zoom > 1) // accumulated
-    let after = pose(2.5)
-    #expect(after.spin == 0 && after.zoom == 1) // reset snapped them back
+    // Mid-ramp (0.1s into a 0.3s reset): easing toward neutral, not there yet.
+    let mid = pose(2.1)
+    #expect(mid.spin > 0 && mid.spin < before.spin)
+    #expect(mid.zoom > 1 && mid.zoom < before.zoom)
+    // After the ramp: fully back to neutral.
+    let after = pose(2.4)
+    #expect(after.spin == 0 && after.zoom == 1)
 }
 
 @Test func motionEventChangesSpeedOverTime() {

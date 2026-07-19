@@ -84,7 +84,7 @@ public enum StageLayout {
         }
 
         return Placement(tx: tx, ty: ty, scale: scale, face: pose.face,
-                         bobY: bob + jumpY, rotation: sway + pose.tilt + jumpWob + pose.spin,
+                         bobY: bob + jumpY, rotation: sway + pose.leanTilt + jumpWob + pose.spin,
                          zIndex: Int(((2 - pose.depth) * 100).rounded()),
                          footX: footX, footY: ty + footPivot.y * scale)
     }
@@ -100,14 +100,17 @@ public enum StageLayout {
         var cx = placement.footX + hx * (0.04 + ang * 0.12)
         let dFar = max(0, pose.depth)
         let zin = min(1, max(0, -pose.depth) / 6)
-        // Jump: as the character rises the shadow shrinks and fades under it
-        // (feet leave the ground; the light spreads). 0 grounded → 1 at apex.
+        // Jump: as the character rises the shadow shrinks and fades a touch
+        // under it (it never slides sideways — it stays under the feet).
+        // 0 grounded → 1 at apex.
         let lift = pose.jump.map { sin($0.progress * .pi) } ?? 0
-        let jumpShrink = 1 - 0.45 * lift
-        let jumpFade = 1 - 0.6 * lift
+        let jumpShrink = 1 - 0.2 * lift
+        let jumpFade = 1 - 0.35 * lift
         // Wobble: the gait sway rocks the shadow side to side under the feet.
         let sway = pose.moving ? sin(pose.phase) * 6 * placement.scale : 0
-        cx += sway
+        // Tilt: leaning forward/back nudges the shadow slightly with the lean.
+        let tiltShift = pose.leanTilt * 1.1 * placement.scale
+        cx += sway + tiltShift
         return ShadowPlacement(
             x: cx - 75,
             y: placement.footY - H * 0.019,

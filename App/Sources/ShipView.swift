@@ -16,14 +16,12 @@ struct ShipButton: View {
 
     var body: some View {
         HStack(spacing: 8) {
-            let hasRange = model.exportRange != nil
             Menu {
                 Button("Export media (mp4)…") {
                     askSaveURL(suggested: "SHOW.mp4") { dest in
                         if let dest { ship(to: dest) }
                     }
                 }
-                .disabled(compact && !hasRange)
                 Button("Export project (.bs)…") {
                     askSaveURL(suggested: "SHOW.bs") { dest in
                         if let dest { exportProject(to: dest) }
@@ -32,20 +30,17 @@ struct ShipButton: View {
             } label: {
                 Text(shipping ? "Exporting… \(Int(progress * 100))%" : "Export")
                     .font(.system(size: compact ? 10 : 12, weight: compact ? .semibold : .bold))
-                    .foregroundStyle(compact && !hasRange ? Color.secondary.opacity(0.55) : Color.primary)
+                    .foregroundStyle(Color.primary)
                     .padding(.horizontal, compact ? 7 : 10).padding(.vertical, compact ? 1 : 3)
-                    .background(Color.primary.opacity(compact && !hasRange ? 0.04 : 0.09), in: Capsule())
-                    .overlay(Capsule().stroke(Color.primary.opacity(compact && !hasRange ? 0.1 : 0.3),
-                                              lineWidth: 1))
+                    .background(Color.primary.opacity(0.09), in: Capsule())
+                    .overlay(Capsule().stroke(Color.primary.opacity(0.3), lineWidth: 1))
             }
             .menuStyle(.button)
             .buttonStyle(.plain)
             .menuIndicator(.hidden)
             .fixedSize()
             .disabled(shipping)
-            .help(compact
-                  ? "Media exports the marked range (drag on this row to set it); .bs shares the whole project."
-                  : "Export media or a shareable project file.")
+            .help("Export media (the marked range, or the whole show if none is marked) or a shareable project file.")
         }
         .alert("Export failed", isPresented: .init(get: { exportError != nil },
                                                    set: { if !$0 { exportError = nil } })) {

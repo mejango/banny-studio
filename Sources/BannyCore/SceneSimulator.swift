@@ -5,8 +5,10 @@ public struct CharacterPose: Equatable, Sendable {
     public var x: Double
     public var depth: Double
     public var phase: Double
-    /// Degrees: +9 forward, -9 back, 0 neutral.
+    /// Degrees: +9 forward, -9 back, 0 neutral (instant, matches the web math).
     public var tilt: Double
+    /// Eased tilt for rendering — leans in/out over ~0.15s instead of snapping.
+    public var leanTilt: Double
     public var face: Int
     public var eye: EyeExpression
     public var talking: Bool
@@ -54,11 +56,13 @@ public struct CharacterPose: Equatable, Sendable {
     public init(x: Double, depth: Double, phase: Double, tilt: Double, face: Int,
                 eye: EyeExpression, talking: Bool, jump: JumpState?, outfit: [Int: String],
                 activeSubtitle: String?, moving: Bool, spin: Double = 0, zoom: Double = 1,
-                wobble: Double = 7, size: Double = 1, outfitAnim: [Int: OutfitAnim] = [:]) {
+                wobble: Double = 7, size: Double = 1, outfitAnim: [Int: OutfitAnim] = [:],
+                leanTilt: Double? = nil) {
         self.x = x
         self.depth = depth
         self.phase = phase
         self.tilt = tilt
+        self.leanTilt = leanTilt ?? tilt
         self.face = face
         self.eye = eye
         self.talking = talking
@@ -96,6 +100,8 @@ public struct SceneSimulator: Sendable {
         // State scan (web resetToTime): last-writer-wins over events strictly before t.
         var eye = EyeExpression.open
         var tilt = 0.0
+        var tiltPrev = 0.0
+        var tiltChangeT = -1000.0
         var talking = false
         var outfit = c.baseOutfit
         var wobble = c.wobble
@@ -119,8 +125,8 @@ public struct SceneSimulator: Sendable {
                 } else {
                     switch code {
                     case .keyM: talking = down
-                    case .keyT: tilt = down ? 9 : 0
-                    case .keyB: tilt = down ? -9 : 0
+                    case .keyT: tiltPrev = tilt; tilt = down ? 9 : 0; tiltChangeT = te
+                    case .keyB: tiltPrev = tilt; tilt = down ? -9 : 0; tiltChangeT = te
                     case .keyJ: if down { lastJumpDown = te }
                     case .arrowLeft: heldLeft = down
                     case .arrowRight: heldRight = down
@@ -148,6 +154,16 @@ public struct SceneSimulator: Sendable {
             if sub == nil || s.start > sub!.start { sub = s }
         }
 
+        // Eased lean: tilt ramps to its target over 0.15s (ease-out) rather
+        // than snapping. `tilt` stays the instant value for logic/fidelity.
+        var leanTilt = tilt
+        let sinceTilt = t - tiltChangeT
+        if sinceTilt >= 0, sinceTilt < 0.15 {
+            let e = sinceTilt / 0.15
+            let k = 1 - e
+            leanTilt = tiltPrev + (tilt - tiltPrev) * (1 - k * k * k)
+        }
+
         // Pixel-chunk dissolve for any slot changed within the last 0.8s.
         var outfitAnim: [Int: CharacterPose.OutfitAnim] = [:]
         for (slot, change) in lastOutfitChange {
@@ -160,6 +176,6 @@ public struct SceneSimulator: Sendable {
                              outfit: outfit, activeSubtitle: sub?.text,
                              moving: heldLeft || heldRight || heldUp || heldDown,
                              spin: sim.spin, zoom: sim.zoom, wobble: wobble, size: size,
-                             outfitAnim: outfitAnim)
+                             outfitAnim: outfitAnim, leanTilt: leanTilt)
     }
 }
