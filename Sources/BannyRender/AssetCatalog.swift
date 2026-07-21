@@ -167,4 +167,40 @@ public final class AssetCatalog: @unchecked Sendable {
         cache[file] = img
         return img
     }
+
+    // MARK: - Machine-readable summary (banny catalog)
+
+    /// Everything an agent needs to pick wardrobe: names are the values that
+    /// go into `baseOutfit` / outfit events; labels are for humans.
+    public struct Summary: Codable, Sendable {
+        public struct Outfit: Codable, Sendable {
+            public var name: String
+            public var label: String
+        }
+        public struct SlotEntry: Codable, Sendable {
+            public var slot: Int
+            public var name: String
+            public var outfits: [Outfit]
+        }
+        public var bodies: [String]
+        public var slots: [SlotEntry]
+        public var eyes: [String]
+        public var mouths: [String]
+        /// Verbatim exclusivity table from the catalog (key → conflicting slots).
+        public var exclusivity: [String: [Int]]
+    }
+
+    public func summary() -> Summary {
+        let slotIDs = Set(catalog.outfits.values.map(\.slot)).sorted()
+        return Summary(
+            bodies: catalog.bodies.keys.sorted(),
+            slots: slotIDs.map { id in
+                Summary.SlotEntry(slot: id,
+                                  name: slotName(id) ?? "slot \(id)",
+                                  outfits: outfits(inSlot: id).map { Summary.Outfit(name: $0.name, label: $0.label) })
+            },
+            eyes: catalog.eyes.keys.sorted(),
+            mouths: catalog.mouths.keys.sorted(),
+            exclusivity: catalog.exclusivity)
+    }
 }

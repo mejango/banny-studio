@@ -1,5 +1,6 @@
 import Foundation
 import BannyCore
+import BannyRender
 
 // banny-tool import <v1.json> <out.bannyshow>
 // banny-tool info <show.bannyshow>
@@ -21,7 +22,23 @@ case "ship":
     try shipCommand(Array(args.dropFirst(2)))
 case "stylize":
     try stylizeCommand(Array(args.dropFirst(2)))
+case "catalog":
+    let catalog = try AssetCatalog(assetsRoot: locateAssetsRoot())
+    let summary = catalog.summary()
+    if args.contains("--json") {
+        let enc = JSONEncoder()
+        enc.outputFormatting = [.sortedKeys, .prettyPrinted]
+        print(String(data: try enc.encode(summary), encoding: .utf8)!)
+    } else {
+        print("bodies: \(summary.bodies.joined(separator: ", "))")
+        for slot in summary.slots {
+            print("\n\(slot.name) (slot \(slot.slot)):")
+            for o in slot.outfits { print("  \(o.name) — \(o.label)") }
+        }
+        print("\neyes: \(summary.eyes.joined(separator: ", "))")
+        print("mouths: \(summary.mouths.joined(separator: ", "))")
+    }
 default:
-    print("usage: banny-tool import <v1.json> <out.bannyshow> | info <show.bannyshow> | ship <show.bannyshow> <out.mp4> [--720|--1080|--4k] | stylize <in.png> <out.png> [gridWidth]")
+    print("usage: banny-tool import <v1.json> <out.bannyshow> | info <show.bannyshow> | ship <show.bannyshow> <out.mp4> [--720|--1080|--4k] | stylize <in.png> <out.png> [gridWidth] | catalog [--json]")
     exit(1)
 }
