@@ -136,6 +136,38 @@ extension StudioModel {
 
     // MARK: - Asset bank
 
+    /// Gallery click: copy a bundled backdrop into the document's asset bank
+    /// (reusing an earlier copy if present) and cue it as the background.
+    func addBundledBackdrop(url: URL) {
+        let name = BuiltInBackdrops.displayName(url.lastPathComponent)
+        if let existing = document.assets.first(where: { $0.name == name }) {
+            addBackgroundCueApplyingAutoFrame(assetID: existing.id, assetName: existing.name)
+            return
+        }
+        guard let data = try? Data(contentsOf: url),
+              let asset = addAsset(data: data, ext: url.pathExtension.lowercased(), name: name)
+        else { return }
+        addBackgroundCueApplyingAutoFrame(assetID: asset.id, assetName: asset.name)
+    }
+
+    /// addBackgroundCue plus the first-backdrop frame snap (see
+    /// Settings.autoFrame): a square backdrop on an untouched project makes
+    /// the whole project square.
+    func addBackgroundCueApplyingAutoFrame(assetID: String, assetName: String) {
+        let hadCues = !scene.backgroundTracks.flatMap(\.cues).isEmpty
+        addBackgroundCue(assetID: assetID, assetName: assetName)
+        guard let media = file?.assetsMedia[assetID],
+              let src = CGImageSourceCreateWithData(media.data as CFData, nil),
+              let props = CGImageSourceCopyPropertiesAtIndex(src, 0, nil) as? [CFString: Any],
+              let w = props[kCGImagePropertyPixelWidth] as? Int,
+              let h = props[kCGImagePropertyPixelHeight] as? Int,
+              let frame = document.settings.autoFrame(assetPixelW: w, assetPixelH: h,
+                                                      hasBackgroundCues: hadCues)
+        else { return }
+        document.settings.frameW = frame.w
+        document.settings.frameH = frame.h
+    }
+
     /// Raw-bytes asset add (pasteboard, generated content).
     @discardableResult
     func addAsset(data: Data, ext: String, name: String) -> Asset? {

@@ -57,7 +57,7 @@ struct AssetBankSection: View {
                         Text(asset.kind.rawValue).font(.system(size: 8)).foregroundStyle(.secondary)
                     }
                     Spacer()
-                    Button("Add") { model.addBackgroundCue(assetID: asset.id, assetName: asset.name) }
+                    Button("Add") { model.addBackgroundCueApplyingAutoFrame(assetID: asset.id, assetName: asset.name) }
                         .font(.system(size: 9, weight: .bold))
                         .help("Add to the show from the playhead onward (right-click for a floating stage image)")
                         .contextMenu {
@@ -290,7 +290,7 @@ struct FrameSection: View {
     @Bindable var model: StudioModel
 
     private enum Preset: String, CaseIterable, Identifiable {
-        case horizontal = "16:9", vertical = "9:16", custom = "Custom"
+        case horizontal = "16:9", vertical = "9:16", square = "1:1", custom = "Custom"
         var id: String { rawValue }
     }
 
@@ -298,6 +298,7 @@ struct FrameSection: View {
         let s = model.document.settings
         if s.frameW == 16, s.frameH == 9 { return .horizontal }
         if s.frameW == 9, s.frameH == 16 { return .vertical }
+        if s.frameW == s.frameH { return .square }
         return .custom
     }
 
@@ -311,7 +312,8 @@ struct FrameSection: View {
                     switch p {
                     case .horizontal: setFrame(16, 9)
                     case .vertical: setFrame(9, 16)
-                    case .custom: setFrame(1, 1) // distinct from the presets
+                    case .square: setFrame(1, 1)
+                    case .custom: setFrame(4, 3) // distinct from the presets
                     }
                 })) {
                 ForEach(Preset.allCases) { Text($0.rawValue).tag($0) }

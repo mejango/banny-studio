@@ -247,6 +247,7 @@ struct TrackInspector: View {
                 FrameSection(model: model)
                 CameraSection(model: model)
                 stageSection
+                BackdropGallerySection(model: model)
                 if let file {
                     AssetBankSection(model: model, file: file)
                 }

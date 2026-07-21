@@ -104,12 +104,17 @@ final class ShowDocumentFile: ReferenceFileDocument {
         let outDir = tmp.appendingPathComponent("out", isDirectory: true)
         try FileManager.default.createDirectory(at: outDir, withIntermediateDirectories: true)
 
+        #if os(macOS)
         let ditto = Process()
         ditto.executableURL = URL(fileURLWithPath: "/usr/bin/ditto")
         ditto.arguments = ["-x", "-k", zipURL.path, outDir.path]
         try ditto.run()
         ditto.waitUntilExit()
         guard ditto.terminationStatus == 0 else { throw CocoaError(.fileReadCorruptFile) }
+        #else
+        // iOS has no ditto/Process; zipped .bs import needs a zip reader.
+        throw CocoaError(.featureUnsupported)
+        #endif
 
         // The package root is wherever show.json landed (ditto's root layout
         // varies), so find it rather than assume a fixed depth.
