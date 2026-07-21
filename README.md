@@ -13,7 +13,7 @@ Spec: `docs/superpowers/specs/2026-07-07-banny-studio-native-design.md`
 | `Sources/BannyCore` | Document model (schema v2), event semantics, deterministic simulator, legacy v1 importer, `.bannyshow` package I/O. Platform-free. |
 | `Sources/BannyRender` | Baked-asset catalog + pure `draw(t)` CoreGraphics frame compositor. Same code path for editor and export. |
 | `Sources/BannyMedia` | AVAudioEngine clip graph (EQ/pan/reverb, live + offline) and the offline mp4 exporter (AVAssetWriter, 30 fps, H.264+AAC). |
-| `Sources/banny-tool` | CLI: `import` (web JSON → .bannyshow), `info`, `ship` (headless mp4 export). |
+| `Sources/banny-tool` | `banny` CLI: catalog, new, validate, preview, info, ship (headless mp4), stylize, skill. |
 | `App/` | The universal SwiftUI app (XcodeGen project). Editor, timeline, wardrobe, performance deck, Ship. |
 | `App/Resources/BannyAssets` | Extracted + baked art (catalog.json, png/, svg/). |
 | `tools/` | `extract-assets.mjs` (pull art constants from index.html), `bake-assets.sh` (rasterize via headless Chrome), `gen-golden.mjs` (golden sim fixtures from the ORIGINAL JS math). |
@@ -34,9 +34,14 @@ permission grant; on the iOS simulator it runs unattended).
 ## CLI
 
 ```sh
-swift run banny-tool import <staging.json> <out.bannyshow>   # web v1 → native
-swift run banny-tool info <show.bannyshow>
-swift run banny-tool ship <show.bannyshow> out.mp4 [--720|--1080|--4k]
+swift run banny catalog --json                     # wardrobe options
+swift run banny new show.bs --characters 2         # starter project
+swift run banny validate show.bs                   # lint before shipping
+swift run banny preview show.bs frame.png --t 2    # render one frame
+swift run banny ship show.bs out.mp4 --720         # headless mp4 export
+banny skill install                                # AI production skill → ~/.claude/skills
+
+Install without a checkout: `brew install mejango/banny/banny`
 ```
 
 `ep1-native-ship.mp4` in this folder is ep1 shipped natively (160.9 s,
