@@ -215,9 +215,12 @@ public enum ShowExporter {
                                     audioURL: (String) -> URL?) throws -> [AVAudioPCMBuffer] {
         var out: [AVAudioPCMBuffer] = []
         let stage = document.stage
+        // No clips anywhere → no audio track in the mp4. Starting an engine
+        // with an empty node graph crashes offline rendering.
+        let hasClips = !stage.characters.filter({ !$0.hidden }).flatMap(\.clips).isEmpty
+            || !stage.audioTracks.filter({ !$0.hidden }).flatMap(\.clips).isEmpty
+        guard hasClips else { return [] }
         for segment in segments {
-            let hasClips = !stage.characters.filter({ !$0.hidden }).flatMap(\.clips).isEmpty
-                || !stage.audioTracks.filter({ !$0.hidden }).flatMap(\.clips).isEmpty
             let graph = AudioGraph()
             let duration = segment.to - segment.from
             let frames = AVAudioFrameCount(duration * format.sampleRate)
