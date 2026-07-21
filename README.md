@@ -34,12 +34,15 @@ permission grant; on the iOS simulator it runs unattended).
 ## CLI
 
 ```sh
-swift run banny catalog --json                     # wardrobe options
-swift run banny new show.bs --characters 2         # starter project
-swift run banny validate show.bs                   # lint before shipping
-swift run banny preview show.bs frame.png --t 2    # render one frame
-swift run banny ship show.bs out.mp4 --720         # headless mp4 export
-banny skill install                                # AI production skill → ~/.claude/skills
+swift run banny catalog --json                        # wardrobe options
+swift run banny new show.bannyshow --characters 2     # starter project
+swift run banny validate show.bannyshow               # lint before shipping
+swift run banny preview show.bannyshow out.png --t 2  # render one frame
+swift run banny ship show.bannyshow out.mp4 --720     # headless mp4 export
+swift run banny pack show.bannyshow show.bs           # zip for sharing/app import
+banny skill install                                   # AI production skill → ~/.claude/skills
+
+validate/preview/info/ship also accept zipped .bs files directly.
 
 Install without a checkout: `brew install mejango/banny/banny`
 ```

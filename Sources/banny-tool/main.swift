@@ -26,7 +26,7 @@ func run() throws {
         print("imported → \(args[3]): \(stage.characters.count) character tracks, \(result.audioFiles.count) audio clips, \(result.document.assets.count) assets")
     case "info":
         guard args.count >= 3 else { throw CLIError.usage("banny info <show.bs> [--json]") }
-        let contents = try ShowPackage.read(from: URL(fileURLWithPath: args[2]))
+        let contents = try readPackage(at: args[2])
         let st = contents.document.stage
         if args.contains("--json") {
             struct Info: Codable {
@@ -66,7 +66,7 @@ func run() throws {
         }
     case "validate":
         guard args.count >= 3 else { throw CLIError.usage("banny validate <show.bs> [--json]") }
-        let contents = try ShowPackage.read(from: URL(fileURLWithPath: args[2]))
+        let contents = try readPackage(at: args[2])
         let catalog = try? AssetCatalog(assetsRoot: locateAssetsRoot())
         let diags = ShowLint.check(document: contents.document,
                                    audioIDs: Set(contents.audioURLs.keys),
@@ -92,7 +92,7 @@ func run() throws {
         } else {
             t = 0
         }
-        let contents = try ShowPackage.read(from: URL(fileURLWithPath: args[2]))
+        let contents = try readPackage(at: args[2])
         let assets = try AssetCatalog(assetsRoot: locateAssetsRoot())
         try ShowPreview.writePNG(contents: contents, assets: assets, at: t,
                                  to: URL(fileURLWithPath: args[3]))
@@ -114,17 +114,39 @@ func run() throws {
         }
         try ShowPackage.write(.starter(characterCount: count), to: out)
         print("created \(out.path) — edit show.json, then `banny validate` before shipping")
+    case "pack":
+        guard args.count >= 4 else { throw CLIError.usage("banny pack <show.bannyshow> <out.bs>") }
+        let src = URL(fileURLWithPath: args[2])
+        guard FileManager.default.fileExists(atPath: src.appendingPathComponent("show.json").path) else {
+            throw CLIError.notAPackage(args[2], "no show.json — not a package directory")
+        }
+        let out = URL(fileURLWithPath: args[3])
+        guard !FileManager.default.fileExists(atPath: out.path) else {
+            printErr("error: \(out.path) already exists"); exit(1)
+        }
+        try zipPackage(src, to: out)
+        print("packed \(args[3]) — importable by Banny Studio (File > Import Project)")
+    case "unpack":
+        guard args.count >= 4 else { throw CLIError.usage("banny unpack <in.bs> <out.bannyshow>") }
+        let out = URL(fileURLWithPath: args[3])
+        guard !FileManager.default.fileExists(atPath: out.path) else {
+            printErr("error: \(out.path) already exists"); exit(1)
+        }
+        try FileManager.default.copyItem(at: packageRoot(at: args[2]), to: out)
+        print("unpacked \(args[3]) — edit show.json, then `banny validate` before shipping")
     case "skill":
         try skillCommand(Array(args.dropFirst(2)))
     default:
         print("""
-        usage: banny <command>
+        usage: banny <command>              (<show> = .bannyshow dir or zipped .bs)
           catalog [--json]                                — wardrobe options (bodies, outfits, eyes, mouths)
-          new <out.bs> [--characters N]                   — create a starter project
-          validate <show.bs> [--json]                     — lint; exit 1 on errors
-          preview <show.bs> <out.png> [--t SECONDS]       — render one frame
-          info <show.bs> [--json]                         — track/event/asset counts
-          ship <show.bs> <out.mp4> [--480|--720|--1080|--4k] [--range FROM TO]
+          new <out.bannyshow> [--characters N]            — create a starter project
+          validate <show> [--json]                        — lint; exit 1 on errors
+          preview <show> <out.png> [--t SECONDS]          — render one frame
+          info <show> [--json]                            — track/event/asset counts
+          ship <show> <out.mp4> [--480|--720|--1080|--4k] [--range FROM TO]
+          pack <show.bannyshow> <out.bs>                  — zip a package for sharing/app import
+          unpack <in.bs> <out.bannyshow>                  — extract a shared .bs for editing
           import <v1.json> <out.bannyshow>                — web v1 → native
           stylize <in.png> <out.png> [gridWidth]          — pixel-art stylizer
           skill [install|print]                           — the AI production skill

@@ -3,6 +3,7 @@ import Foundation
 enum CLIError: Error, CustomStringConvertible {
     case assetsNotFound
     case usage(String)
+    case notAPackage(String, String)
 
     var description: String {
         switch self {
@@ -12,6 +13,8 @@ enum CLIError: Error, CustomStringConvertible {
             BANNY_ASSETS to a folder containing catalog.json + png/.
             """
         case .usage(let u): return "usage: \(u)"
+        case .notAPackage(let path, let why):
+            return "cannot read \(path): \(why)"
         }
     }
 }

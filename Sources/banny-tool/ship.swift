@@ -8,13 +8,12 @@ func shipCommand(_ args: [String]) throws {
     guard args.count >= 2 else {
         throw CLIError.usage("banny ship <show.bs> <out.mp4> [--480|--720|--1080|--4k] [--range FROM TO]")
     }
-    let pkgURL = URL(fileURLWithPath: args[0])
     let outURL = URL(fileURLWithPath: args[1])
     let tier: ShowExporter.Options = args.contains("--480") ? .p480
         : args.contains("--720") ? .p720
         : args.contains("--4k") ? .p2160 : .p1080
 
-    var contents = try ShowPackage.read(from: pkgURL)
+    var contents = try readPackage(at: args[0])
     if let i = args.firstIndex(of: "--range") {
         guard args.indices.contains(i + 2),
               let from = Double(args[i + 1]), let to = Double(args[i + 2]), to > from else {
