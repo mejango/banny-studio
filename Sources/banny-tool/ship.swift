@@ -4,18 +4,23 @@ import BannyRender
 import BannyMedia
 
 func shipCommand(_ args: [String]) throws {
-    // banny-tool ship <show.bannyshow> <out.mp4> [--720|--1080|--4k]
+    // banny ship <show.bs> <out.mp4> [--480|--720|--1080|--4k] [--range FROM TO]
+    guard args.count >= 2 else {
+        throw CLIError.usage("banny ship <show.bs> <out.mp4> [--480|--720|--1080|--4k] [--range FROM TO]")
+    }
     let pkgURL = URL(fileURLWithPath: args[0])
     let outURL = URL(fileURLWithPath: args[1])
-    let tier: ShowExporter.Options = args.contains("--720") ? .p720
+    let tier: ShowExporter.Options = args.contains("--480") ? .p480
+        : args.contains("--720") ? .p720
         : args.contains("--4k") ? .p2160 : .p1080
 
-    let contents = try ShowPackage.read(from: pkgURL)
+    var contents = try ShowPackage.read(from: pkgURL)
+    if let i = args.firstIndex(of: "--range"), args.indices.contains(i + 2),
+       let from = Double(args[i + 1]), let to = Double(args[i + 2]), to > from {
+        contents.document.show = [ShowSegment(name: "range", from: from, to: to)]
+    }
     let options = tier.fitted(aspect: contents.document.settings.frameAspect)
-    let assetsRoot = URL(fileURLWithPath: #filePath)
-        .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
-        .appendingPathComponent("App/Resources/BannyAssets")
-    let assets = try AssetCatalog(assetsRoot: assetsRoot)
+    let assets = try AssetCatalog(assetsRoot: locateAssetsRoot())
 
     let clock = ContinuousClock()
     let elapsed = try clock.measure {

@@ -8,7 +8,7 @@ let package = Package(
         .library(name: "BannyCore", targets: ["BannyCore"]),
         .library(name: "BannyRender", targets: ["BannyRender"]),
         .library(name: "BannyMedia", targets: ["BannyMedia"]),
-        .executable(name: "banny-tool", targets: ["banny-tool"]),
+        .executable(name: "banny", targets: ["banny-tool"]),
     ],
     targets: [
         .target(name: "BannyCore"),
