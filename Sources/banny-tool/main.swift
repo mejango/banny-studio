@@ -82,9 +82,15 @@ case "validate":
     exit(diags.contains { $0.severity == .error } ? 1 : 0)
 case "preview":
     guard args.count >= 4 else { throw CLIError.usage("banny preview <show.bs> <out.png> [--t SECONDS]") }
-    let t = args.firstIndex(of: "--t").flatMap { i in
-        args.indices.contains(i + 1) ? Double(args[i + 1]) : nil
-    } ?? 0
+    let t: Double
+    if let i = args.firstIndex(of: "--t") {
+        guard args.indices.contains(i + 1), let parsed = Double(args[i + 1]) else {
+            throw CLIError.usage("banny preview <show.bs> <out.png> [--t SECONDS]")
+        }
+        t = parsed
+    } else {
+        t = 0
+    }
     let contents = try ShowPackage.read(from: URL(fileURLWithPath: args[2]))
     let assets = try AssetCatalog(assetsRoot: locateAssetsRoot())
     try ShowPreview.writePNG(contents: contents, assets: assets, at: t,
@@ -96,9 +102,15 @@ case "new":
     guard !FileManager.default.fileExists(atPath: out.path) else {
         print("error: \(out.path) already exists"); exit(1)
     }
-    let count = args.firstIndex(of: "--characters").flatMap { i in
-        args.indices.contains(i + 1) ? Int(args[i + 1]) : nil
-    } ?? 2
+    let count: Int
+    if let i = args.firstIndex(of: "--characters") {
+        guard args.indices.contains(i + 1), let parsed = Int(args[i + 1]) else {
+            throw CLIError.usage("banny new <out.bs> [--characters N]")
+        }
+        count = parsed
+    } else {
+        count = 2
+    }
     try ShowPackage.write(.starter(characterCount: count), to: out)
     print("created \(out.path) — edit show.json, then `banny validate` before shipping")
 case "skill":

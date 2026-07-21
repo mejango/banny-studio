@@ -82,6 +82,9 @@ public enum ShowLint {
             if clip.dur <= 0 {
                 out.append(.init(.error, "\(owner): audio clip \"\(clip.name)\" has non-positive duration \(clean(clip.dur))"))
             }
+            if clip.start < 0 {
+                out.append(.init(.error, "\(owner): audio clip \"\(clip.name)\" starts before 0 (start=\(clean(clip.start)))"))
+            }
         }
     }
 

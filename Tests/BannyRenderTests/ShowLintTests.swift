@@ -18,7 +18,10 @@ final class ShowLintTests: XCTestCase {
         var banny = Character(body: .orange, name: "Banny 1")
         banny.baseOutfit = [4: "no-such-outfit"]
         banny.events = [.key(t: -1, code: .keyM, down: true)]
-        banny.clips = [AudioClip(id: "missing-audio", name: "voice", start: 0, dur: 2, srcDur: 2)]
+        banny.clips = [
+            AudioClip(id: "missing-audio", name: "voice", start: 0, dur: 2, srcDur: 2),
+            AudioClip(id: "neg-start-audio", name: "flashback", start: -1, dur: 2, srcDur: 2),
+        ]
         var doc = ShowDocument(stage: SceneState(characters: [banny]))
         doc.stage.imageTracks = [ImageTrack(id: "img1", name: "Images", cues: [
             ImageCue(id: "cue1", assetID: "ghost-asset", start: 0, dur: 1, from: ImagePlacement()),
@@ -30,6 +33,7 @@ final class ShowLintTests: XCTestCase {
         XCTAssertTrue(messages.contains("no-such-outfit"), messages)
         XCTAssertTrue(messages.contains("t=-1"), messages)
         XCTAssertTrue(messages.contains("missing-audio"), messages)
+        XCTAssertTrue(messages.contains("starts before 0"), messages)
         XCTAssertTrue(messages.contains("ghost-asset"), messages)
         XCTAssertTrue(messages.contains("unfiled"), messages)
         XCTAssertTrue(diags.allSatisfy { $0.severity == .error })

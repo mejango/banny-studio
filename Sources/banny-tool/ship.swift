@@ -15,8 +15,11 @@ func shipCommand(_ args: [String]) throws {
         : args.contains("--4k") ? .p2160 : .p1080
 
     var contents = try ShowPackage.read(from: pkgURL)
-    if let i = args.firstIndex(of: "--range"), args.indices.contains(i + 2),
-       let from = Double(args[i + 1]), let to = Double(args[i + 2]), to > from {
+    if let i = args.firstIndex(of: "--range") {
+        guard args.indices.contains(i + 2),
+              let from = Double(args[i + 1]), let to = Double(args[i + 2]), to > from else {
+            throw CLIError.usage("banny ship <show.bs> <out.mp4> [--480|--720|--1080|--4k] [--range FROM TO]")
+        }
         contents.document.show = [ShowSegment(name: "range", from: from, to: to)]
     }
     let options = tier.fitted(aspect: contents.document.settings.frameAspect)
