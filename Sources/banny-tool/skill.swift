@@ -43,6 +43,9 @@ Always validate before shipping. Preview at least one frame per scene beat.
       audio/<id>.<ext>   — audio sources; <id> must match a clip id
       assets/<id>.<ext>  — images/videos; <id> must match an asset id
 
+`banny new` writes only `show.json` — create `audio/` and `assets/`
+yourself when you add media.
+
 `show.json` top level: `{version: 3, stage, assets, show, settings}`.
 All times are seconds. The timeline ends at the last event/clip/cue.
 
@@ -62,7 +65,7 @@ All times are seconds. The timeline ends at the last event/clip/cue.
       "size": 1,                   // 1 normal, 0.62 small, 0.38 baby
       "face": 1,                   // 1 → faces right, -1 → faces left
       "name": "Coach",
-      "baseOutfit": {"4": "banny_vision_pro"},   // slot → outfit name, at t=0
+      "baseOutfit": {"6": "banny-vision-pro"},   // slot → outfit name, at t=0 (6 = Glasses)
       "events": [...],             // the performance (below)
       "clips": [...],              // this character's voice audio
       "subs": [{"text": "GOAL!", "start": 1.2, "dur": 2.0}],
@@ -71,6 +74,11 @@ All times are seconds. The timeline ends at the last event/clip/cue.
 
 Outfit names and slot numbers MUST come from `banny catalog --json`
 (`slots[].outfits[].name`). Unknown names fail validate.
+
+`banny new` seeds more fields than shown above (`armedGroups`, `presence`,
+`speed`, `wobble`, `trackFx`, `hidden`, and stage-level `gScale`/`gravity`/
+`gSize`/`rowOrder`). Leave them at their generated defaults — only edit the
+fields documented here.
 
 ## The performance: events
 
@@ -92,7 +100,7 @@ Held keys need a down event AND an up event: `{"t": 1.0, "code": "KeyM",
 
 Other event forms, same array:
 
-- Outfit change: `{"t": 3, "outfit": {"slot": 4, "name": "sunglasses"}}`
+- Outfit change: `{"t": 3, "outfit": {"slot": 6, "name": "investor-shades"}}`
   (name `null` clears the slot).
 - Motion params: `{"t": 5, "motion": {"speed": 400, "wobble": 10, "size": 0.62}}`
   (omit fields to leave unchanged; last-writer-wins).
