@@ -101,6 +101,8 @@ case "new":
     } ?? 2
     try ShowPackage.write(.starter(characterCount: count), to: out)
     print("created \(out.path) — edit show.json, then `banny validate` before shipping")
+case "skill":
+    try skillCommand(Array(args.dropFirst(2)))
 default:
     print("""
     usage: banny <command>
