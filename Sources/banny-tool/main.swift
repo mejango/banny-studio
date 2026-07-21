@@ -1,6 +1,7 @@
 import Foundation
 import BannyCore
 import BannyRender
+import BannyMedia
 
 // banny-tool import <v1.json> <out.bannyshow>
 // banny-tool info <show.bannyshow>
@@ -57,6 +58,16 @@ case "validate":
     }
     if catalog == nil { print("note: assets not found — wardrobe names not checked") }
     exit(diags.contains { $0.severity == .error } ? 1 : 0)
+case "preview":
+    guard args.count >= 4 else { throw CLIError.usage("banny preview <show.bs> <out.png> [--t SECONDS]") }
+    let t = args.firstIndex(of: "--t").flatMap { i in
+        args.indices.contains(i + 1) ? Double(args[i + 1]) : nil
+    } ?? 0
+    let contents = try ShowPackage.read(from: URL(fileURLWithPath: args[2]))
+    let assets = try AssetCatalog(assetsRoot: locateAssetsRoot())
+    try ShowPreview.writePNG(contents: contents, assets: assets, at: t,
+                             to: URL(fileURLWithPath: args[3]))
+    print("wrote \(args[3]) @ t=\(t)s")
 case "new":
     guard args.count >= 3 else { throw CLIError.usage("banny new <out.bs> [--characters N]") }
     let out = URL(fileURLWithPath: args[2])
