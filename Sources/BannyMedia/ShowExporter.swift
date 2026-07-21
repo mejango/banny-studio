@@ -24,6 +24,7 @@ public enum ShowExporter {
             self.videoBitrate = videoBitrate
         }
 
+        public static let p480 = Options(size: CGSize(width: 854, height: 480), videoBitrate: 1_500_000)
         public static let p720 = Options(size: CGSize(width: 1280, height: 720), videoBitrate: 8_000_000)
         public static let p1080 = Options()
         public static let p2160 = Options(size: CGSize(width: 3840, height: 2160), videoBitrate: 40_000_000)
