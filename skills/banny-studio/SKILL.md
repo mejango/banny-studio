@@ -1,14 +1,14 @@
 ---
 name: banny-studio
-description: Produce Banny Studio shows from the command line — author .bannyshow/.bs projects, validate them, preview frames, and render mp4s headlessly with the banny CLI. Use when asked to make, render, or automate a Banny show, episode, cartoon, or banny studio production.
+description: Produce Banny Studio shows from the command line — author .bs projects, validate them, preview frames, and render mp4s headlessly with the banny CLI. Use when asked to make, render, or automate a Banny show, episode, cartoon, or banny studio production.
 ---
 
 # Banny Studio Production
 
-Banny Studio is a macOS pixel-art puppet studio. A show is a `.bannyshow`
-directory package you can author directly as JSON, then render to mp4 with
-the `banny` CLI — no GUI needed. You write the script and audio; `banny` is
-your eyes (catalog, validate, preview) and your renderer (ship).
+Banny Studio is a macOS pixel-art puppet studio. A show is a `.bs` project
+you can author directly as JSON, then render to mp4 with the `banny` CLI —
+no GUI needed. You write the script and audio; `banny` is your eyes
+(catalog, validate, preview) and your renderer (ship).
 
 ## Setup
 
@@ -22,18 +22,18 @@ reports missing assets, install the app or set `BANNY_ASSETS`.
 ## The production loop
 
 1. `banny catalog --json` — learn the wardrobe. NEVER guess outfit names.
-2. `banny new show.bannyshow --characters 2` — start from a known-good project.
-3. Edit `show.bannyshow/show.json`; drop audio files into
-   `show.bannyshow/audio/`, images into `show.bannyshow/assets/`.
-4. `banny validate show.bannyshow` — fix every error (exit 1 = errors).
-5. `banny preview show.bannyshow check.png --t 2.5` — look at key moments.
-6. `banny ship show.bannyshow out.mp4 [--480|--720|--1080|--4k] [--range FROM TO]`
+2. `banny new show.bs --characters 2` — start from a known-good project.
+3. Edit `show.bs/show.json`; drop audio files into `show.bs/audio/`,
+   images into `show.bs/assets/`.
+4. `banny validate show.bs` — fix every error (exit 1 = errors).
+5. `banny preview show.bs check.png --t 2.5` — look at key moments.
+6. `banny ship show.bs out.mp4 [--480|--720|--1080|--4k] [--range FROM TO]`
 
 Always validate before shipping. Preview at least one frame per scene beat.
 
-## The project package
+## The .bs project
 
-    show.bannyshow/
+    show.bs/
       show.json          — the document (all structure lives here)
       audio/<id>.<ext>   — audio sources; <id> must match a clip id
       assets/<id>.<ext>  — images/videos; <id> must match an asset id
@@ -41,10 +41,9 @@ Always validate before shipping. Preview at least one frame per scene beat.
 `banny new` writes only `show.json` — create `audio/` and `assets/`
 yourself when you add media.
 
-A `.bs` file is the same package zipped for sharing — it's what the app's
-File > Import/Export Project uses. validate, preview, info, and ship accept
-either form directly; `banny pack show.bannyshow out.bs` makes a shareable
-`.bs`, `banny unpack in.bs out.bannyshow` makes one editable.
+A `.bs` can also be a single zipped file — what the app's File > Import/
+Export Project uses. Every command accepts both forms; `banny pack` zips a
+folder for sharing, `banny unpack` makes a zipped `.bs` editable again.
 
 `show.json` top level: `{version: 3, stage, assets, show, settings}`.
 All times are seconds. The timeline ends at the last event/clip/cue.
@@ -153,5 +152,5 @@ app versions; re-check `banny catalog` after app updates.
 - `--480` exports fit under ~25 MB upload caps for a few minutes of show.
 - Preview before ship: rendering is fast but not free; one frame tells you
   if the outfit/layout is wrong.
-- Hand a show to a human anytime: `banny pack show.bannyshow show.bs`, and
+- Hand a show to a human anytime: `banny pack show.bs shareable.bs`, and
   they import it in the app (File > Import Project) for finishing touches.
