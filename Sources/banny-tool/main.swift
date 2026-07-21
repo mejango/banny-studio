@@ -57,6 +57,17 @@ case "validate":
     }
     if catalog == nil { print("note: assets not found — wardrobe names not checked") }
     exit(diags.contains { $0.severity == .error } ? 1 : 0)
+case "new":
+    guard args.count >= 3 else { throw CLIError.usage("banny new <out.bs> [--characters N]") }
+    let out = URL(fileURLWithPath: args[2])
+    guard !FileManager.default.fileExists(atPath: out.path) else {
+        print("error: \(out.path) already exists"); exit(1)
+    }
+    let count = args.firstIndex(of: "--characters").flatMap { i in
+        args.indices.contains(i + 1) ? Int(args[i + 1]) : nil
+    } ?? 2
+    try ShowPackage.write(.starter(characterCount: count), to: out)
+    print("created \(out.path) — edit show.json, then `banny validate` before shipping")
 default:
     print("usage: banny-tool import <v1.json> <out.bannyshow> | info <show.bannyshow> | ship <show.bannyshow> <out.mp4> [--720|--1080|--4k] | stylize <in.png> <out.png> [gridWidth] | catalog [--json]")
     exit(1)
