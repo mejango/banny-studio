@@ -38,6 +38,25 @@ case "catalog":
         print("\neyes: \(summary.eyes.joined(separator: ", "))")
         print("mouths: \(summary.mouths.joined(separator: ", "))")
     }
+case "validate":
+    guard args.count >= 3 else { throw CLIError.usage("banny validate <show.bs> [--json]") }
+    let contents = try ShowPackage.read(from: URL(fileURLWithPath: args[2]))
+    let catalog = try? AssetCatalog(assetsRoot: locateAssetsRoot())
+    let diags = ShowLint.check(document: contents.document,
+                               audioIDs: Set(contents.audioURLs.keys),
+                               assetFileIDs: Set(contents.assetURLs.keys),
+                               catalog: catalog)
+    if args.contains("--json") {
+        let enc = JSONEncoder()
+        enc.outputFormatting = [.sortedKeys, .prettyPrinted]
+        print(String(data: try enc.encode(diags), encoding: .utf8)!)
+    } else if diags.isEmpty {
+        print("ok — no issues")
+    } else {
+        for d in diags { print("\(d.severity.rawValue): \(d.message)") }
+    }
+    if catalog == nil { print("note: assets not found — wardrobe names not checked") }
+    exit(diags.contains { $0.severity == .error } ? 1 : 0)
 default:
     print("usage: banny-tool import <v1.json> <out.bannyshow> | info <show.bannyshow> | ship <show.bannyshow> <out.mp4> [--720|--1080|--4k] | stylize <in.png> <out.png> [gridWidth] | catalog [--json]")
     exit(1)
