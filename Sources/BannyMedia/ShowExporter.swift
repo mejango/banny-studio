@@ -228,20 +228,16 @@ public enum ShowExporter {
             guard frames > 0 else { continue }
 
             try graph.engine.enableManualRenderingMode(.offline, format: format, maximumFrameCount: 4096)
-            if hasClips {
-                try graph.build(scene: stage) { audioURL($0) }
-            }
+            try graph.build(scene: stage) { audioURL($0) }
             try graph.engine.start()
-            if hasClips {
-                graph.schedule(from: segment.from)
-                // Static pan per segment (follow pans update per-frame only in live playback).
-                let sim = SceneSimulator(state: stage)
-                graph.updatePans { i in
-                    stage.characters.indices.contains(i)
-                        ? sim.pose(characterIndex: i, at: segment.from).x : nil
-                }
-                graph.playAll()
+            graph.schedule(from: segment.from)
+            // Static pan per segment (follow pans update per-frame only in live playback).
+            let sim = SceneSimulator(state: stage)
+            graph.updatePans { i in
+                stage.characters.indices.contains(i)
+                    ? sim.pose(characterIndex: i, at: segment.from).x : nil
             }
+            graph.playAll()
 
             let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frames)!
             var rendered: AVAudioFrameCount = 0

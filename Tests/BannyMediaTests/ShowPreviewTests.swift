@@ -1,7 +1,7 @@
 import XCTest
 import BannyCore
 import BannyRender
-@testable import BannyMedia
+import BannyMedia
 
 final class ShowPreviewTests: XCTestCase {
     static let assetsRoot = URL(fileURLWithPath: #filePath)

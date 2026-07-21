@@ -21,7 +21,7 @@ Spec: `docs/superpowers/specs/2026-07-07-banny-studio-native-design.md`
 ## Build
 
 ```sh
-swift test                        # 24 unit/golden/snapshot tests
+swift test                        # unit/golden/snapshot tests
 cd App && xcodegen generate       # brew install xcodegen (once)
 xcodebuild -project BannyStudio.xcodeproj -scheme BannyStudio \
   -destination 'platform=macOS' build          # or open in Xcode and Run
