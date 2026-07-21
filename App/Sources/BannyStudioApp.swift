@@ -1,5 +1,6 @@
 import SwiftUI
 import UniformTypeIdentifiers
+import AppKit
 import BannyCore
 import BannyRender
 
@@ -37,6 +38,12 @@ struct BannyStudioApp: App {
         .commands {
             CommandGroup(after: .newItem) {
                 ImportProjectCommand()
+            }
+            CommandGroup(after: .help) {
+                Button("Set up CLI & AI Skill…") {
+                    NSWorkspace.shared.open(
+                        URL(string: "https://github.com/mejango/banny-studio/blob/main/skills/banny-studio/SKILL.md")!)
+                }
             }
         }
         #endif
