@@ -210,6 +210,10 @@ struct TrackInspector: View {
     let kind: TrackRowKind
 
     @State private var confirmDelete = false
+    @State private var exportFile: BannyTrackFile?
+    @State private var exportFilename = "track.bannytrack"
+    @State private var exporting = false
+    @State private var exportError: String?
     @FocusState private var nameFocused: Bool
 
     var body: some View {
@@ -221,7 +225,6 @@ struct TrackInspector: View {
             switch kind {
             case .character(let i):
                 MotionSection(model: model, characterIndex: i)
-                VoiceSection(model: model, characterIndex: i)
                 MixSection(model: model, kind: kind)
                 // The card's wardrobe edits the character's START state; timed
                 // mid-show changes remain as recorded outfit events (white dots).
@@ -246,6 +249,26 @@ struct TrackInspector: View {
                 stageSection
                 if let file {
                     AssetBankSection(model: model, file: file)
+                }
+            }
+
+            if file != nil {
+                Divider()
+                VStack(alignment: .leading, spacing: 5) {
+                    Button {
+                        prepareTrackExport()
+                    } label: {
+                        Label(exportTitle, systemImage: "square.and.arrow.up")
+                            .font(.caption.bold())
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 7)
+                            .background(Color.primary.opacity(0.07),
+                                        in: RoundedRectangle(cornerRadius: 6))
+                    }
+                    .buttonStyle(.plain)
+                    Text("Includes its settings, timeline content, and linked media.")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
                 }
             }
 
@@ -278,6 +301,40 @@ struct TrackInspector: View {
         }
         .contentShape(Rectangle())
         .onTapGesture { nameFocused = false }
+        .fileExporter(isPresented: $exporting, document: exportFile,
+                      contentType: .bannyTrack, defaultFilename: exportFilename) { result in
+            if case .failure(let error) = result,
+               (error as NSError).code != NSUserCancelledError {
+                exportError = error.localizedDescription
+            }
+            exportFile = nil
+        }
+        .alert("Export failed", isPresented: .init(get: { exportError != nil },
+                                                    set: { if !$0 { exportError = nil } })) {
+            Button("OK") { exportError = nil }
+        } message: {
+            Text(exportError ?? "")
+        }
+    }
+
+    private var exportTitle: String {
+        if case .character = kind { return "Export character…" }
+        return "Export track…"
+    }
+
+    private func prepareTrackExport() {
+        do {
+            let track = try model.portableTrack(for: kind)
+            let unsafe = track.payload.name.trimmingCharacters(in: .whitespacesAndNewlines)
+            let base = String((unsafe.isEmpty ? track.payload.kind.rawValue : unsafe).map { character in
+                "/:\n\r".contains(character) ? "-" : character
+            })
+            exportFilename = base + ".bannytrack"
+            exportFile = BannyTrackFile(track: track)
+            exporting = true
+        } catch {
+            exportError = error.localizedDescription
+        }
     }
 
     private var deletable: Bool {

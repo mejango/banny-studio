@@ -118,6 +118,23 @@
 				</array>
 			</dict>
 		</dict>
+		<dict>
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string>public.data</string>
+			</array>
+			<key>UTTypeDescription</key>
+			<string>Banny Studio Track</string>
+			<key>UTTypeIdentifier</key>
+			<string>com.banny.studio-track</string>
+			<key>UTTypeTagSpecification</key>
+			<dict>
+				<key>public.filename-extension</key>
+				<array>
+					<string>bannytrack</string>
+				</array>
+			</dict>
+		</dict>
 	</array>
 </dict>
 </plist>

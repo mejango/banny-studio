@@ -18,16 +18,19 @@ public enum ShowExporter {
         public var videoBitrate: Int
 
         public init(size: CGSize = CGSize(width: 1920, height: 1080), fps: Int = 30,
-                    videoBitrate: Int = 12_000_000) {
+                    videoBitrate: Int = 5_000_000) {
             self.size = size
             self.fps = fps
             self.videoBitrate = videoBitrate
         }
 
+        // Bitrates tuned for flat pixel art (compresses far better than live
+        // video), with headroom for photographic backgrounds. Small keeps
+        // shows comfortably under upload caps like the shop's 25 MB.
         public static let p480 = Options(size: CGSize(width: 854, height: 480), videoBitrate: 1_500_000)
-        public static let p720 = Options(size: CGSize(width: 1280, height: 720), videoBitrate: 8_000_000)
-        public static let p1080 = Options()
-        public static let p2160 = Options(size: CGSize(width: 3840, height: 2160), videoBitrate: 40_000_000)
+        public static let p720 = Options(size: CGSize(width: 1280, height: 720), videoBitrate: 3_000_000)
+        public static let p1080 = Options()  // 1080p @ 5 Mbps
+        public static let p2160 = Options(size: CGSize(width: 3840, height: 2160), videoBitrate: 16_000_000)
 
         /// The same quality tier reshaped to the document's frame aspect:
         /// the long side keeps its pixel count (16:9 1080p → 9:16 1080×1920).
@@ -109,7 +112,7 @@ public enum ShowExporter {
                 AVFormatIDKey: kAudioFormatMPEG4AAC,
                 AVSampleRateKey: 44100,
                 AVNumberOfChannelsKey: 2,
-                AVEncoderBitRateKey: 192_000,
+                AVEncoderBitRateKey: 128_000,
             ])
             input.expectsMediaDataInRealTime = false
             writer.add(input)

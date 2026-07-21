@@ -12,6 +12,8 @@ struct WardrobePanel: View {
     /// Record changes as timed outfit events at this exact time.
     var eventTime: Double? = nil
 
+    @State private var wardrobeExpanded = false
+
     private static let outfitSlots = [2, 3, 4, 6, 8, 9, 10, 11, 12, 13]
     private let columns = Array(repeating: GridItem(.flexible(), spacing: 0), count: 3)
 
@@ -37,31 +39,67 @@ struct WardrobePanel: View {
         let outfit = currentOutfit
         let body_ = model.scene.characters[safe: characterIndex]?.body ?? .orange
         VStack(alignment: .leading, spacing: 10) {
-            Text("WARDROBE").font(.caption.bold()).foregroundStyle(.secondary)
+            Button {
+                withAnimation(.easeInOut(duration: 0.16)) {
+                    wardrobeExpanded.toggle()
+                }
+            } label: {
+                HStack(spacing: 10) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("WARDROBE")
+                            .font(.caption.bold())
+                            .foregroundStyle(.secondary)
+                        if !wardrobeExpanded {
+                            Text("Current look")
+                                .font(.caption2)
+                                .foregroundStyle(.tertiary)
+                        }
+                    }
+                    Spacer(minLength: 8)
+                    if !wardrobeExpanded,
+                       let character = model.scene.characters[safe: characterIndex] {
+                        OutfitCard(character: character, outfit: outfit)
+                            .frame(width: 38, height: 64)
+                            .clipShape(RoundedRectangle(cornerRadius: 4))
+                            .overlay(RoundedRectangle(cornerRadius: 4)
+                                .stroke(Color.primary.opacity(0.2), lineWidth: 0.5))
+                    }
+                    Image(systemName: "chevron.right")
+                        .font(.caption.bold())
+                        .foregroundStyle(.secondary)
+                        .rotationEffect(.degrees(wardrobeExpanded ? 90 : 0))
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(wardrobeExpanded ? "Collapse wardrobe" : "Expand wardrobe")
 
-            slotGrid(title: "Eyes", selected: outfit[5] ?? "default", allowNone: false,
-                     crop: Self.cropRegion(forSlot: 5),
-                     items: ["default", "eyeliner", "fierce", "glassy", "surprised", "introspective"].map {
-                         ($0, $0, SharedAssets.catalog.eyesImage(option: $0, expression: .open, body: body_))
-                     }) { name in
-                apply(slot: 5, name: name == "default" ? nil : name)
-            }
-            slotGrid(title: "Mouth", selected: outfit[7] ?? "default", allowNone: false,
-                     crop: Self.cropRegion(forSlot: 7),
-                     items: ["default", "lipstick", "gapteeth", "open"].map {
-                         ($0, $0, SharedAssets.catalog.mouthImage(option: $0, state: .closed, body: body_))
-                     }) { name in
-                apply(slot: 7, name: name == "default" ? nil : name)
-            }
-            ForEach(Self.outfitSlots, id: \.self) { slot in
-                let items = SharedAssets.catalog.outfits(inSlot: slot)
-                if !items.isEmpty {
-                    slotGrid(title: slotName(slot), selected: outfit[slot] ?? "",
-                             allowNone: true, crop: Self.cropRegion(forSlot: slot),
-                             items: items.map {
-                                 ($0.name, $0.label, SharedAssets.catalog.outfitImage($0.name, body: body_))
-                             }) { name in
-                        apply(slot: slot, name: name.isEmpty ? nil : name)
+            if wardrobeExpanded {
+                slotGrid(title: "Eyes", selected: outfit[5] ?? "default", allowNone: false,
+                         crop: Self.cropRegion(forSlot: 5),
+                         items: ["default", "eyeliner", "fierce", "glassy", "surprised", "introspective"].map {
+                             ($0, $0, SharedAssets.catalog.eyesImage(option: $0, expression: .open, body: body_))
+                         }) { name in
+                    apply(slot: 5, name: name == "default" ? nil : name)
+                }
+                slotGrid(title: "Mouth", selected: outfit[7] ?? "default", allowNone: false,
+                         crop: Self.cropRegion(forSlot: 7),
+                         items: ["default", "lipstick", "gapteeth", "open"].map {
+                             ($0, $0, SharedAssets.catalog.mouthImage(option: $0, state: .closed, body: body_))
+                         }) { name in
+                    apply(slot: 7, name: name == "default" ? nil : name)
+                }
+                ForEach(Self.outfitSlots, id: \.self) { slot in
+                    let items = SharedAssets.catalog.outfits(inSlot: slot)
+                    if !items.isEmpty {
+                        slotGrid(title: slotName(slot), selected: outfit[slot] ?? "",
+                                 allowNone: true, crop: Self.cropRegion(forSlot: slot),
+                                 items: items.map {
+                                     ($0.name, $0.label, SharedAssets.catalog.outfitImage($0.name, body: body_))
+                                 }) { name in
+                            apply(slot: slot, name: name.isEmpty ? nil : name)
+                        }
                     }
                 }
             }
@@ -183,6 +221,12 @@ struct MannequinThumb: View {
 /// The character's full starting outfit on a mini mannequin (renderer slot order).
 struct OutfitCard: View {
     let character: BannyCore.Character
+    let outfit: [Int: String]
+
+    init(character: BannyCore.Character, outfit: [Int: String]? = nil) {
+        self.character = character
+        self.outfit = outfit ?? character.baseOutfit
+    }
 
     var body: some View {
         Canvas(rendersAsynchronously: false) { ctx, size in
@@ -193,7 +237,7 @@ struct OutfitCard: View {
             let box = CGRect(x: -crop.minX * s + (size.width - crop.width * s) / 2,
                              y: -crop.minY * s, width: 400 * s, height: 400 * s)
             let cat = SharedAssets.catalog
-            let o = character.baseOutfit
+            let o = outfit
             let headWorn = o[4] != nil
             var hidden = Set<Int>()
             if headWorn { hidden.formUnion([6, 12]) }
@@ -221,5 +265,4 @@ struct OutfitCard: View {
         .clipped()
     }
 }
-
 

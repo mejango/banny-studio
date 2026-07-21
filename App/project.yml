@@ -85,6 +85,11 @@ targets:
             UTTypeConformsTo: [public.zip-archive]
             UTTypeTagSpecification:
               public.filename-extension: [bs]
+          - UTTypeIdentifier: com.banny.studio-track
+            UTTypeDescription: Banny Studio Track
+            UTTypeConformsTo: [public.data]
+            UTTypeTagSpecification:
+              public.filename-extension: [bannytrack]
     scheme:
       testTargets: [BannyStudioUITests]
     entitlements:

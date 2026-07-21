@@ -17,10 +17,12 @@ struct ShipButton: View {
     var body: some View {
         HStack(spacing: 8) {
             Menu {
-                Button("Export media (mp4)…") {
-                    askSaveURL(suggested: "SHOW.mp4") { dest in
-                        if let dest { ship(to: dest) }
-                    }
+                Menu("Export video (mp4)") {
+                    let dur = exportSeconds
+                    Button("Small · 480p\(sizeHint(.p480, dur))") { exportVideo(.p480) }
+                    Button("Medium · 720p\(sizeHint(.p720, dur))") { exportVideo(.p720) }
+                    Button("Large · 1080p\(sizeHint(.p1080, dur))") { exportVideo(.p1080) }
+                    Button("Max · 4K\(sizeHint(.p2160, dur))") { exportVideo(.p2160) }
                 }
                 Button("Export project (.bs)…") {
                     askSaveURL(suggested: "SHOW.bs") { dest in
@@ -113,13 +115,32 @@ struct ShipButton: View {
         #endif
     }
 
-    private func ship(to dest: URL) {
+    private func exportVideo(_ tier: ShowExporter.Options) {
+        askSaveURL(suggested: "SHOW.mp4") { dest in
+            if let dest { ship(to: dest, tier: tier) }
+        }
+    }
+
+    /// Length of what will be exported (the marked range, else the whole show).
+    private var exportSeconds: Double {
+        model.exportRange.map { $0.to - $0.from } ?? max(1, model.scene.contentEnd + 0.5)
+    }
+
+    /// Rough output size " · ~12 MB" for a tier at the export length.
+    private func sizeHint(_ tier: ShowExporter.Options, _ seconds: Double) -> String {
+        let bytes = Double(tier.videoBitrate + 128_000) * seconds / 8
+        let mb = bytes / 1_000_000
+        return mb >= 1 ? String(format: "  ·  ~%.0f MB", mb) : String(format: "  ·  ~%.1f MB", mb)
+    }
+
+    private func ship(to dest: URL, tier: ShowExporter.Options = .p1080) {
         model.pause()
         shipping = true
         progress = 0
         let document = model.document
         let audio = file.audio
         let assetsMedia = file.assetsMedia
+        let options = tier.fitted(aspect: document.settings.frameAspect)
 
         Task.detached(priority: .userInitiated) {
             // Media to temp files for AVFoundation.
@@ -145,8 +166,7 @@ struct ShipButton: View {
                     assets: SharedAssets.catalog,
                     audioURL: { audioURLs[$0] },
                     assetURL: { assetURLs[$0] },
-                    options: ShowExporter.Options.p1080
-                        .fitted(aspect: document.settings.frameAspect),
+                    options: options,
                     to: out,
                     progress: { p in
                         Task { @MainActor in progress = p }

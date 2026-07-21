@@ -210,6 +210,9 @@ struct StudioTimelineView: View {
     /// Scenes-row context menu: import a file and cue it as the scene from t.
     @State private var sceneImportAt: Double?
     @State private var sceneImportShown = false
+    /// Portable character/media/light/etc. track chosen from the New track menu.
+    @State private var trackImportShown = false
+    @State private var trackImportError: String?
     /// Wardrobe-strip click: add a timed outfit change here.
     @State private var outfitPopover: (char: Int, t: Double, x: CGFloat, y: CGFloat)?
     @State private var renamingText = ""
@@ -436,6 +439,27 @@ struct StudioTimelineView: View {
                 model.addBackgroundCue(assetID: asset.id, assetName: asset.name, at: t)
             }
             sceneImportAt = nil
+        }
+        .fileImporter(isPresented: $trackImportShown,
+                      allowedContentTypes: [.bannyTrack]) { result in
+            switch result {
+            case .success(let url):
+                do {
+                    try model.importPortableTrack(BannyTrackFile.read(from: url))
+                } catch {
+                    trackImportError = error.localizedDescription
+                }
+            case .failure(let error):
+                if (error as NSError).code != NSUserCancelledError {
+                    trackImportError = error.localizedDescription
+                }
+            }
+        }
+        .alert("Import failed", isPresented: .init(get: { trackImportError != nil },
+                                                   set: { if !$0 { trackImportError = nil } })) {
+            Button("OK") { trackImportError = nil }
+        } message: {
+            Text(trackImportError ?? "")
         }
         .onChange(of: model.timelineDeleteRequest) { _, _ in deleteSelection() }
         #if os(macOS)
@@ -950,6 +974,8 @@ struct StudioTimelineView: View {
                 }
                 Button("Media (audio + images)") { model.addAudioTrack() }
                 Button("Light") { model.addLightTrack() }
+                Divider()
+                Button("Import track…") { trackImportShown = true }
             } label: {
                 HStack(spacing: 5) {
                     Image(systemName: "plus")
