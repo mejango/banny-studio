@@ -138,6 +138,8 @@ struct StudioTimelineView: View {
     @State private var resizing: (mark: PerfMark, leading: Bool, baseEvents: [PerfEvent])?
     @State private var draggingClip: (id: String, baseStart: Double, baseDur: Double,
                                       baseOffset: Double, srcDur: Double, edge: Int)?
+    @State private var draggingReaction: (char: Int, id: String, baseStart: Double,
+                                          baseDur: Double, edge: Int, undoRegistered: Bool)?
     @State private var draggingCue: (row: TrackRow, cueID: String, baseStart: Double, baseDur: Double, edge: Int)?
     @State private var draggingSub: (char: Int, index: Int, baseStart: Double, baseDur: Double, edge: Int)?
     /// Export-range drag: edge -1/1 = a marker, 0 = slide the range, 2 = drag out a new one.
@@ -177,6 +179,8 @@ struct StudioTimelineView: View {
     @State private var hoverGutterRow: TrackRow?
     /// Double-clicked audio clip: per-clip mix override editor.
     @State private var clipMix: (kind: TrackRowKind, clipID: String, x: CGFloat, y: CGFloat)?
+    /// Double-clicked image/GIF/video cue: parameter editor anchored at the cue.
+    @State private var visualCueInspectorAt: (cueID: String, x: CGFloat, y: CGFloat)?
     /// Rubber-band selection over empty lane space.
     @State private var marquee: (start: CGPoint, current: CGPoint)?
     /// Edge auto-scroll while dragging: px past the viewport edge (sign = side).
@@ -203,6 +207,13 @@ struct StudioTimelineView: View {
     @State private var audioImportShown = false
     /// Empty media-lane click: add-menu popover (import / bank / paste).
     @State private var mediaAddAt: (trackIndex: Int, t: Double, x: CGFloat, y: CGFloat)?
+    /// File importers must wait until their source popover has actually gone
+    /// away, otherwise AppKit drops the second presentation request.
+    private enum PendingMediaImport {
+        case audio(trackIndex: Int, t: Double)
+        case visual(trackIndex: Int, t: Double)
+    }
+    @State private var pendingMediaImport: PendingMediaImport?
     /// Collapsed scene sections (background cue ids) — folded to thin strips.
     @State private var collapsedSections: Set<String> = []
     @State private var imageImportAt: (trackIndex: Int, t: Double)?
@@ -213,6 +224,8 @@ struct StudioTimelineView: View {
     /// Portable character/media/light/etc. track chosen from the New track menu.
     @State private var trackImportShown = false
     @State private var trackImportError: String?
+    @State private var reactionCaptureCharacter: Int?
+    @State private var reactionDraftName = ""
     /// Wardrobe-strip click: add a timed outfit change here.
     @State private var outfitPopover: (char: Int, t: Double, x: CGFloat, y: CGFloat)?
     @State private var renamingText = ""
@@ -306,7 +319,7 @@ struct StudioTimelineView: View {
                     let isCharacter: Bool = { if case .character = row { return true }; return false }()
                     let mismatch: Bool = {
                         if case .character(let ci) = row {
-                            return model.startPoseMismatch(characterIndex: ci)
+                            return model.startStateMismatch(characterIndex: ci)
                         }
                         return false
                     }()
@@ -325,20 +338,20 @@ struct StudioTimelineView: View {
                     if onScreen, case .character(let ci) = row, mismatch,
                        let c = model.scene.characters[safe: ci] {
                         let lines = CGFloat(3 + mixReadout(c.trackFx).count)
-                        Button("Set start position") { model.commitStartPose(characterIndex: ci) }
+                        Button("Set start state") { model.commitStartState(characterIndex: ci) }
                             .buttonStyle(.plain)
                             .font(.system(size: 9, weight: .semibold))
                             .foregroundStyle(.orange)
                             .padding(.horizontal, 6).padding(.vertical, 2)
                             .background(Color.orange.opacity(0.12), in: Capsule())
                             .overlay(Capsule().stroke(Color.orange.opacity(0.55), lineWidth: 1))
-                            .help("The character isn't at its saved start — save where it stands now")
+                            .help("Save this position, depth, facing, body size, animated scale, and rotation as the character's start")
                             .offset(x: 12 + (cardH * 30 / 54).rounded() + 10,
                                     y: laneTop(of: row) + presenceStripH + 13 + 13 * lines + 2
                                         - scrollOffset.y)
                     }
                     if onScreen, case .background = row, model.cameraFreeformActive {
-                        Button("Set start position") { model.commitCameraStart() }
+                        Button("Set start state") { model.commitCameraStart() }
                             .buttonStyle(.plain)
                             .font(.system(size: 9, weight: .semibold))
                             .foregroundStyle(.orange)
@@ -371,6 +384,7 @@ struct StudioTimelineView: View {
             .frame(width: laneLabelWidth)
             .frame(maxHeight: .infinity, alignment: .topLeading)
             .clipped()
+            visualCuePopoverAnchor
             }
             }
             // ONE playhead line across the band and the lanes — a single view,
@@ -424,7 +438,7 @@ struct StudioTimelineView: View {
             audioImportAt = nil
         }
         .fileImporter(isPresented: $imageImportShown,
-                      allowedContentTypes: [.image]) { result in
+                      allowedContentTypes: [.image, .movie]) { result in
             if case .success(let url) = result, let target = imageImportAt,
                let asset = model.addAsset(from: url) {
                 model.addMediaImageCue(trackIndex: target.trackIndex,
@@ -461,12 +475,27 @@ struct StudioTimelineView: View {
         } message: {
             Text(trackImportError ?? "")
         }
+        .alert("Save as Reaction", isPresented: .init(
+            get: { reactionCaptureCharacter != nil },
+            set: { if !$0 { reactionCaptureCharacter = nil } })) {
+            TextField("Reaction name", text: $reactionDraftName)
+            Button("Cancel", role: .cancel) { reactionCaptureCharacter = nil }
+            Button("Save") {
+                if let character = reactionCaptureCharacter {
+                    model.captureReaction(name: reactionDraftName, characterIndex: character)
+                }
+                reactionCaptureCharacter = nil
+            }
+        } message: {
+            Text("Includes selected performance bars and outfit changes inside their time span.")
+        }
         .onChange(of: model.timelineDeleteRequest) { _, _ in deleteSelection() }
         #if os(macOS)
         .onDeleteCommand { deleteSelection() }
         #else
         .toolbar {
-            if !model.selectedMarks.isEmpty || !model.selectedClips.isEmpty {
+            if !model.selectedMarks.isEmpty || !model.selectedClips.isEmpty
+                || model.selectedReaction != nil {
                 Button("Delete", role: .destructive) { deleteSelection() }
             }
         }
@@ -521,15 +550,15 @@ struct StudioTimelineView: View {
     private var lanesTop: CGFloat { rulerTop + rulerHeight }
 
     private func minHeight(of row: TrackRow) -> CGFloat {
-        if case .character = row { return 64 }   // presence + audio + 7 event rows
+        if case .character = row { return 80 }   // presence + audio + reactions + event rows
         return 44
     }
 
     private func height(of row: TrackRow) -> CGFloat {
         var h = baseHeight(of: row) + rowStretch
-        // Room for the "Set start position" button when it's showing — grow
+        // Room for the "Set start state" button when it's showing — grow
         // enough that every readout line stays visible above it.
-        if case .character(let ci) = row, model.startPoseMismatch(characterIndex: ci),
+        if case .character(let ci) = row, model.startStateMismatch(characterIndex: ci),
            let c = model.scene.characters[safe: ci] {
             let lineCount = CGFloat(3 + mixReadout(c.trackFx).count)
             let needed = presenceStripH + 13 + 13 * lineCount + 32 + wardrobeStripH
@@ -543,7 +572,7 @@ struct StudioTimelineView: View {
 
     private func baseHeight(of row: TrackRow) -> CGFloat {
         let base: CGFloat
-        if case .character = row { base = 72 } else { base = defaultLaneHeight }
+        if case .character = row { base = 88 } else { base = defaultLaneHeight }
         return max(minHeight(of: row), trackHeights[row.key(in: model.scene)] ?? base)
     }
 
@@ -583,8 +612,8 @@ struct StudioTimelineView: View {
     }
 
     /// Finder file dropped on the lanes: import to the bank, cue it where it
-    /// landed — image tracks get an image cue, the Background row (or a video
-    /// anywhere) gets a background cue, an image anywhere else gets a new track.
+    /// landed: media/image tracks get visual cues, the Scenes row gets a
+    /// background cue, and a visual elsewhere gets a new visual track.
     private func handleFileDrop(urls: [URL], location: CGPoint) -> Bool {
         guard let url = urls.first else { return false }
         let t = max(0, (time(forX: location.x) * 10).rounded() / 10)
@@ -602,11 +631,11 @@ struct StudioTimelineView: View {
         }
         guard let asset = model.addAsset(from: url) else { return false }
         switch row(at: location.y) {
-        case .audio(let i) where asset.kind == .image:
+        case .audio(let i):
             model.addMediaImageCue(trackIndex: i, assetID: asset.id, at: t)
-        case .image(let i) where asset.kind == .image:
+        case .image(let i):
             model.addImageCue(trackIndex: i, assetID: asset.id, at: t)
-        case .background, .some where asset.kind == .video, nil where asset.kind == .video:
+        case .background:
             model.addBackgroundCue(assetID: asset.id, assetName: asset.name, at: t)
         default:
             model.addImageTrack(assetID: asset.id, assetName: asset.name)
@@ -644,7 +673,7 @@ struct StudioTimelineView: View {
         let cy = laneTop(of: row) + height(of: row) - wardrobeStripH / 2
         guard abs(point.y - cy) < 9 else { return nil }
         for (i, ev) in model.scene.characters[ci].events.enumerated() {
-            guard case .motion(let t, _, _, _) = ev else { continue }
+            guard case .motion(let t, _, _, _, _) = ev else { continue }
             if abs(x(forTime: t) - point.x) < 7 { return (ci, i) }
         }
         return nil
@@ -972,7 +1001,7 @@ struct StudioTimelineView: View {
                         Button(body.rawValue) { model.addCharacter(body: body) }
                     }
                 }
-                Button("Media (audio + images)") { model.addAudioTrack() }
+                Button("Media (audio + image/GIF/video)") { model.addAudioTrack() }
                 Button("Light") { model.addLightTrack() }
                 Divider()
                 Button("Import track…") { trackImportShown = true }
@@ -1051,7 +1080,7 @@ struct StudioTimelineView: View {
                 var readoutX: CGFloat = 12
                 var readoutBottomPad: CGFloat = 6
                 if case .character(let ci) = row, let c = model.scene.characters[safe: ci] {
-                    let mismatch = model.startPoseMismatch(characterIndex: ci)
+                    let mismatch = model.startStateMismatch(characterIndex: ci)
                     if mismatch { readoutBottomPad = 30 } // the button's line
                     let available = h - presenceStripH - 16 - (mismatch ? 26 : 0)
                     if available >= 26, size.width >= 120 {
@@ -1062,7 +1091,7 @@ struct StudioTimelineView: View {
                             : String(format: "%.2f", c.size)
                         readouts = ["Speed: \(String(format: "%.1f", StudioModel.uiSpeed(c.speed)))",
                                     "Wobble: \(String(format: "%.1f", StudioModel.uiWobble(c.wobble)))",
-                                    "Size: \(sizeName)"]
+                                    "Body size: \(sizeName)"]
                         readouts += mixReadout(c.trackFx)
                     }
                 } else if case .audio(let ai) = row, let track = model.scene.audioTracks[safe: ai],
@@ -1215,7 +1244,7 @@ struct StudioTimelineView: View {
                         if let op = outfitPopover {
                             Color.clear
                                 .frame(width: 1, height: 1)
-                                .offset(x: op.x, y: op.y)
+                                .position(x: op.x, y: op.y)
                                 .popover(isPresented: Binding(
                                     get: { outfitPopover != nil },
                                     set: { if !$0 { outfitPopover = nil } })) {
@@ -1239,7 +1268,7 @@ struct StudioTimelineView: View {
                         if let ma = mediaAddAt {
                             Color.clear
                                 .frame(width: 1, height: 1)
-                                .offset(x: ma.x, y: ma.y)
+                                .position(x: ma.x, y: ma.y)
                                 .popover(isPresented: Binding(
                                     get: { mediaAddAt != nil },
                                     set: { if !$0 { mediaAddAt = nil } })) {
@@ -1247,13 +1276,11 @@ struct StudioTimelineView: View {
                                         Text(String(format: "Add to track at %.1fs", ma.t))
                                             .font(.caption.bold())
                                         Button("Import audio…") {
-                                            audioImportAt = (ma.trackIndex, ma.t)
-                                            audioImportShown = true
+                                            pendingMediaImport = .audio(trackIndex: ma.trackIndex, t: ma.t)
                                             mediaAddAt = nil
                                         }
-                                        Button("Import image…") {
-                                            imageImportAt = (ma.trackIndex, ma.t)
-                                            imageImportShown = true
+                                        Button("Import image/GIF/video…") {
+                                            pendingMediaImport = .visual(trackIndex: ma.trackIndex, t: ma.t)
                                             mediaAddAt = nil
                                         }
                                         #if os(macOS)
@@ -1263,12 +1290,12 @@ struct StudioTimelineView: View {
                                             mediaAddAt = nil
                                         }
                                         #endif
-                                        let images = model.document.assets.filter { $0.kind == .image }
-                                        if !images.isEmpty {
+                                        let visuals = model.document.assets
+                                        if !visuals.isEmpty {
                                             Divider()
                                             Text("FROM THE BANK").font(.caption2.bold())
                                                 .foregroundStyle(.secondary)
-                                            ForEach(images) { asset in
+                                            ForEach(visuals) { asset in
                                                 Button(asset.name) {
                                                     model.addMediaImageCue(trackIndex: ma.trackIndex,
                                                                            assetID: asset.id, at: ma.t)
@@ -1279,12 +1306,13 @@ struct StudioTimelineView: View {
                                     }
                                     .padding(12)
                                     .frame(width: 240)
+                                    .onDisappear { presentPendingMediaImport() }
                                 }
                         }
                         if let cm = clipMix {
                             Color.clear
                                 .frame(width: 1, height: 1)
-                                .offset(x: cm.x, y: cm.y)
+                                .position(x: cm.x, y: cm.y)
                                 .popover(isPresented: Binding(
                                     get: { clipMix != nil },
                                     set: { if !$0 { clipMix = nil } })) {
@@ -1300,6 +1328,51 @@ struct StudioTimelineView: View {
                                     .environment(\.colorScheme, lightMode ? .light : .dark)
                                 }
                         }
+    }
+
+    /// This anchor lives in the visible lanes viewport, not the much wider
+    /// scroll content. Convert the cue click from content coordinates so the
+    /// popover arrow remains beside the clicked cue at every scroll position.
+    @ViewBuilder private var visualCuePopoverAnchor: some View {
+        if let visual = visualCueInspectorAt {
+            Color.clear
+                .frame(width: 1, height: 1)
+                .position(x: laneLabelWidth + visual.x - scrollOffset.x,
+                          y: visual.y - scrollOffset.y)
+                .popover(isPresented: Binding(
+                    get: { visualCueInspectorAt != nil },
+                    set: { if !$0 { visualCueInspectorAt = nil } })) {
+                    ScrollView {
+                        ImageCueInspector(model: model)
+                            .padding(12)
+                    }
+                    .frame(width: 350, height: 460)
+                    .background(lightMode ? Color(red: 1, green: 0.99, blue: 0.95)
+                                          : Color(red: 0.13, green: 0.13, blue: 0.16))
+                    .presentationBackground(
+                        lightMode ? Color(red: 1, green: 0.99, blue: 0.95)
+                                  : Color(red: 0.13, green: 0.13, blue: 0.16))
+                    .environment(\.colorScheme, lightMode ? .light : .dark)
+                }
+        }
+    }
+
+    /// Present the Finder sheet on the timeline host, one run-loop turn after
+    /// the add popover disappears. Presenting both at once is ignored on macOS.
+    private func presentPendingMediaImport() {
+        guard let request = pendingMediaImport else { return }
+        pendingMediaImport = nil
+        Task { @MainActor in
+            await Task.yield()
+            switch request {
+            case .audio(let trackIndex, let t):
+                audioImportAt = (trackIndex, t)
+                audioImportShown = true
+            case .visual(let trackIndex, let t):
+                imageImportAt = (trackIndex, t)
+                imageImportShown = true
+            }
+        }
     }
 
     private var timelineCanvas: some View {
@@ -1374,6 +1447,12 @@ struct StudioTimelineView: View {
             }
             if let p = hoverLanePoint {
                 Divider()
+                if let character = reactionCaptureCharacterIndex {
+                    Button("Save selection as reaction…") {
+                        reactionDraftName = model.suggestedReactionName()
+                        reactionCaptureCharacter = character
+                    }
+                }
                 if model.hasTimelineSelection {
                     Button("Copy") { model.copyTimelineSelection() }
                 }
@@ -1389,7 +1468,31 @@ struct StudioTimelineView: View {
     /// motion keyframes, cues, clips).
     @ViewBuilder
     private func eventContextItems(at p: CGPoint) -> some View {
-        if let m = mark(at: p) {
+        if let hit = reaction(at: p) {
+            Button("Edit reaction…") {
+                model.selectReaction(character: hit.char, id: hit.block.id)
+                model.selection = [hit.char]
+                let key = TrackRow.character(hit.char).key(in: model.scene)
+                model.selectedTrackKey = key
+                model.inspectorRequest = key
+            }
+            Button("Duplicate reaction block") {
+                model.duplicateReactionBlock(character: hit.char, id: hit.block.id)
+            }
+            Button("Expand to events") {
+                model.expandReactionBlock(character: hit.char, id: hit.block.id)
+            }
+            Button("Delete reaction block", role: .destructive) {
+                model.selectReaction(character: hit.char, id: hit.block.id)
+                model.deleteTimelineSelection()
+            }
+            Divider()
+        } else if let m = mark(at: p) {
+            Button("Save as reaction…") {
+                if !model.selectedMarks.contains(m) { model.selectedMarks = [m] }
+                reactionDraftName = model.suggestedReactionName()
+                reactionCaptureCharacter = m.character
+            }
             Button("Delete \(m.code.group.rawValue)", role: .destructive) {
                 model.selectedMarks = [m]; model.deleteTimelineSelection()
             }
@@ -1403,7 +1506,7 @@ struct StudioTimelineView: View {
             Button("Edit motion…") {
                 model.selectedMotionEvent = dot
                 model.selection = [dot.char]
-                if case .motion(let mt, _, _, _) = model.scene.characters[dot.char].events[dot.index] {
+                if case .motion(let mt, _, _, _, _) = model.scene.characters[dot.char].events[dot.index] {
                     model.seek(to: mt)
                 }
                 let key = TrackRow.character(dot.char).key(in: model.scene)
@@ -1425,6 +1528,12 @@ struct StudioTimelineView: View {
             }
             Divider()
         }
+    }
+
+    private var reactionCaptureCharacterIndex: Int? {
+        guard !model.selectedMarks.isEmpty else { return nil }
+        let characters = Set(model.selectedMarks.map(\.character))
+        return characters.count == 1 ? characters.first : nil
     }
 
     // MARK: - Drawing
@@ -1686,19 +1795,22 @@ struct StudioTimelineView: View {
     /// Strip under the Scenes image for the camera pan/zoom motion bars.
     private let sceneCameraStripH: CGFloat = 10
 
-    /// Character lane vertical layout: captions strip, then audio clips, then
-    /// the seven event sub-lanes. Everything gets its own band — no overlap.
+    /// Character lane vertical layout: presence, audio, reusable reactions,
+    /// then the event sub-lanes. Everything gets its own band — no overlap.
     /// Bottom band of every character lane: the wardrobe (outfit change) strip.
     private var wardrobeStripH: CGFloat { 20 }
 
     private func characterLaneZones(h fullH: CGFloat) -> (clipTop: CGFloat, clipH: CGFloat,
+                                                          reactionTop: CGFloat, reactionH: CGFloat,
                                                           eventTop: CGFloat, subH: CGFloat) {
         let h = fullH - wardrobeStripH
-        let clipH: CGFloat = max(14, (h - presenceStripH - 8) * 0.45)
+        let reactionH: CGFloat = 16
+        let clipH: CGFloat = max(14, (h - presenceStripH - reactionH - 10) * 0.42)
         let clipTop = presenceStripH + 2
-        let eventTop = clipTop + clipH + 2
+        let reactionTop = clipTop + clipH + 2
+        let eventTop = reactionTop + reactionH + 2
         let subH = max(2, (h - eventTop - 4) / CGFloat(EventGroup.allCases.count))
-        return (clipTop, clipH, eventTop, subH)
+        return (clipTop, clipH, reactionTop, reactionH, eventTop, subH)
     }
 
     /// The global CC strip: every character's captions, tinted per speaker body color.
@@ -1777,6 +1889,40 @@ struct StudioTimelineView: View {
     private func drawCharacterLane(_ i: Int, y: CGFloat, h: CGFloat, ctx: GraphicsContext) {
         let character = model.scene.characters[i]
         let zones = characterLaneZones(h: h)
+        let reactionBand = CGRect(x: 0, y: y + zones.reactionTop,
+                                  width: contentWidth + 40, height: zones.reactionH)
+        ctx.fill(Path(reactionBand), with: .color(Color.purple.opacity(lightMode ? 0.05 : 0.09)))
+        for block in character.reactions {
+            let definition = model.scene.reactionLibrary.first { $0.id == block.reactionID }
+            let rect = CGRect(x: x(forTime: block.start), y: reactionBand.minY + 1,
+                              width: max(6, xw(block.start, block.dur)),
+                              height: reactionBand.height - 2)
+            let selected = model.selectedReaction == ReactionSelection(character: i, id: block.id)
+            let fill = lightMode ? Color(red: 0.52, green: 0.25, blue: 0.7)
+                                 : Color(red: 0.65, green: 0.38, blue: 0.88)
+            ctx.fill(Path(roundedRect: rect, cornerRadius: 4),
+                     with: .color(fill.opacity(selected ? 1 : 0.82)))
+            ctx.stroke(Path(roundedRect: rect, cornerRadius: 4),
+                       with: .color(selected ? (lightMode ? .black : .white) : fill),
+                       lineWidth: selected ? 1.5 : 1)
+            if selected, rect.width > 14 {
+                for hx in [rect.minX + 3, rect.maxX - 3] {
+                    ctx.stroke(Path { p in
+                        p.move(to: CGPoint(x: hx, y: rect.minY + 3))
+                        p.addLine(to: CGPoint(x: hx, y: rect.maxY - 3))
+                    }, with: .color(.white.opacity(0.75)), lineWidth: 1)
+                }
+            }
+            if rect.width > 24 {
+                let ownsOutfit = !(definition?.outfitSlots.isEmpty ?? true)
+                let suffix = ownsOutfit ? "  +outfit" : ""
+                var clipped = ctx
+                clipped.clip(to: Path(rect.insetBy(dx: 4, dy: 0)))
+                clipped.draw(Text((definition?.name ?? "Missing reaction") + suffix)
+                    .font(.system(size: 8, weight: .semibold)).foregroundStyle(.white),
+                             at: CGPoint(x: rect.minX + 5, y: rect.midY), anchor: .leading)
+            }
+        }
         for mark in TimelineMath.marks(for: character.events, character: i, duration: model.duration) {
             let my = y + zones.eventTop + CGFloat(mark.code.group.laneIndex) * zones.subH + 1
             let rect = CGRect(x: x(forTime: mark.start), y: my,
@@ -1821,9 +1967,9 @@ struct StudioTimelineView: View {
                 ctx.draw(resolved, at: CGPoint(x: cx, y: bubble.midY), anchor: .center)
             }
         }
-        // Motion keyframes: pink diamonds on the same strip (speed/wobble/size).
+        // Motion keyframes: pink diamonds on the same strip.
         for (ei, ev) in character.events.enumerated() {
-            guard case .motion(let t, let s, let w, let z) = ev else { continue }
+            guard case .motion(let t, let s, let r, let w, let z) = ev else { continue }
             let cx = x(forTime: t)
             let cy = stripY + wardrobeStripH / 2
             let selected = model.selectedMotionEvent.map { $0.char == i && $0.index == ei } ?? false
@@ -1839,6 +1985,7 @@ struct StudioTimelineView: View {
                            with: .color(.orange), lineWidth: 1.5)
                 var parts: [String] = []
                 if let s { parts.append(String(format: "spd %.1f", StudioModel.uiSpeed(s))) }
+                if let r { parts.append(String(format: "rot %.1f", StudioModel.uiRotationSpeed(r))) }
                 if let w { parts.append(String(format: "wob %.1f", StudioModel.uiWobble(w))) }
                 if let z { parts.append(z == 1 ? "size N" : z == 0.62 ? "size S" : z == 0.38 ? "size B"
                                         : String(format: "size %.2f", z)) }
@@ -2128,6 +2275,7 @@ struct StudioTimelineView: View {
                 bgGroupDrag = nil
                 draggingOutfit = nil
                 draggingClip = nil
+                draggingReaction = nil
                 draggingCue = nil
                 draggingSub = nil
                 draggingPresence = nil
@@ -2159,6 +2307,30 @@ struct StudioTimelineView: View {
 
     private func handleLaneDrag(_ value: DragGesture.Value) {
 
+        if var drag = draggingReaction {
+            let dt = Double(value.translation.width / pxPerSecond)
+            if !drag.undoRegistered, abs(dt) > 0.0001 {
+                model.registerUndoSnapshot(label: drag.edge == 0 ? "Move Reaction" : "Resize Reaction")
+                drag.undoRegistered = true
+                draggingReaction = drag
+            }
+            guard drag.undoRegistered else { return }
+            switch drag.edge {
+            case -1:
+                let newStart = max(0, min(snapped(drag.baseStart + dt),
+                                          drag.baseStart + drag.baseDur - 0.08))
+                model.setReactionBlock(character: drag.char, id: drag.id, start: newStart,
+                                       dur: drag.baseDur + drag.baseStart - newStart)
+            case 1:
+                let newEnd = snapped(drag.baseStart + drag.baseDur + dt)
+                model.setReactionBlock(character: drag.char, id: drag.id, start: drag.baseStart,
+                                       dur: max(0.08, newEnd - drag.baseStart))
+            default:
+                model.setReactionBlock(character: drag.char, id: drag.id,
+                                       start: max(0, snapped(drag.baseStart + dt)), dur: drag.baseDur)
+            }
+            return
+        }
         if let d = draggingClip {
             let dt = Double(value.translation.width / pxPerSecond)
             switch d.edge {
@@ -2258,7 +2430,31 @@ struct StudioTimelineView: View {
                 }
                 return
             }
-            if let hit = mark(at: value.startLocation) {
+            if let hit = reaction(at: value.startLocation)
+                ?? reaction(at: CGPoint(x: value.startLocation.x - 6,
+                                        y: value.startLocation.y))
+                ?? reaction(at: CGPoint(x: value.startLocation.x + 6,
+                                        y: value.startLocation.y)) {
+                let edge = 7.0
+                let startX = x(forTime: hit.block.start)
+                let endX = x(forTime: hit.block.start + hit.block.dur)
+                let e = abs(value.startLocation.x - startX) < edge ? -1
+                    : abs(value.startLocation.x - endX) < edge ? 1 : 0
+                var block = hit.block
+                #if os(macOS)
+                if e == 0, NSEvent.modifierFlags.contains(.command),
+                   let newID = model.duplicateReactionBlock(character: hit.char, id: hit.block.id),
+                   let copy = model.scene.characters[hit.char].reactions
+                    .first(where: { $0.id == newID }) {
+                    block = copy
+                }
+                #endif
+                draggingReaction = (hit.char, block.id, block.start, block.dur, e, false)
+                model.selectReaction(character: hit.char, id: block.id)
+                model.selection = [hit.char]
+                return
+            } else if let hit = mark(at: value.startLocation) {
+                model.selectedReaction = nil
                 let edge = 4.0
                 let startX = x(forTime: hit.start)
                 let endX = x(forTime: hit.end)
@@ -2282,6 +2478,7 @@ struct StudioTimelineView: View {
             } else if let c = clip(at: value.startLocation)
                         ?? clip(at: CGPoint(x: value.startLocation.x - 6, y: value.startLocation.y))
                         ?? clip(at: CGPoint(x: value.startLocation.x + 6, y: value.startLocation.y)) {
+                model.selectedReaction = nil
                 let edge = 7.0
                 let e = abs(value.startLocation.x - x(forTime: c.start)) < edge ? -1
                     : abs(value.startLocation.x - x(forTime: c.start + c.dur)) < edge ? 1 : 0
@@ -2308,6 +2505,7 @@ struct StudioTimelineView: View {
             } else if let (row, cue) = cue(at: value.startLocation)
                         ?? cue(at: CGPoint(x: value.startLocation.x - 6, y: value.startLocation.y))
                         ?? cue(at: CGPoint(x: value.startLocation.x + 6, y: value.startLocation.y)) {
+                model.selectedReaction = nil
                 let edge = 7.0
                 let startX = x(forTime: cue.start)
                 let endX = x(forTime: cue.start + cue.dur)
@@ -2371,6 +2569,7 @@ struct StudioTimelineView: View {
                       model.scene.characters[dot.char].events.indices.contains(dot.index),
                       case .outfit(_, let slot, let name) =
                         model.scene.characters[dot.char].events[dot.index] {
+                model.selectedReaction = nil
                 // Grab an outfit-change dot and slide it in time.
                 var base = model.scene.characters[dot.char].events
                 base.remove(at: dot.index)
@@ -2444,6 +2643,13 @@ struct StudioTimelineView: View {
     /// Pointer within grabbing distance of a clip/cue/mark edge?
     private func resizeEdgeHit(at p: CGPoint) -> Bool {
         let edge: CGFloat = 7
+        if let hit = reaction(at: p)
+            ?? reaction(at: CGPoint(x: p.x - 6, y: p.y))
+            ?? reaction(at: CGPoint(x: p.x + 6, y: p.y)),
+           abs(p.x - x(forTime: hit.block.start)) < edge
+            || abs(p.x - x(forTime: hit.block.start + hit.block.dur)) < edge {
+            return true
+        }
         if let c = clip(at: p)
             ?? clip(at: CGPoint(x: p.x - 6, y: p.y))
             ?? clip(at: CGPoint(x: p.x + 6, y: p.y)),
@@ -2535,6 +2741,7 @@ struct StudioTimelineView: View {
         }
         model.selectedMarks = marks
         model.selectedClips = clips
+        model.selectedReaction = nil
         model.selectedBackgroundCues = bgCues
         // Keep the inspector focus on one of the marquee'd scenes.
         if !bgCues.isEmpty { model.selectedBackgroundCue = bgCues.first }
@@ -2634,15 +2841,16 @@ struct StudioTimelineView: View {
 
     private func handleTap(at point: CGPoint) {
         let y = point.y
+        let now = Date()
+        let isDoubleClick = lastTap.map {
+            now.timeIntervalSince($0.at) < 0.45 && abs($0.location.x - point.x) < 6
+                && abs($0.location.y - point.y) < 6
+        } ?? false
+        lastTap = (point, now)
         if let row = row(at: y), y - laneTop(of: row) < presenceStripH,
            !{ if case .background = row { return true }; return false }() {
             var events = presence(of: row)
             let t = (time(forX: point.x) * 10).rounded() / 10
-            let isDoubleClick = lastTap.map {
-                Date().timeIntervalSince($0.at) < 0.45 && abs($0.location.x - point.x) < 6
-                    && abs($0.location.y - point.y) < 6
-            } ?? false
-            lastTap = (point, Date())
             if let idx = events.indices.first(where: { abs(x(forTime: events[$0].t) - point.x) < 8 }) {
                 let rowKey = row.key(in: model.scene)
                 let alreadySelected = selectedPresence?.rowKey == rowKey && selectedPresence?.index == idx
@@ -2682,7 +2890,27 @@ struct StudioTimelineView: View {
             setPresence(row, events)
             return
         }
-        lastTap = (point, Date())
+        if let hit = reaction(at: point) {
+            model.selectReaction(character: hit.char, id: hit.block.id)
+            model.selection = [hit.char]
+            let key = TrackRow.character(hit.char).key(in: model.scene)
+            model.selectedTrackKey = key
+            if isDoubleClick { model.inspectorRequest = key }
+            return
+        }
+        // Double-clicking a visual cue opens its complete parameter inspector,
+        // including clicks on the label strip (whose first click starts rename).
+        if isDoubleClick, let (row, cueHit) = cue(at: point) {
+            switch row {
+            case .image, .audio:
+                editingLabel = nil
+                selectCue(row: row, id: cueHit.id)
+                visualCueInspectorAt = (cueHit.id, point.x, point.y)
+                return
+            default:
+                break
+            }
+        }
         // Click on a clip/cue label → rename in place.
         if let c = clip(at: point), labelZone(forClipStart: c.start, at: point) {
             editingText = c.name
@@ -2699,6 +2927,7 @@ struct StudioTimelineView: View {
         }
         // Motion keyframes (pink diamonds): click selects (Delete removes).
         if let dot = motionEvent(at: point) {
+            model.selectedReaction = nil
             model.selectedOutfitEvent = nil
             if isCommandDown() {
                 model.selectedMotionEvent = dot
@@ -2709,7 +2938,7 @@ struct StudioTimelineView: View {
             } else {
                 model.selectedMotionEvent = dot
                 // Park the playhead on it so the card edits this keyframe.
-                if case .motion(let t, _, _, _) = model.scene.characters[dot.char].events[dot.index] {
+                if case .motion(let t, _, _, _, _) = model.scene.characters[dot.char].events[dot.index] {
                     model.seek(to: t)
                 }
             }
@@ -2717,6 +2946,7 @@ struct StudioTimelineView: View {
         }
         // Outfit-change dots: click selects (Delete removes); ⌘-click removes.
         if let dot = outfitEvent(at: point) {
+            model.selectedReaction = nil
             model.selectedMotionEvent = nil
             if isCommandDown() {
                 model.selectedOutfitEvent = dot
@@ -2742,6 +2972,7 @@ struct StudioTimelineView: View {
         if model.selectedMotionEvent != nil { model.selectedMotionEvent = nil }
         let splitting = isCommandDown()
         if let hit = mark(at: point) {
+            model.selectedReaction = nil
             if splitting {
                 splitMark(hit, at: time(forX: point.x))
             } else if model.selectedMarks.contains(hit) {
@@ -2750,10 +2981,7 @@ struct StudioTimelineView: View {
                 model.selectedMarks.insert(hit)
             }
         } else if let c = clip(at: point) {
-            let isDoubleClick = lastTap.map {
-                Date().timeIntervalSince($0.at) < 0.45 && abs($0.location.x - point.x) < 6
-                    && abs($0.location.y - point.y) < 6
-            } ?? false
+            model.selectedReaction = nil
             if isDoubleClick, let row = row(at: point.y) {
                 clipMix = (kind(of: row), c.id, point.x, point.y)
                 return
@@ -2766,6 +2994,7 @@ struct StudioTimelineView: View {
                 model.selectedClips = [c.id]
             }
         } else if let (row, cue) = cue(at: point) {
+            model.selectedReaction = nil
             if splitting {
                 switch row {
                 case .background: model.splitBackgroundCue(id: cue.id, at: time(forX: point.x))
@@ -2787,6 +3016,7 @@ struct StudioTimelineView: View {
             model.selectedBackgroundCue = nil
             model.selectedBackgroundCues = []
             model.selectedLightCue = nil
+            model.selectedReaction = nil
             if case .character(let i) = row(at: y) {
                 model.selection = [i]
             }
@@ -2863,6 +3093,22 @@ struct StudioTimelineView: View {
     }
 
     // MARK: - Hit tests
+
+    private func reaction(at point: CGPoint) -> (char: Int, block: ReactionInstance)? {
+        guard case .character(let i) = row(at: point.y),
+              model.scene.characters.indices.contains(i) else { return nil }
+        let rowY = laneTop(of: .character(i))
+        let zones = characterLaneZones(h: height(of: .character(i)))
+        let band = CGRect(x: 0, y: rowY + zones.reactionTop,
+                          width: contentWidth + 40, height: zones.reactionH)
+        guard band.insetBy(dx: 0, dy: -2).contains(point) else { return nil }
+        for block in model.scene.characters[i].reactions.reversed() {
+            let rect = CGRect(x: x(forTime: block.start), y: band.minY,
+                              width: max(6, xw(block.start, block.dur)), height: band.height)
+            if rect.insetBy(dx: -2, dy: 0).contains(point) { return (i, block) }
+        }
+        return nil
+    }
 
     private func mark(at point: CGPoint) -> PerfMark? {
         guard case .character(let i) = row(at: point.y) else { return nil }
@@ -3041,12 +3287,14 @@ struct TransportBar: View {
                               tint: Color(red: 0.45, green: 0.62, blue: 0.95))
                     lightChip(title: "Zoom", keys: ["−", "+"],
                               tint: Color(red: 0.75, green: 0.55, blue: 0.95))
-                } else if model.selectedImageCue != nil,
-                          model.scene.audioTracks.contains(where: { $0.id == model.selectedTrackKey })
-                            || model.scene.imageTracks.contains(where: { $0.id == model.selectedTrackKey }) {
-                    lightChip(title: "Move", keys: ["←", "→", "↑", "↓"],
+                } else if model.selectedVisualCueOnSelectedTrack {
+                    lightChip(title: "Move L/R", keys: ["←", "→"],
                               tint: Color(red: 0.45, green: 0.62, blue: 0.95))
-                    lightChip(title: "Scale", keys: ["1", "2"],
+                    lightChip(title: "Move F/B", keys: ["↑", "↓"],
+                              tint: Color(red: 1, green: 0.35, blue: 0.35))
+                    lightChip(title: "rotate", keys: ["⇧", "←", "→"],
+                              tint: Color(red: 0.36, green: 0.83, blue: 0.85))
+                    lightChip(title: "scale", keys: ["−", "+"],
                               tint: Color(red: 0.75, green: 0.55, blue: 0.95))
                 } else {
                     let pose = livePose
@@ -3096,10 +3344,8 @@ struct TransportBar: View {
 
     /// Who REC will capture: the locked targets while recording, else the selection.
     private var recTargetNames: String {
-        if model.isImageRecording || (model.selectedImageCue != nil
-            && (model.scene.audioTracks.contains { $0.id == model.selectedTrackKey }
-                || model.scene.imageTracks.contains { $0.id == model.selectedTrackKey })) {
-            return "image"
+        if model.isImageRecording || model.selectedVisualCueOnSelectedTrack {
+            return "visual"
         }
         if let key = model.selectedTrackKey,
            let t = model.scene.lightTracks.first(where: { $0.id == key }) {
@@ -3162,7 +3408,7 @@ struct TransportBar: View {
         case .depth: return "Move F/B"
         case .talk: return "mouth"
         case .spin: return "rotate"
-        case .zoom: return "zoom"
+        case .zoom: return "scale"
         default: return group.rawValue
         }
     }
@@ -3212,7 +3458,7 @@ struct TransportBar: View {
                 .brightness(active ? 0.06 : 0)
                 .animation(.easeOut(duration: 0.12), value: active)
             }
-            .help("\(group.rawValue): \(armed ? "armed (records)" : "disarmed (plays back)")")
+            .help("\(chipTitle(group)): \(armed ? "armed (records)" : "disarmed (plays back)")")
         }
     }
 }

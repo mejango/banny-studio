@@ -225,13 +225,21 @@ struct TrackInspector: View {
             switch kind {
             case .character(let i):
                 MotionSection(model: model, characterIndex: i)
+                ReactionLibrarySection(model: model, characterIndex: i)
                 MixSection(model: model, kind: kind)
                 // The card's wardrobe edits the character's START state; timed
                 // mid-show changes remain as recorded outfit events (white dots).
                 WardrobePanel(model: model, characterIndex: i, baseOnly: true)
-            case .audio:
+            case .audio(let i):
                 MixSection(model: model, kind: kind)
-                Text("Drop an audio file onto the track to add a clip at the playhead.")
+                if let file {
+                    AudioSection(model: model, file: file, audioTrackIndex: i)
+                    VisualMediaSection(model: model, trackIndex: i)
+                }
+                if model.selectedImageCueOwner?.trackID == model.scene.audioTracks[safe: i]?.id {
+                    ImageCueInspector(model: model)
+                }
+                Text("Drop audio, image, GIF, or video onto this media track, or click an empty spot to import.")
                     .font(.caption2).foregroundStyle(.secondary)
             case .image:
                 ImageCueInspector(model: model)
@@ -446,7 +454,7 @@ struct TrackCardButton: View {
 
     private var popoverHeight: CGFloat {
         switch row {
-        case .character: return 560
+        case .character: return 640
         case .background: return 560
         case .image: return 380
         case .audio: return 480

@@ -64,10 +64,17 @@ public struct PortableTrack: Codable, Equatable, Sendable {
             case .character, .light: return []
             }
         }
+
+        public var referencedReactionIDs: Set<String> {
+            guard case .character(let character) = self else { return [] }
+            return Set(character.reactions.map(\.reactionID))
+        }
     }
 
     public var version: Int
     public var payload: Payload
+    /// Reaction definitions required by a portable character's blocks.
+    public var reactionLibrary: [ReactionDefinition]
     public var assets: [Asset]
     /// Source clip id -> the source audio bytes.
     public var audio: [String: MediaFile]
@@ -75,13 +82,40 @@ public struct PortableTrack: Codable, Equatable, Sendable {
     public var assetMedia: [String: MediaFile]
 
     public init(version: Int = PortableTrack.currentVersion, payload: Payload,
-                assets: [Asset] = [], audio: [String: MediaFile] = [:],
+                reactionLibrary: [ReactionDefinition] = [], assets: [Asset] = [],
+                audio: [String: MediaFile] = [:],
                 assetMedia: [String: MediaFile] = [:]) {
         self.version = version
         self.payload = payload
+        self.reactionLibrary = reactionLibrary
         self.assets = assets
         self.audio = audio
         self.assetMedia = assetMedia
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case version, payload, reactionLibrary, assets, audio, assetMedia
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        version = try c.decodeIfPresent(Int.self, forKey: .version) ?? Self.currentVersion
+        payload = try c.decode(Payload.self, forKey: .payload)
+        reactionLibrary = try c.decodeIfPresent([ReactionDefinition].self,
+                                                forKey: .reactionLibrary) ?? []
+        assets = try c.decodeIfPresent([Asset].self, forKey: .assets) ?? []
+        audio = try c.decodeIfPresent([String: MediaFile].self, forKey: .audio) ?? [:]
+        assetMedia = try c.decodeIfPresent([String: MediaFile].self, forKey: .assetMedia) ?? [:]
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(version, forKey: .version)
+        try c.encode(payload, forKey: .payload)
+        try c.encode(reactionLibrary, forKey: .reactionLibrary)
+        try c.encode(assets, forKey: .assets)
+        try c.encode(audio, forKey: .audio)
+        try c.encode(assetMedia, forKey: .assetMedia)
     }
 
     /// Decodes and validates a `.bannytrack` file.
@@ -107,6 +141,14 @@ public struct PortableTrack: Codable, Equatable, Sendable {
         for id in payload.referencedAudioIDs.sorted() where audio[id] == nil {
             throw PortableTrackError.missingAudio(id)
         }
+        let reactionsByID = Dictionary(reactionLibrary.map { ($0.id, $0) },
+                                       uniquingKeysWith: { first, _ in first })
+        guard reactionsByID.count == reactionLibrary.count else {
+            throw PortableTrackError.duplicateReactionID
+        }
+        for id in payload.referencedReactionIDs.sorted() where reactionsByID[id] == nil {
+            throw PortableTrackError.missingReaction(id)
+        }
         let assetsByID = Dictionary(assets.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         guard assetsByID.count == assets.count else {
             throw PortableTrackError.duplicateAssetID
@@ -130,6 +172,9 @@ public struct PortableTrack: Codable, Equatable, Sendable {
             audioIDs.sorted().map { ($0, makeID()) })
         let assetMap = Dictionary(uniqueKeysWithValues:
             assetIDs.sorted().map { ($0, makeID()) })
+        let reactionIDs = Set(reactionLibrary.map(\.id)).union(payload.referencedReactionIDs)
+        let reactionMap = Dictionary(uniqueKeysWithValues:
+            reactionIDs.sorted().map { ($0, makeID()) })
 
         func remapClips(_ clips: [AudioClip]) -> [AudioClip] {
             clips.map { source in
@@ -151,6 +196,10 @@ public struct PortableTrack: Codable, Equatable, Sendable {
         switch payload {
         case .character(var character):
             character.clips = remapClips(character.clips)
+            for index in character.reactions.indices {
+                character.reactions[index].id = makeID()
+                character.reactions[index].reactionID = reactionMap[character.reactions[index].reactionID]!
+            }
             remappedPayload = .character(character)
         case .audio(var track):
             track.id = makeID()
@@ -189,7 +238,13 @@ public struct PortableTrack: Codable, Equatable, Sendable {
         let remappedAssetMedia = Dictionary(uniqueKeysWithValues: assetMedia.map { id, media in
             (assetMap[id]!, media)
         })
-        return PortableTrack(payload: remappedPayload, assets: remappedAssets,
+        let remappedReactions = reactionLibrary.map { source -> ReactionDefinition in
+            var reaction = source
+            reaction.id = reactionMap[source.id]!
+            return reaction
+        }
+        return PortableTrack(payload: remappedPayload, reactionLibrary: remappedReactions,
+                             assets: remappedAssets,
                              audio: remappedAudio, assetMedia: remappedAssetMedia)
     }
 }
@@ -234,6 +289,8 @@ public enum PortableTrackError: Error, Equatable, LocalizedError {
     case missingAsset(String)
     case missingAssetMedia(String)
     case duplicateAssetID
+    case missingReaction(String)
+    case duplicateReactionID
 
     public var errorDescription: String? {
         switch self {
@@ -247,6 +304,10 @@ public enum PortableTrackError: Error, Equatable, LocalizedError {
             return "This track is missing one of its image or video files."
         case .duplicateAssetID:
             return "This track contains duplicate media identifiers."
+        case .missingReaction:
+            return "This character track is missing one of its reaction definitions."
+        case .duplicateReactionID:
+            return "This character track contains duplicate reaction identifiers."
         }
     }
 }

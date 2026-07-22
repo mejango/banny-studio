@@ -144,6 +144,82 @@ private func writePNG(_ image: CGImage, to url: URL) throws {
     _ = renderer
 }
 
+@Test func floatingVisualResolverReceivesCueAndShowTime() throws {
+    let catalog = try AssetCatalog(assetsRoot: assetsRoot)
+    let cue = ImageCue(id: "visual", assetID: "movie", start: 2, dur: 4,
+                       from: ImagePlacement())
+    let scene = SceneState(audioTracks: [
+        AudioTrack(id: "media", name: "Media", cues: [cue]),
+    ])
+    let source = makeContext(CGSize(width: 2, height: 2))
+    source.setFillColor(CGColor(red: 1, green: 0, blue: 0, alpha: 1))
+    source.fill(CGRect(x: 0, y: 0, width: 2, height: 2))
+    let image = try #require(source.makeImage())
+    var resolvedCue: ImageCue?
+    var resolvedTime: Double?
+
+    let context = makeContext(CGSize(width: 100, height: 100))
+    FrameRenderer(assets: catalog).draw(
+        scene: scene, at: 3.25, size: CGSize(width: 100, height: 100),
+        visualAsset: { cue, time in
+            resolvedCue = cue
+            resolvedTime = time
+            return image
+        },
+        flipped: true, in: context)
+
+    #expect(resolvedCue == cue)
+    #expect(resolvedTime == 3.25)
+}
+
+@Test func mediaMaskTintPivotAndLightShadowRenderTogether() throws {
+    let catalog = try AssetCatalog(assetsRoot: assetsRoot)
+    let sourceContext = makeContext(CGSize(width: 10, height: 10))
+    sourceContext.setFillColor(CGColor(red: 1, green: 0, blue: 0, alpha: 1))
+    sourceContext.fill(CGRect(x: 0, y: 0, width: 10, height: 10))
+    let source = try #require(sourceContext.makeImage())
+    var cue = ImageCue(
+        id: "styled", assetID: "asset", start: 0, dur: 2,
+        from: ImagePlacement(x: 0.2, y: 0.2, scale: 0.2),
+        appearance: MediaAppearance(
+            tint: MediaColor(red: 0, green: 0, blue: 1), tintAmount: 1,
+            outline: 12, shadow: 1),
+        mask: .circle, pivot: .topLeft)
+
+    func render(lights: [Light]) throws -> CGImage {
+        let context = makeContext(CGSize(width: 100, height: 100))
+        let scene = SceneState(imageTracks: [
+            ImageTrack(id: "media", name: "Media", cues: [cue]),
+        ], lights: lights)
+        FrameRenderer(assets: catalog).draw(
+            scene: scene, at: 0.1, size: CGSize(width: 100, height: 100),
+            visualAsset: { _, _ in source }, flipped: true, in: context)
+        return try #require(context.makeImage())
+    }
+
+    let withoutLight = try render(lights: [])
+    let withLight = try render(lights: [Light(x: 0, y: 0)])
+    #expect(withoutLight.dataProvider?.data as Data? != withLight.dataProvider?.data as Data?)
+
+    let bytes = try #require(withoutLight.dataProvider?.data as Data?)
+    var bluePixels = 0
+    var minBlueX = Int.max
+    for y in 0..<withoutLight.height {
+        for x in 0..<withoutLight.width {
+            let i = y * withoutLight.bytesPerRow + x * 4
+            if bytes[i + 2] > 180, bytes[i] < 80 {
+                bluePixels += 1
+                minBlueX = min(minBlueX, x)
+            }
+        }
+    }
+    #expect(bluePixels > 220 && bluePixels < 380) // circular crop, not the 20×20 square
+    #expect(minBlueX >= 19) // top-left pivot places its leading edge at x=20
+
+    cue.appearance.cleanup = 0.7 // exercise the alpha-cleanup filter in the same draw path
+    _ = try render(lights: [])
+}
+
 @Test func cameraClampsToBackgroundBounds() {
     // Wide 32:9 image cover-cropped into a 9:16 frame: bg exactly frame height,
     // much wider than the frame.

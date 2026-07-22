@@ -152,8 +152,7 @@ public enum ShowExporter {
         let fps = options.fps
         let renderer = FrameRenderer(assets: assets)
         let stage = document.stage
-        let bg = BackgroundSampler(assets: document.assets, assetURL: assetURL)
-        let stillCache = StillAssetCache(assets: document.assets, assetURL: assetURL)
+        let media = AssetSampler(assets: document.assets, assetURL: assetURL)
         let totalFrames = segments.reduce(0) { $0 + Int(((($1.to - $1.from) * Double(fps)).rounded(.up))) }
         var frameIndex = 0
         for segment in segments {
@@ -175,8 +174,8 @@ public enum ShowExporter {
                                             | CGBitmapInfo.byteOrder32Little.rawValue)!
                     renderer.draw(scene: stage, at: t, size: options.size,
                                   background: stage.activeBackgroundCue(at: t)
-                                      .flatMap { bg.frame(cue: $0, at: t) },
-                                  imageAsset: { stillCache.image(for: $0) },
+                                      .flatMap { media.frame(cue: $0, at: t) },
+                                  visualAsset: { media.visualFrame(cue: $0, at: $1) },
                                   flipped: true, in: ctx)
                     CVPixelBufferUnlockBaseAddress(pb, [])
                     pumpAudio(upTo: Double(frameIndex) / Double(fps))
@@ -294,17 +293,18 @@ public enum ShowExporter {
         return sample
     }
 
-    /// Bank-asset background source: still images cached; videos decoded
+    /// Bank-asset frame source: still images cached; GIFs and videos decoded
     /// SEQUENTIALLY (export time is monotone) at (t - cue.start) mod duration.
     /// Per-frame AVAssetImageGenerator seeks rebuilt a decoder every frame and
     /// made exports run at ~hours per show.
-    final class BackgroundSampler {
+    final class AssetSampler {
         private let byID: [String: Asset]
         private let assetURL: (String) -> URL?
         private var stills: [String: CGImage] = [:]
         private var gifs: [String: GifSequence] = [:]
         private var notAnimated: Set<String> = []
         private var videos: [String: SequentialVideoReader] = [:]
+        private var randomVideos: [String: RandomVideoReader] = [:]
 
         init(assets: [Asset], assetURL: @escaping (String) -> URL?) {
             self.byID = Dictionary(uniqueKeysWithValues: assets.map { ($0.id, $0) })
@@ -312,7 +312,20 @@ public enum ShowExporter {
         }
 
         func frame(cue: BackgroundCue, at t: Double) -> (image: CGImage, crop: Crop)? {
-            guard let asset = byID[cue.assetID], let url = assetURL(cue.assetID) else { return nil }
+            frame(assetID: cue.assetID, playbackID: "scene-\(cue.id)",
+                  elapsed: t - cue.start, cue: nil).map { ($0, cue.crop) }
+        }
+
+        /// Floating image/GIF/video cues use the same deterministic sampler as
+        /// backdrops, but keep an independent decoder per cue.
+        func visualFrame(cue: ImageCue, at t: Double) -> CGImage? {
+            frame(assetID: cue.assetID, playbackID: "visual-\(cue.id)",
+                  elapsed: t - cue.start, cue: cue)
+        }
+
+        private func frame(assetID: String, playbackID: String, elapsed: Double,
+                           cue: ImageCue?) -> CGImage? {
+            guard let asset = byID[assetID], let url = assetURL(assetID) else { return nil }
             switch asset.kind {
             case .image:
                 // Animated GIFs sample by show time — identical to the editor.
@@ -324,21 +337,60 @@ public enum ShowExporter {
                     }
                 }
                 if let seq = gifs[asset.id] {
-                    return (seq.frame(at: max(0, t - cue.start)), cue.crop)
+                    if let cue {
+                        let sourceTime = cue.sourceTime(
+                            at: cue.start + max(0, elapsed), sourceDuration: seq.duration)
+                        return seq.frame(atSourceTime: sourceTime)
+                    }
+                    return seq.frame(at: max(0, elapsed))
                 }
                 if stills[asset.id] == nil {
                     stills[asset.id] = CGImageSourceCreateWithURL(url as CFURL, nil)
                         .flatMap { CGImageSourceCreateImageAtIndex($0, 0, nil) }
                 }
-                return stills[asset.id].map { ($0, cue.crop) }
+                return stills[asset.id]
             case .video:
-                if videos[asset.id] == nil {
-                    videos[asset.id] = SequentialVideoReader(url: url)
+                if videos[playbackID] == nil {
+                    videos[playbackID] = SequentialVideoReader(url: url)
                 }
-                guard let reader = videos[asset.id], reader.duration > 0 else { return nil }
-                let vt = max(0, (t - cue.start).truncatingRemainder(dividingBy: reader.duration))
-                return reader.frame(at: vt).map { ($0, cue.crop) }
+                guard let reader = videos[playbackID], reader.duration > 0 else { return nil }
+                let vt = cue.map {
+                    $0.sourceTime(at: $0.start + max(0, elapsed), sourceDuration: reader.duration)
+                } ?? max(0, elapsed.truncatingRemainder(dividingBy: reader.duration))
+                if let cue, cue.playback.reverse || cue.playback.freezeAt != nil {
+                    if randomVideos[playbackID] == nil {
+                        randomVideos[playbackID] = RandomVideoReader(url: url)
+                    }
+                    return randomVideos[playbackID]?.frame(at: vt)
+                }
+                return reader.frame(at: vt)
             }
+        }
+    }
+
+    /// Exact seeking for reverse and freeze-frame export. Forward playback
+    /// keeps the much faster sequential reader above.
+    final class RandomVideoReader {
+        let duration: Double
+        private let generator: AVAssetImageGenerator
+        private var cached: (time: Double, image: CGImage)?
+
+        init(url: URL) {
+            let asset = AVURLAsset(url: url)
+            duration = CMTimeGetSeconds(asset.duration)
+            generator = AVAssetImageGenerator(asset: asset)
+            generator.appliesPreferredTrackTransform = true
+            generator.requestedTimeToleranceBefore = CMTime(value: 1, timescale: 600)
+            generator.requestedTimeToleranceAfter = CMTime(value: 1, timescale: 600)
+        }
+
+        func frame(at t: Double) -> CGImage? {
+            if let cached, abs(cached.time - t) < 1.0 / 120.0 { return cached.image }
+            guard let image = try? generator.copyCGImage(
+                at: CMTime(seconds: max(0, t), preferredTimescale: 600), actualTime: nil)
+            else { return cached?.image }
+            cached = (t, image)
+            return image
         }
     }
 
@@ -408,24 +460,4 @@ public enum ShowExporter {
         }
     }
 
-    /// Still-image bank assets for the image-cue layer.
-    final class StillAssetCache {
-        private let byID: [String: Asset]
-        private let assetURL: (String) -> URL?
-        private var cache: [String: CGImage] = [:]
-
-        init(assets: [Asset], assetURL: @escaping (String) -> URL?) {
-            self.byID = Dictionary(uniqueKeysWithValues: assets.map { ($0.id, $0) })
-            self.assetURL = assetURL
-        }
-
-        func image(for id: String) -> CGImage? {
-            if let hit = cache[id] { return hit }
-            guard byID[id]?.kind == .image, let url = assetURL(id),
-                  let src = CGImageSourceCreateWithURL(url as CFURL, nil),
-                  let img = CGImageSourceCreateImageAtIndex(src, 0, nil) else { return nil }
-            cache[id] = img
-            return img
-        }
-    }
 }

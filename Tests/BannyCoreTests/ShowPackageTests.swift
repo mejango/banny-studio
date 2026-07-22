@@ -15,11 +15,19 @@ private func tempDir() throws -> URL {
 
     let doc = ShowDocument(
         stage: SceneState(
-            characters: [Character(body: .alien, events: [.key(t: 1, code: .keyJ, down: true)])],
+            characters: [Character(
+                body: .alien,
+                events: [
+                    .key(t: 1, code: .keyJ, down: true),
+                    .motion(t: 2, speed: 480, rotationSpeed: 720, wobble: 9, size: 0.8),
+                ],
+                speed: 420,
+                rotationSpeed: 540)],
             imageTracks: [ImageTrack(id: "img1", name: "Props", cues: [
                 ImageCue(id: "cue1", assetID: "s1", start: 1, dur: 4,
                          from: ImagePlacement(x: 0.2, y: 0.3, scale: 0.25),
-                         to: ImagePlacement(x: 0.8, y: 0.3, scale: 0.25)),
+                         to: ImagePlacement(x: 0.8, y: 0.3, scale: 0.25),
+                         speed: 8.5, rotationSpeed: 80),
             ])],
             backgroundTracks: [BackgroundTrack(id: "bg1", name: "Backgrounds", cues: [
                 BackgroundCue(id: "bcue", assetID: "s1", start: 0, dur: 5, crop: .tile),

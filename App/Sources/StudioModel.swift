@@ -1,6 +1,13 @@
 import SwiftUI
 import Observation
+import AVFoundation
+import ImageIO
 import BannyCore
+
+struct ReactionSelection: Equatable {
+    var character: Int
+    var id: String
+}
 
 /// Per-document editor state: transport, recording, selection, scene switching.
 /// Stage state is always derived via SceneSimulator — this model only owns the
@@ -32,6 +39,7 @@ final class StudioModel {
     private(set) var heldCodes: Set<EventCode> = []
     /// Bumped whenever background media changes so caches invalidate.
     var backgroundRevision = 0
+    @ObservationIgnored private var visualDurationCache: [String: Double] = [:]
 
     // Timeline selection (shared with keyboard shortcuts).
     var selectedMarks: Set<PerfMark> = []
@@ -46,6 +54,8 @@ final class StudioModel {
     var selectedOutfitEvent: (char: Int, index: Int)?
     /// A clicked motion-change keyframe: (character, index into its events).
     var selectedMotionEvent: (char: Int, index: Int)?
+    /// A reusable reaction block selected on a character lane.
+    var selectedReaction: ReactionSelection?
     /// Track key whose gutter-card popover should open (double-click on the cell).
     var inspectorRequest: String?
     var selectedLightCue: String?
@@ -199,12 +209,13 @@ final class StudioModel {
     private var imageCueClipboard: [(trackID: String, cue: ImageCue)] = []
     private var lightCueClipboard: [(trackID: String, cue: LightCue)] = []
     private var bgCueClipboard: [BackgroundCue] = []
+    private var reactionClipboard: (character: Int, block: ReactionInstance)?
 
     var hasTimelineSelection: Bool {
         !selectedMarks.isEmpty || !selectedClips.isEmpty || selectedImageCue != nil
             || selectedLightCue != nil || selectedBackgroundCue != nil
             || !selectedBackgroundCues.isEmpty || selectedOutfitEvent != nil
-            || selectedMotionEvent != nil
+            || selectedMotionEvent != nil || selectedReaction != nil
     }
 
     /// True when ← / → should shift the timeline selection rather than drive a
@@ -213,7 +224,7 @@ final class StudioModel {
     var hasArrowMovableSelection: Bool {
         !selectedMarks.isEmpty || !selectedClips.isEmpty
             || selectedOutfitEvent != nil || selectedMotionEvent != nil
-            || !selectedBackgroundCues.isEmpty
+            || !selectedBackgroundCues.isEmpty || selectedReaction != nil
     }
 
     /// ← / → on the timeline: shift every arrow-movable selected element. dt sec.
@@ -269,8 +280,15 @@ final class StudioModel {
         // Motion keyframe.
         if let sel = selectedMotionEvent, scene.characters.indices.contains(sel.char),
            scene.characters[sel.char].events.indices.contains(sel.index),
-           case .motion(let t, _, _, _) = scene.characters[sel.char].events[sel.index] {
+           case .motion(let t, _, _, _, _) = scene.characters[sel.char].events[sel.index] {
             moveMotionEvent(char: sel.char, index: sel.index, to: t + dt)
+        }
+        if let selection = selectedReaction,
+           scene.characters.indices.contains(selection.character),
+           let index = scene.characters[selection.character].reactions
+            .firstIndex(where: { $0.id == selection.id }) {
+            scene.characters[selection.character].reactions[index].start = max(
+                0, scene.characters[selection.character].reactions[index].start + dt)
         }
     }
 
@@ -280,30 +298,36 @@ final class StudioModel {
         return selectedBackgroundCue.map { [$0] } ?? []
     }
 
-    // MARK: - Motion keyframes (timed speed/wobble/size like outfit changes)
+    // MARK: - Motion keyframes (timed speed/rotation/wobble/size like outfit changes)
 
     /// Motion params effective at t: the base value overridden by the last
     /// timed `.motion` change at or before t.
-    func resolvedMotion(characterIndex i: Int, at t: Double) -> (speed: Double, wobble: Double, size: Double) {
-        guard let c = scene.characters[safe: i] else { return (320, 7, 1) }
-        var speed = c.speed, wobble = c.wobble, size = c.size
+    func resolvedMotion(characterIndex i: Int, at t: Double)
+        -> (speed: Double, rotationSpeed: Double, wobble: Double, size: Double) {
+        guard let c = scene.characters[safe: i] else { return (320, 90, 7, 1) }
+        var speed = c.speed, rotationSpeed = c.rotationSpeed, wobble = c.wobble, size = c.size
         for ev in c.events {
             guard ev.t <= t + 1e-9 else { break }
-            if case .motion(_, let s, let w, let z) = ev {
-                if let s { speed = s }; if let w { wobble = w }; if let z { size = z }
+            if case .motion(_, let s, let r, let w, let z) = ev {
+                if let s { speed = s }
+                if let r { rotationSpeed = r }
+                if let w { wobble = w }
+                if let z { size = z }
             }
         }
-        return (speed, wobble, size)
+        return (speed, rotationSpeed, wobble, size)
     }
 
     /// Edits a motion param at time t: at the very start it moves the base
     /// value; later it creates or updates a timed keyframe (merging into one
     /// within 30ms). Mirrors how `setOutfit` splits base vs timed.
     func setMotionParam(characterIndex i: Int, at t: Double,
-                        speed: Double? = nil, wobble: Double? = nil, size: Double? = nil) {
+                        speed: Double? = nil, rotationSpeed: Double? = nil,
+                        wobble: Double? = nil, size: Double? = nil) {
         guard scene.characters.indices.contains(i) else { return }
         if t < 0.05 {
             if let speed { scene.characters[i].speed = speed }
+            if let rotationSpeed { scene.characters[i].rotationSpeed = rotationSpeed }
             if let wobble { scene.characters[i].wobble = wobble }
             if let size { scene.characters[i].size = size }
             return
@@ -311,12 +335,15 @@ final class StudioModel {
         var events = scene.characters[i].events
         let stamp = (t * 1000).rounded() / 1000
         if let idx = events.firstIndex(where: {
-            if case .motion(let mt, _, _, _) = $0 { return abs(mt - stamp) < 0.03 }; return false
-        }), case .motion(let mt, let s0, let w0, let z0) = events[idx] {
-            events[idx] = .motion(t: mt, speed: speed ?? s0, wobble: wobble ?? w0, size: size ?? z0)
+            if case .motion(let mt, _, _, _, _) = $0 { return abs(mt - stamp) < 0.03 }; return false
+        }), case .motion(let mt, let s0, let r0, let w0, let z0) = events[idx] {
+            events[idx] = .motion(t: mt, speed: speed ?? s0,
+                                  rotationSpeed: rotationSpeed ?? r0,
+                                  wobble: wobble ?? w0, size: size ?? z0)
         } else {
             registerUndoSnapshot(label: "Motion Keyframe")
-            events.append(.motion(t: stamp, speed: speed, wobble: wobble, size: size))
+            events.append(.motion(t: stamp, speed: speed, rotationSpeed: rotationSpeed,
+                                  wobble: wobble, size: size))
             events.sort { $0.t < $1.t }
         }
         scene.characters[i].events = events
@@ -327,11 +354,11 @@ final class StudioModel {
     func moveMotionEvent(char: Int, index: Int, to t: Double) {
         guard scene.characters.indices.contains(char),
               scene.characters[char].events.indices.contains(index),
-              case .motion(_, let s, let w, let z) = scene.characters[char].events[index] else { return }
+              case .motion(_, let s, let r, let w, let z) = scene.characters[char].events[index] else { return }
         let nt = max(0, (t * 1000).rounded() / 1000)
         var events = scene.characters[char].events
         events.remove(at: index)
-        let moved = PerfEvent.motion(t: nt, speed: s, wobble: w, size: z)
+        let moved = PerfEvent.motion(t: nt, speed: s, rotationSpeed: r, wobble: w, size: z)
         let insertAt = events.firstIndex { $0.t > nt } ?? events.count
         events.insert(moved, at: insertAt)
         scene.characters[char].events = events
@@ -391,6 +418,14 @@ final class StudioModel {
             pickedBG.append(cue)
             t0 = min(t0, cue.start)
         }
+        var pickedReaction: (Int, ReactionInstance)?
+        if let selection = selectedReaction,
+           scene.characters.indices.contains(selection.character),
+           let block = scene.characters[selection.character].reactions
+            .first(where: { $0.id == selection.id }) {
+            pickedReaction = (selection.character, block)
+            t0 = min(t0, block.start)
+        }
         guard t0 < .greatestFiniteMagnitude else { return }
         markClipboard = selectedMarks.map { ($0.character, $0.code, $0.start - t0, $0.end - t0) }
         clipClipboard = pickedClips.map { owner, clip in
@@ -399,6 +434,11 @@ final class StudioModel {
         imageCueClipboard = pickedImage.map { tid, cue in var c = cue; c.start -= t0; return (tid, c) }
         lightCueClipboard = pickedLight.map { tid, cue in var c = cue; c.start -= t0; return (tid, c) }
         bgCueClipboard = pickedBG.map { var c = $0; c.start -= t0; return c }
+        reactionClipboard = pickedReaction.map { character, block in
+            var copy = block
+            copy.start -= t0
+            return (character, copy)
+        }
     }
 
     /// ⌘V / right-click Paste: at `anchor` when given, right after the current
@@ -407,6 +447,7 @@ final class StudioModel {
     func pasteTimeline(at anchor: Double? = nil) {
         let hasContent = !markClipboard.isEmpty || !clipClipboard.isEmpty
             || !imageCueClipboard.isEmpty || !lightCueClipboard.isEmpty || !bgCueClipboard.isEmpty
+            || reactionClipboard != nil
         guard hasContent else { return }
         var base = anchor ?? time
         if anchor == nil {
@@ -421,6 +462,12 @@ final class StudioModel {
                 for clip in t.clips where selectedClips.contains(clip.id) {
                     selEnd = max(selEnd, clip.start + clip.dur)
                 }
+            }
+            if let selection = selectedReaction,
+               scene.characters.indices.contains(selection.character),
+               let block = scene.characters[selection.character].reactions
+                .first(where: { $0.id == selection.id }) {
+                selEnd = max(selEnd, block.start + block.dur)
             }
             if selEnd > 0 { base = selEnd + 0.05 }
         }
@@ -486,6 +533,16 @@ final class StudioModel {
                 selectedBackgroundCue = c.id
             }
         }
+        if let (character, source) = reactionClipboard,
+           scene.characters.indices.contains(character),
+           scene.reactionLibrary.contains(where: { $0.id == source.reactionID }) {
+            var block = source
+            block.id = ShowDocumentFile.newID()
+            block.start += base
+            scene.characters[character].reactions.append(block)
+            scene.characters[character].reactions.sort { $0.start < $1.start }
+            selectedReaction = ReactionSelection(character: character, id: block.id)
+        }
         if !pastedMarks.isEmpty { selectedMarks = pastedMarks }
         if !pastedClips.isEmpty { selectedClips = pastedClips }
     }
@@ -535,6 +592,13 @@ final class StudioModel {
                 scene.characters[sel.char].events.remove(at: sel.index)
             }
             selectedMotionEvent = nil
+        }
+        if let selection = selectedReaction {
+            if scene.characters.indices.contains(selection.character) {
+                registerUndoSnapshot(label: "Delete Reaction Block")
+                scene.characters[selection.character].reactions.removeAll { $0.id == selection.id }
+            }
+            selectedReaction = nil
         }
         let bgKill = bgCueSelection()
         if !bgKill.isEmpty {
@@ -609,6 +673,47 @@ final class StudioModel {
         return nil
     }
 
+    /// Source duration for an animated GIF or video. Static images return nil,
+    /// which keeps playback-only controls out of their inspector.
+    func visualSourceDuration(assetID: String) -> Double? {
+        if let cached = visualDurationCache[assetID] { return cached }
+        guard let asset = document.assets.first(where: { $0.id == assetID }),
+              let media = file?.assetsMedia[assetID] else { return nil }
+        let duration: Double?
+        switch asset.kind {
+        case .video:
+            let url = FileManager.default.temporaryDirectory
+                .appendingPathComponent("visual-meta-\(assetID).\(media.ext)")
+            if !FileManager.default.fileExists(atPath: url.path) {
+                try? media.data.write(to: url)
+            }
+            let seconds = CMTimeGetSeconds(AVURLAsset(url: url).duration)
+            duration = seconds.isFinite && seconds > 0 ? seconds : nil
+        case .image:
+            guard let source = CGImageSourceCreateWithData(media.data as CFData, nil),
+                  CGImageSourceGetCount(source) > 1 else { return nil }
+            var seconds = 0.0
+            for i in 0..<CGImageSourceGetCount(source) {
+                let props = CGImageSourceCopyPropertiesAtIndex(source, i, nil)
+                    as? [CFString: Any]
+                let gif = props?[kCGImagePropertyGIFDictionary] as? [CFString: Any]
+                var delay = gif?[kCGImagePropertyGIFUnclampedDelayTime] as? Double ?? 0
+                if delay <= 0 { delay = gif?[kCGImagePropertyGIFDelayTime] as? Double ?? 0 }
+                seconds += delay <= 0.011 ? 0.1 : delay
+            }
+            duration = seconds > 0 ? seconds : nil
+        }
+        if let duration { visualDurationCache[assetID] = duration }
+        return duration
+    }
+
+    /// The selected visual belongs to the selected media/image track, so its
+    /// performance controls may claim the keyboard instead of a character.
+    var selectedVisualCueOnSelectedTrack: Bool {
+        guard let key = selectedTrackKey, let owner = selectedImageCueOwner else { return false }
+        return owner.trackID == key
+    }
+
     func updateSelectedImageCue(_ body: (inout ImageCue) -> Void) {
         guard let id = selectedImageCue else { return }
         for ti in scene.imageTracks.indices {
@@ -625,14 +730,33 @@ final class StudioModel {
         }
     }
 
+    /// Whether the placement visible at the playhead differs from the visual
+    /// cue's saved starting placement.
+    var selectedImageCueStartStateMismatch: Bool {
+        guard let cue = selectedImageCueValue else { return false }
+        let p = cue.placement(at: time)
+        return abs(p.x - cue.from.x) > 0.0005 || abs(p.y - cue.from.y) > 0.0005
+            || abs(p.scale - cue.from.scale) > 0.0005
+            || abs(p.rotation - cue.from.rotation) > 0.05
+    }
+
+    /// Uses the complete placement visible at the playhead as this cue's start.
+    func commitSelectedImageCueStartState() {
+        guard let cue = selectedImageCueValue, selectedImageCueStartStateMismatch else { return }
+        let state = cue.placement(at: time)
+        registerUndoSnapshot(label: "Set Visual Start State")
+        updateSelectedImageCue { $0.from = state }
+    }
+
     /// Image cue on a MEDIA (audio) track.
     func addMediaImageCue(trackIndex: Int, assetID: String, at t: Double) {
         guard scene.audioTracks.indices.contains(trackIndex) else { return }
-        registerUndoSnapshot(label: "Add Image Cue")
+        registerUndoSnapshot(label: "Add Visual Cue")
         let cue = ImageCue(id: ShowDocumentFile.newID(), assetID: assetID,
                            start: t, dur: 5, from: ImagePlacement())
         scene.audioTracks[trackIndex].cues.append(cue)
         scene.audioTracks[trackIndex].cues.sort { $0.start < $1.start }
+        selectedTrackKey = scene.audioTracks[trackIndex].id
         selectedImageCue = cue.id
     }
 
@@ -726,18 +850,19 @@ final class StudioModel {
     private var imageRecordOwnerIsMedia = false
     private var imageRecordTrack = 0
     private var imageRecordAssetID = ""
-    private var imageSamples: [(t: Double, x: Double, y: Double, scale: Double)] = []
-    private var imagePen: (x: Double, y: Double, scale: Double) = (0.5, 0.5, 0.3)
+    private var imageSamples: [(t: Double, x: Double, y: Double, scale: Double, rotation: Double)] = []
+    private var imagePen: (x: Double, y: Double, scale: Double, rotation: Double) = (0.5, 0.5, 0.3, 0)
     var isImageRecording: Bool { imageRecordCueID != nil }
-    var imagePenNow: (x: Double, y: Double, scale: Double)? { isImageRecording ? imagePen : nil }
-    var imageRecordAsset: String? { isImageRecording ? imageRecordAssetID : nil }
+    var imagePenNow: (x: Double, y: Double, scale: Double, rotation: Double)? {
+        isImageRecording ? imagePen : nil
+    }
 
     func imageRecordSample(x: Double, y: Double) {
         guard isImageRecording else { return }
         imagePen.x = min(1.2, max(-0.2, x))
         imagePen.y = min(1.2, max(-0.2, y))
         if let last = imageSamples.last, time - last.t < 0.15 { return }
-        imageSamples.append((time, imagePen.x, imagePen.y, imagePen.scale))
+        imageSamples.append((time, imagePen.x, imagePen.y, imagePen.scale, imagePen.rotation))
     }
 
     private func commitImageRecording() {
@@ -745,8 +870,27 @@ final class StudioModel {
             imageRecordCueID = nil
             imageSamples = []
         }
-        guard imageSamples.count >= 2 else { return }
+        if let last = imageSamples.last, time - last.t > 0.02 {
+            imageSamples.append((time, imagePen.x, imagePen.y, imagePen.scale, imagePen.rotation))
+        }
+        guard imageSamples.count >= 2, let recordedCueID = imageRecordCueID else { return }
+        let origin = imageSamples[0]
+        guard imageSamples.contains(where: {
+            abs($0.x - origin.x) > 0.001 || abs($0.y - origin.y) > 0.001
+                || abs($0.scale - origin.scale) > 0.001
+                || abs($0.rotation - origin.rotation) > 0.1
+        }) else { return }
         registerUndoSnapshot(label: "Record Image Motion")
+        let recordedCue: ImageCue? = {
+            if imageRecordOwnerIsMedia, scene.audioTracks.indices.contains(imageRecordTrack) {
+                return scene.audioTracks[imageRecordTrack].cues.first { $0.id == recordedCueID }
+            }
+            if scene.imageTracks.indices.contains(imageRecordTrack) {
+                return scene.imageTracks[imageRecordTrack].cues.first { $0.id == recordedCueID }
+            }
+            return nil
+        }()
+        let recordedLabel = recordedCue?.label
         let t0 = imageSamples[0].t
         let tEnd = imageSamples[imageSamples.count - 1].t
         var pts = imageSamples
@@ -757,23 +901,39 @@ final class StudioModel {
             let f = (b.t - a.t) / span
             if abs(a.x + (c.x - a.x) * f - b.x) < 0.008,
                abs(a.y + (c.y - a.y) * f - b.y) < 0.008,
-               abs(a.scale + (c.scale - a.scale) * f - b.scale) < 0.01 {
+               abs(a.scale + (c.scale - a.scale) * f - b.scale) < 0.01,
+               abs(a.rotation + (c.rotation - a.rotation) * f - b.rotation) < 0.5 {
                 pts.remove(at: i)
             } else {
                 i += 1
             }
         }
         let assetID = imageRecordAssetID
+        let recordedSpeed = recordedCue?.speed ?? ImageCue.defaultSpeed
+        let recordedRotationSpeed = recordedCue?.rotationSpeed
+            ?? ImageCue.defaultRotationSpeed
+        let recordedPlayback = recordedCue?.playback ?? MediaPlayback()
+        let recordedAppearance = recordedCue?.appearance ?? MediaAppearance()
+        let recordedMask = recordedCue?.mask ?? .none
+        let recordedMaskRadius = recordedCue?.maskRadius ?? 0.12
+        let recordedPivot = recordedCue?.pivot ?? .center
+        let last = pts[pts.count - 1]
+        let recordedEnd = ImagePlacement(x: last.x, y: last.y, scale: last.scale,
+                                         rotation: last.rotation)
+        var recordedIDs: [String] = []
+        var continuationID: String?
         func rebuilt(_ cues: [ImageCue]) -> [ImageCue] {
             var out: [ImageCue] = []
             for var cue in cues {
                 let end = cue.start + cue.dur
-                if cue.assetID != assetID || end <= t0 + 0.01 || cue.start >= tEnd - 0.01 {
+                if cue.id != recordedCueID || end <= t0 + 0.01 || cue.start >= tEnd - 0.01 {
                     out.append(cue)
                 } else if cue.start < t0, end > tEnd {
                     var tail = cue
                     tail.id = ShowDocumentFile.newID()
-                    tail.from = cue.placement(at: tEnd)
+                    continuationID = tail.id
+                    tail.from = recordedEnd
+                    tail.playback = cue.continuedPlayback(at: tEnd)
                     tail.start = tEnd
                     tail.dur = end - tEnd
                     if cue.to != nil { cue.to = cue.placement(at: t0) }
@@ -785,19 +945,31 @@ final class StudioModel {
                     cue.dur = t0 - cue.start
                     out.append(cue)
                 } else if end > tEnd {
-                    cue.from = cue.placement(at: tEnd)
+                    cue.from = recordedEnd
+                    cue.playback = cue.continuedPlayback(at: tEnd)
                     cue.dur = end - tEnd
                     cue.start = tEnd
+                    continuationID = cue.id
                     out.append(cue)
                 }
             }
             for k in 0..<(pts.count - 1) {
                 let a = pts[k], b = pts[k + 1]
                 guard b.t - a.t > 0.02 else { continue }
-                out.append(ImageCue(id: ShowDocumentFile.newID(), assetID: assetID,
-                                    start: a.t, dur: b.t - a.t,
-                                    from: ImagePlacement(x: a.x, y: a.y, scale: a.scale),
-                                    to: ImagePlacement(x: b.x, y: b.y, scale: b.scale)))
+                let id = ShowDocumentFile.newID()
+                recordedIDs.append(id)
+                let playback = recordedCue?.continuedPlayback(at: a.t) ?? recordedPlayback
+                out.append(ImageCue(
+                    id: id, assetID: assetID, start: a.t, dur: b.t - a.t,
+                    from: ImagePlacement(x: a.x, y: a.y, scale: a.scale,
+                                         rotation: a.rotation),
+                    to: ImagePlacement(x: b.x, y: b.y, scale: b.scale,
+                                       rotation: b.rotation),
+                    speed: recordedSpeed, rotationSpeed: recordedRotationSpeed,
+                    playback: playback, appearance: recordedAppearance,
+                    mask: recordedMask, maskRadius: recordedMaskRadius,
+                    pivot: recordedPivot,
+                    label: k == 0 ? recordedLabel : ""))
             }
             return out.sorted { $0.start < $1.start }
         }
@@ -806,6 +978,7 @@ final class StudioModel {
         } else if scene.imageTracks.indices.contains(imageRecordTrack) {
             scene.imageTracks[imageRecordTrack].cues = rebuilt(scene.imageTracks[imageRecordTrack].cues)
         }
+        selectedImageCue = continuationID ?? recordedIDs.last
     }
 
     // MARK: - Camera path recording (drive the frame's cut of the scene live)
@@ -956,13 +1129,22 @@ final class StudioModel {
     var lightPenNow: (x: Double, y: Double, intensity: Double, size: Double)? { isLightRecording ? lightPen : nil }
 
     /// Keyboard light control: arrows move, +/- change intensity.
-    enum LightKey: Hashable { case up, down, left, right, plus, minus, sizeDown, sizeUp }
+    enum LightKey: Hashable {
+        case up, down, left, right, plus, minus, sizeDown, sizeUp, rotateLeft, rotateRight
+    }
     private(set) var heldLightKeys: Set<LightKey> = []
     /// The "pen": position/intensity the keys steer (recording or nudging).
     private var lightPen: (x: Double, y: Double, intensity: Double, size: Double) = (0.8, 0.18, 1, 120)
 
     func lightKey(_ key: LightKey, down: Bool) {
-        if down { heldLightKeys.insert(key) } else { heldLightKeys.remove(key) }
+        if down {
+            if heldLightKeys.isEmpty, selectedVisualCueOnSelectedTrack, !recording, !playing {
+                registerUndoSnapshot(label: "Place Visual")
+            }
+            heldLightKeys.insert(key)
+        } else {
+            heldLightKeys.remove(key)
+        }
     }
 
     /// 60Hz driver (stage render loop): recording draws with the pen; paused
@@ -973,12 +1155,44 @@ final class StudioModel {
         let dy = (heldLightKeys.contains(.down) ? 1.0 : 0) - (heldLightKeys.contains(.up) ? 1.0 : 0)
         let di = (heldLightKeys.contains(.plus) ? 1.0 : 0) - (heldLightKeys.contains(.minus) ? 1.0 : 0)
         let ds = (heldLightKeys.contains(.sizeUp) ? 1.0 : 0) - (heldLightKeys.contains(.sizeDown) ? 1.0 : 0)
+        let dr = (heldLightKeys.contains(.rotateRight) ? 1.0 : 0)
+            - (heldLightKeys.contains(.rotateLeft) ? 1.0 : 0)
         if isImageRecording {
-            imagePen.x = min(1.2, max(-0.2, imagePen.x + dx * 0.4 * dt))
-            imagePen.y = min(1.2, max(-0.2, imagePen.y + dy * 0.4 * dt))
-            // Zoom via 1/2 OR +/− (parity with character zoom keys).
+            let cue = selectedImageCueValue
+            let moveRate = Self.speed(fromUI: cue?.speed ?? ImageCue.defaultSpeed) / 900
+            let rotateRate = Self.rotationSpeed(
+                fromUI: cue?.rotationSpeed ?? ImageCue.defaultRotationSpeed)
+            imagePen.x = min(1.2, max(-0.2, imagePen.x + dx * moveRate * dt))
+            imagePen.y = min(1.2, max(-0.2, imagePen.y + dy * moveRate * dt))
+            // +/− zooms; shift+arrows rotates like a character.
             imagePen.scale = min(1.2, max(0.05, imagePen.scale + (ds + di) * 0.35 * dt))
+            imagePen.rotation += dr * rotateRate * dt
             imageRecordSample(x: imagePen.x, y: imagePen.y)
+            return
+        }
+        // Parked visual cues use the same four performance controls as
+        // characters: L/R, F/B, rotate, and zoom. The cue half under the
+        // playhead decides whether its start or animated end is adjusted.
+        if !playing, selectedVisualCueOnSelectedTrack,
+           let current = selectedImageCueValue,
+           time >= current.start, time < current.start + current.dur {
+            let editEnd = current.to != nil && time > current.start + current.dur / 2
+            let moveRate = Self.speed(fromUI: current.speed) / 900
+            let rotateRate = Self.rotationSpeed(fromUI: current.rotationSpeed)
+            func nudge(_ p: inout ImagePlacement) {
+                p.x = min(1.2, max(-0.2, p.x + dx * moveRate * dt))
+                p.y = min(1.2, max(-0.2, p.y + dy * moveRate * dt))
+                p.scale = min(1.2, max(0.05, p.scale + (ds + di) * 0.35 * dt))
+                p.rotation += dr * rotateRate * dt
+            }
+            updateSelectedImageCue { cue in
+                if editEnd, var end = cue.to {
+                    nudge(&end)
+                    cue.to = end
+                } else {
+                    nudge(&cue.from)
+                }
+            }
             return
         }
         if isCameraRecording {
@@ -997,7 +1211,7 @@ final class StudioModel {
             return
         }
         // Paused nudge of the FRAME while the Scenes track is selected: the
-        // preview pen moves; "Set start position" commits it.
+        // preview pen moves; "Set start state" commits it.
         if !playing, let key = selectedTrackKey,
            scene.backgroundTracks.contains(where: { $0.id == key }) {
             var pen = cameraFreeform ?? currentCueCamera()
@@ -1111,9 +1325,8 @@ final class StudioModel {
         if recording || playing { pause(); return }
         // A selected image cue records its motion: drag it around as time rolls.
         if let id = selectedImageCue, let owner = selectedImageCueOwner,
-           selectedTrackKey != nil,
-           scene.audioTracks.contains(where: { $0.id == selectedTrackKey })
-            || scene.imageTracks.contains(where: { $0.id == selectedTrackKey }) {
+           selectedVisualCueOnSelectedTrack {
+            guard time >= owner.cue.start, time < owner.cue.start + owner.cue.dur else { return }
             clearFreeform()
             imageRecordCueID = id
             imageRecordAssetID = owner.cue.assetID
@@ -1126,7 +1339,8 @@ final class StudioModel {
             }
             imageSamples = []
             let p = owner.cue.placement(at: time)
-            imagePen = (p.x, p.y, p.scale)
+            imagePen = (p.x, p.y, p.scale, p.rotation)
+            imageSamples = [(time, p.x, p.y, p.scale, p.rotation)]
             recording = true
             playing = true
             startWall = Date.timeIntervalSinceReferenceDate - time
@@ -1168,14 +1382,16 @@ final class StudioModel {
             return
         }
         guard !selection.isEmpty else { return }
-        // Freeform placement at the start becomes the take's start pose.
-        for i in selection where startPoseMismatch(characterIndex: i) {
+        // Freeform placement at the start becomes the take's complete start state.
+        for i in selection where startStateMismatch(characterIndex: i) {
             if let pose = displayedPose(characterIndex: i) {
                 var c = scene.characters[i]
                 c.x = pose.x
                 c.depth = pose.depth
                 c.face = pose.face
-                c.recStart = StartPose(x: pose.x, depth: pose.depth, face: pose.face)
+                c.size = pose.size
+                c.recStart = StartPose(x: pose.x, depth: pose.depth, face: pose.face,
+                                       spin: pose.spin, zoom: pose.zoom)
                 scene.characters[i] = c
             }
         }
@@ -1307,7 +1523,8 @@ final class StudioModel {
         for i in selection where scene.characters.indices.contains(i) {
             if freeformStarts[i] == nil {
                 let pose = simulator.pose(characterIndex: i, at: time)
-                freeformStarts[i] = StartPose(x: pose.x, depth: pose.depth, face: pose.face)
+                freeformStarts[i] = StartPose(x: pose.x, depth: pose.depth, face: pose.face,
+                                              spin: pose.spin, zoom: pose.zoom)
             }
             freeformEvents[i, default: []].append(.key(t: freeformClock, code: code, down: down))
         }
@@ -1315,8 +1532,8 @@ final class StudioModel {
     }
 
     /// Advances the freeform clock at 60 Hz (driven by the stage render loop).
-    /// Freeform is a PREVIEW: the "Set start position" button (or hitting REC)
-    /// commits where the character stands as its start pose.
+    /// Freeform is a PREVIEW: the "Set start state" button (or hitting REC)
+    /// commits the complete spatial state shown on stage.
     func freeformNudge(dt: Double) {
         guard !playing, !recording, freeformActive,
               !heldCodes.isEmpty || freeformSettling else { return }
@@ -1331,8 +1548,14 @@ final class StudioModel {
         var s = scene
         var c = s.characters[i]
         c.events = evs
+        c.reactions = []
         c.recStart = start
         c.subs = []
+        let motion = resolvedMotion(characterIndex: i, at: time)
+        c.speed = motion.speed
+        c.rotationSpeed = motion.rotationSpeed
+        c.wobble = basePose.wobble
+        c.size = basePose.size
         s.characters[i] = c
         var pose = SceneSimulator(state: s).pose(characterIndex: i, at: freeformClock)
         pose.outfit = basePose.outfit
@@ -1347,27 +1570,29 @@ final class StudioModel {
         return freeformPose(characterIndex: i, basePose: base) ?? base
     }
 
-    /// True when the playhead is at the start but the character on stage isn't
-    /// where the saved start position says (freeform moved it, uncommitted).
-    func startPoseMismatch(characterIndex i: Int) -> Bool {
+    /// True when the character on stage differs from its saved start transform.
+    func startStateMismatch(characterIndex i: Int) -> Bool {
         guard freeformActive, time < 0.1, scene.characters.indices.contains(i),
               let pose = displayedPose(characterIndex: i) else { return false }
         let c = scene.characters[i]
         let start = c.recStart ?? StartPose(x: c.x, depth: c.depth, face: c.face)
         return abs(pose.x - start.x) > 0.005 || abs(pose.depth - start.depth) > 0.02
-            || pose.face != start.face
+            || pose.face != start.face || abs(pose.spin - start.spin) > 0.05
+            || abs(pose.zoom - start.zoom) > 0.002 || abs(pose.size - c.size) > 0.002
     }
 
-    /// Saves what's on stage as the character's start position.
-    func commitStartPose(characterIndex i: Int) {
+    /// Saves the complete spatial state shown on stage as the character's start.
+    func commitStartState(characterIndex i: Int) {
         guard scene.characters.indices.contains(i),
               let pose = displayedPose(characterIndex: i) else { return }
-        registerUndoSnapshot(label: "Set Start Position")
+        registerUndoSnapshot(label: "Set Start State")
         var c = scene.characters[i]
         c.x = pose.x
         c.depth = pose.depth
         c.face = pose.face
-        c.recStart = StartPose(x: pose.x, depth: pose.depth, face: pose.face)
+        c.size = pose.size
+        c.recStart = StartPose(x: pose.x, depth: pose.depth, face: pose.face,
+                               spin: pose.spin, zoom: pose.zoom)
         scene.characters[i] = c
         clearFreeform()
     }
@@ -1378,6 +1603,12 @@ final class StudioModel {
     // (speed 40–600, wobble 0–16) so playback math and old shows are untouched.
     static func uiSpeed(_ speed: Double) -> Double { 1 + (speed - 40) / 560 * 9 }
     static func speed(fromUI ui: Double) -> Double { 40 + (ui - 1) / 9 * 560 }
+    static func uiRotationSpeed(_ degreesPerSecond: Double) -> Double {
+        uiSpeed(degreesPerSecond * 320 / 90)
+    }
+    static func rotationSpeed(fromUI ui: Double) -> Double {
+        speed(fromUI: ui) / 320 * 90
+    }
     static func uiWobble(_ wobble: Double) -> Double { 1 + wobble / 16 * 9 }
     static func wobble(fromUI ui: Double) -> Double { (ui - 1) / 9 * 16 }
 
@@ -1404,12 +1635,14 @@ final class StudioModel {
             guard scene.characters.count < 10, var c = scene.characters[safe: i] else { return }
             c.name = (c.name.isEmpty ? "banny" : c.name) + " copy"
             c.clips = cloneClips(c.clips)
+            for ri in c.reactions.indices { c.reactions[ri].id = ShowDocumentFile.newID() }
             scene.characters.append(c)
         case .audio(let i):
             guard var t = scene.audioTracks[safe: i] else { return }
             t.id = ShowDocumentFile.newID()
             t.name += " copy"
             t.clips = cloneClips(t.clips)
+            for ci in t.cues.indices { t.cues[ci].id = ShowDocumentFile.newID() }
             scene.audioTracks.append(t)
         case .image(let i):
             guard var t = scene.imageTracks[safe: i] else { return }
@@ -1432,6 +1665,7 @@ final class StudioModel {
         guard scene.characters.indices.contains(index) else { return }
         registerUndoSnapshot(label: "Remove Character")
         scene.characters.remove(at: index)
+        selectedReaction = nil
         // Character row keys are index-based; keep the display order aligned.
         scene.rowOrder = scene.rowOrder.compactMap { key in
             guard key.hasPrefix("c-"), let j = Int(key.dropFirst(2)) else { return key }
@@ -1489,20 +1723,22 @@ final class StudioModel {
 
     func addImageCue(trackIndex: Int, assetID: String, at t: Double) {
         guard scene.imageTracks.indices.contains(trackIndex) else { return }
-        registerUndoSnapshot(label: "Add Image Cue")
+        registerUndoSnapshot(label: "Add Visual Cue")
         let cue = ImageCue(id: ShowDocumentFile.newID(), assetID: assetID,
                            start: t, dur: 5, from: ImagePlacement())
         scene.imageTracks[trackIndex].cues.append(cue)
         scene.imageTracks[trackIndex].cues.sort { $0.start < $1.start }
+        selectedTrackKey = scene.imageTracks[trackIndex].id
         selectedImageCue = cue.id
     }
 
     func addImageTrack(assetID: String, assetName: String) {
-        registerUndoSnapshot(label: "Add Image Track")
+        registerUndoSnapshot(label: "Add Visual Track")
         let cue = ImageCue(id: ShowDocumentFile.newID(), assetID: assetID,
                            start: time, dur: 5, from: ImagePlacement())
-        scene.imageTracks.append(ImageTrack(id: ShowDocumentFile.newID(),
-                                            name: assetName, cues: [cue]))
+        let track = ImageTrack(id: ShowDocumentFile.newID(), name: assetName, cues: [cue])
+        scene.imageTracks.append(track)
+        selectedTrackKey = track.id
         selectedImageCue = cue.id
     }
 
@@ -1576,6 +1812,7 @@ final class StudioModel {
             let mid = first.placement(at: t)
             var second = first
             second.id = ShowDocumentFile.newID()
+            second.playback = first.continuedPlayback(at: t)
             second.start = t
             second.dur = first.start + first.dur - t
             first.dur = t - first.start
@@ -1644,6 +1881,7 @@ final class StudioModel {
             scene.characters.remove(at: i)
             selection = scene.characters.isEmpty ? [] : [min(i, scene.characters.count - 1)]
             selectedMarks = []
+            selectedReaction = nil
         case .audio(let i):
             guard scene.audioTracks.indices.contains(i) else { return }
             scene.audioTracks.remove(at: i)

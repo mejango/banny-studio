@@ -29,8 +29,10 @@ struct SimState: Equatable {
     var zoom = 1.0
     var heldSpinL = false, heldSpinR = false, heldZoomIn = false, heldZoomOut = false
     /// Working walk speed — starts at the character's base, updated by
-    /// `.motion` events over time. Drives position, gait phase, and rotation.
+    /// `.motion` events over time. Drives position and gait phase.
     var speed = 320.0
+    /// Degrees/second while a rotate key is held. Updated by motion keyframes.
+    var rotationSpeed = 90.0
     /// Active reset ramps: when set, spin/zoom eases from `*ResetFrom` toward
     /// neutral (0 / 1) over `simResetDuration`. Cleared when the ramp finishes
     /// or the user rotates/zooms again.
@@ -57,7 +59,11 @@ func integrate(_ s: inout SimState, events: [PerfEvent], gScale: Double, to t: D
             let ev = events[s.ei]
             s.ei += 1
             // Timed speed changes take effect from here on.
-            if case .motion(_, let sp, _, _) = ev { if let sp { s.speed = sp }; continue }
+            if case .motion(_, let sp, let rp, _, _) = ev {
+                if let sp { s.speed = sp }
+                if let rp { s.rotationSpeed = rp }
+                continue
+            }
             guard case .key(_, let code, let down) = ev else { continue }
             switch code {
             case .arrowRight, .arrowLeft:
@@ -92,13 +98,13 @@ func integrate(_ s: inout SimState, events: [PerfEvent], gScale: Double, to t: D
         s.x = min(1 - edge, max(edge, s.x + s.speed / 900 * dx * h))
         s.depth = min(1, max(-12, s.depth + dz * h * depthRate))
         if dx != 0 || dz != 0 { s.phase += h * s.speed / 22 }
-        // Rotate at a rate that tracks the speed dial (90°/s at base 320);
-        // zoom multiplicatively (~1.6×/s), clamped 0.2–5×. Reset chords ease
+        // Rotate at the independent rotation rate; zoom multiplicatively
+        // (~1.6×/s), clamped 0.2–5×. Reset chords ease
         // back to neutral over simResetDuration; rotating/zooming cancels it.
         func easeOut(_ e: Double) -> Double { let k = 1 - e; return 1 - k * k * k }
         let dspin = (s.heldSpinR ? 1.0 : 0) - (s.heldSpinL ? 1.0 : 0)
         if dspin != 0 {
-            s.spin += dspin * (s.speed / 320 * 90) * h
+            s.spin += dspin * s.rotationSpeed * h
             s.spinResetStart = nil
         } else if let rs = s.spinResetStart {
             let e = (s.tt - rs) / simResetDuration
@@ -119,11 +125,14 @@ func integrate(_ s: inout SimState, events: [PerfEvent], gScale: Double, to t: D
     }
 }
 
-func initialSimState(recStart: StartPose?, speed: Double) -> SimState {
+func initialSimState(recStart: StartPose?, speed: Double, rotationSpeed: Double) -> SimState {
     let start = recStart ?? StartPose(x: 0.5, depth: 0, face: 1)
     var s = SimState(x: start.x, depth: start.depth, phase: 0, face: start.face,
                      turnUntil: 0, ei: 0, tt: 0)
+    s.spin = start.spin
+    s.zoom = start.zoom
     s.speed = speed
+    s.rotationSpeed = rotationSpeed
     return s
 }
 
@@ -140,8 +149,9 @@ func simDepthRate(speed: Double, gScale: Double) -> Double {
 /// export all agree to the pixel. O(t) — interactive callers should go through
 /// `PositionTimelineCache` (SceneSimulator does), which answers in O(10s).
 public func simulatePosition(events: [PerfEvent], recStart: StartPose?, speed: Double,
+                             rotationSpeed: Double = 90,
                              gScale: Double, at t: Double) -> SimPose {
-    var s = initialSimState(recStart: recStart, speed: speed)
+    var s = initialSimState(recStart: recStart, speed: speed, rotationSpeed: rotationSpeed)
     integrate(&s, events: events, gScale: gScale, to: t)
     return SimPose(x: s.x, depth: s.depth, phase: s.phase, face: s.face,
                    spin: s.spin, zoom: s.zoom)
@@ -160,12 +170,13 @@ public final class PositionTimeline: @unchecked Sendable { // immutable after in
     /// Steps between checkpoints: 600 full steps = 10 s of show time.
     private static let strideSteps = 600
 
-    init(events: [PerfEvent], recStart: StartPose?, speed: Double, gScale: Double,
+    init(events: [PerfEvent], recStart: StartPose?, speed: Double, rotationSpeed: Double = 90,
+         gScale: Double,
          upTo horizon: Double) {
         self.events = events
         self.gScale = gScale
         self.horizon = horizon
-        var s = initialSimState(recStart: recStart, speed: speed)
+        var s = initialSimState(recStart: recStart, speed: speed, rotationSpeed: rotationSpeed)
         var cps = [s]
         var step = 0
         integrate(&s, events: events, gScale: gScale, to: horizon) { st in
@@ -200,6 +211,7 @@ public final class PositionTimelineCache: @unchecked Sendable {
         var events: [PerfEvent]
         var recStart: StartPose?
         var speed: Double
+        var rotationSpeed: Double
         var gScale: Double
     }
 
@@ -208,8 +220,10 @@ public final class PositionTimelineCache: @unchecked Sendable {
     private static let capacity = 24
 
     public func timeline(events: [PerfEvent], recStart: StartPose?, speed: Double,
+                         rotationSpeed: Double = 90,
                          gScale: Double, coveringAtLeast t: Double) -> PositionTimeline {
-        let key = Key(events: events, recStart: recStart, speed: speed, gScale: gScale)
+        let key = Key(events: events, recStart: recStart, speed: speed,
+                      rotationSpeed: rotationSpeed, gScale: gScale)
         lock.lock()
         defer { lock.unlock() }
         if let i = entries.firstIndex(where: { $0.key == key && $0.timeline.horizon >= t }) {
@@ -220,6 +234,7 @@ public final class PositionTimelineCache: @unchecked Sendable {
         entries.removeAll { $0.key == key } // stale horizon
         // Build past t so steady playback rebuilds at most every ~2 minutes.
         let timeline = PositionTimeline(events: events, recStart: recStart, speed: speed,
+                                        rotationSpeed: rotationSpeed,
                                         gScale: gScale, upTo: t + 120)
         entries.insert((key, timeline), at: 0)
         if entries.count > Self.capacity { entries.removeLast() }

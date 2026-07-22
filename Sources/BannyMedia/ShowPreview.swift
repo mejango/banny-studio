@@ -22,14 +22,13 @@ public enum ShowPreview {
                                   bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else {
             throw PreviewError.contextFailed
         }
-        let bg = ShowExporter.BackgroundSampler(assets: document.assets,
-                                                assetURL: { contents.assetURLs[$0] })
-        let stills = ShowExporter.StillAssetCache(assets: document.assets,
-                                                  assetURL: { contents.assetURLs[$0] })
+        let media = ShowExporter.AssetSampler(assets: document.assets,
+                                              assetURL: { contents.assetURLs[$0] })
         FrameRenderer(assets: assets).draw(
             scene: document.stage, at: t, size: options.size,
-            background: document.stage.activeBackgroundCue(at: t).flatMap { bg.frame(cue: $0, at: t) },
-            imageAsset: { stills.image(for: $0) },
+            background: document.stage.activeBackgroundCue(at: t)
+                .flatMap { media.frame(cue: $0, at: t) },
+            visualAsset: { media.visualFrame(cue: $0, at: $1) },
             flipped: true, in: ctx)
 
         guard let image = ctx.makeImage(),

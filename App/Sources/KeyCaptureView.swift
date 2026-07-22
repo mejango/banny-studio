@@ -63,7 +63,7 @@ struct KeyCaptureView: NSViewRepresentable {
         }
 
         /// Tracks pressed keys and fires reset chords (shift+←+→ resets
-        /// rotation; +/− together resets zoom/size), then delegates the rest.
+        /// rotation; +/− together resets animated scale), then delegates the rest.
         private func route(event: NSEvent, model: StudioModel) -> Bool {
             let plus: Set<UInt16> = [24, 69], minus: Set<UInt16> = [27, 78]
             if event.type == .keyUp {
@@ -79,7 +79,7 @@ struct KeyCaptureView: NSViewRepresentable {
                     model.liveKey(code: .spinReset, down: true)
                     model.liveKey(code: .spinReset, down: false)
                 }
-                // Zoom/size reset: + and − held together.
+                // Animated-scale reset: + and − held together.
                 if (plus.contains(event.keyCode) && !downKeys.isDisjoint(with: minus))
                      || (minus.contains(event.keyCode) && !downKeys.isDisjoint(with: plus)) {
                     model.liveKey(code: .zoomReset, down: true)
@@ -156,9 +156,31 @@ struct KeyCaptureView: NSViewRepresentable {
                 if down { model.nudgeTimelineSelection(by: event.keyCode == 124 ? 1.0/30 : -1.0/30) }
                 return true
             }
-            // Light tracks, the Scenes track (camera), image recording, and
-            // camera recording take the arrows + pen keys.
-            if model.isImageRecording || model.isCameraRecording
+            // Visual cues keep the character performance contract for the
+            // controls that apply: move L/R, move F/B, rotate, and scale.
+            if model.isImageRecording || model.selectedVisualCueOnSelectedTrack {
+                var visualKey: StudioModel.LightKey?
+                if event.modifierFlags.contains(.shift), event.keyCode == 123 {
+                    visualKey = .rotateLeft
+                } else if event.modifierFlags.contains(.shift), event.keyCode == 124 {
+                    visualKey = .rotateRight
+                } else {
+                    visualKey = [
+                        123: .left, 124: .right, 126: .up, 125: .down,
+                        24: .plus, 69: .plus, 27: .minus, 78: .minus,
+                    ][event.keyCode]
+                }
+                if let visualKey {
+                    if !event.isARepeat { model.lightKey(visualKey, down: down) }
+                    return true
+                }
+                // Character-only performance keys do nothing in a visual
+                // context; never leak them to a previously selected character.
+                if codeMap[event.keyCode] != nil { return true }
+            }
+            // Light tracks, the Scenes track, and camera recording take the
+            // arrows plus their track-specific pen keys.
+            if model.isCameraRecording
                 || (model.selectedTrackKey.map { key in
                         model.scene.lightTracks.contains(where: { $0.id == key })
                             || model.scene.backgroundTracks.contains(where: { $0.id == key })
@@ -173,7 +195,7 @@ struct KeyCaptureView: NSViewRepresentable {
                     return true
                 }
             }
-            // Character rotate (shift+←/→) and zoom (+/−): held keys integrated
+            // Character rotate (shift+←/→) and scale (+/−): held keys integrated
             // like movement. Only in a character context (no light/scene/media
             // pen is claiming these — that was handled above).
             if model.selectedTrackKey?.hasPrefix("c-") ?? true {

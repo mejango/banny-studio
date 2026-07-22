@@ -1,5 +1,6 @@
 import Foundation
 import CoreGraphics
+import CoreImage
 import CoreText
 import BannyCore
 
@@ -29,6 +30,8 @@ public struct FrameRenderer: Sendable {
 
     /// Renders scene state at time t into `ctx`. `size` is the output frame (16:9).
     /// `background`: pre-decoded background image, drawn per its crop mode.
+    /// `visualAsset`: resolves the exact frame for a floating still/GIF/video cue.
+    /// `imageAsset` remains as the static-image fallback for existing callers.
     ///
     /// Coordinate contract: `ctx` must have a TOP-LEFT origin (SwiftUI's
     /// GraphicsContext already does). For a raw bottom-left CGBitmapContext
@@ -36,6 +39,7 @@ public struct FrameRenderer: Sendable {
     public func draw(scene: SceneState, at t: Double, size: CGSize,
                      background: (image: CGImage, crop: Crop)? = nil,
                      imageAsset: ((String) -> CGImage?)? = nil,
+                     visualAsset: ((ImageCue, Double) -> CGImage?)? = nil,
                      poseOverride: ((Int, CharacterPose) -> CharacterPose)? = nil,
                      flipped: Bool = false,
                      in ctx: CGContext) {
@@ -74,30 +78,20 @@ public struct FrameRenderer: Sendable {
         if let background {
             drawBackground(background.image, crop: background.crop, size: CGSize(width: W, height: outH), in: ctx)
         }
+        let lights = scene.activeLights(at: t)
 
         // Image cues (between backdrop and characters) — image tracks and the
         // image cues living on media (audio) tracks.
-        if let imageAsset {
+        if imageAsset != nil || visualAsset != nil {
             var visualTracks: [(hidden: Bool, presence: [VisibilityEvent], cues: [ImageCue])] =
                 scene.imageTracks.map { ($0.hidden, $0.presence, $0.cues) }
             visualTracks += scene.audioTracks.map { ($0.hidden, $0.presence, $0.cues) }
             for track in visualTracks where !track.hidden && track.presence.isPresent(at: t) {
                 for cue in track.cues where t >= cue.start && t < cue.start + cue.dur {
-                    guard let img = imageAsset(cue.assetID) else { continue }
+                    guard let img = visualAsset?(cue, t) ?? imageAsset?(cue.assetID) else { continue }
                     let p = cue.placement(at: t)
-                    let w = p.scale * W
-                    let h = w * Double(img.height) / Double(max(1, img.width))
-                    if abs(p.rotation) > 0.001 {
-                        // Rotate about the image's center.
-                        ctx.saveGState()
-                        ctx.translateBy(x: CGFloat(p.x * W), y: CGFloat(p.y * outH))
-                        ctx.rotate(by: CGFloat(p.rotation * .pi / 180))
-                        drawImage(img, in: CGRect(x: -w / 2, y: -h / 2, width: w, height: h), ctx: ctx)
-                        ctx.restoreGState()
-                    } else {
-                        drawImage(img, in: CGRect(x: p.x * W - w / 2, y: p.y * outH - h / 2,
-                                                  width: w, height: h), ctx: ctx)
-                    }
+                    drawMedia(img, cue: cue, placement: p, lights: lights,
+                              stageWidth: W, stageHeight: outH, in: ctx)
                 }
             }
         }
@@ -114,7 +108,6 @@ public struct FrameRenderer: Sendable {
         }
 
         // Shadows first (web z = char z - 1, under every character).
-        let lights = scene.activeLights(at: t)
         if let shadow = assets.shadowImage() {
             for e in entries.sorted(by: { $0.placement.zIndex < $1.placement.zIndex }) {
                 for light in lights where light.intensity > 0.01 {
@@ -155,6 +148,170 @@ public struct FrameRenderer: Sendable {
         }
         drawCaptions(captionLines, W: W, outH: outH, H: H, in: ctx)
 
+        ctx.restoreGState()
+    }
+
+    // MARK: - Floating media
+
+    private final class MediaEffectContext: @unchecked Sendable {
+        private let context = CIContext(options: [.cacheIntermediates: true])
+        private let lock = NSLock()
+
+        func image(_ image: CIImage, from rect: CGRect) -> CGImage? {
+            lock.lock()
+            defer { lock.unlock() }
+            return context.createCGImage(image, from: rect)
+        }
+    }
+
+    private static let mediaEffectContext = MediaEffectContext()
+
+    /// Color controls and alpha-fringe cleanup are raster effects, so they are
+    /// applied once to the resolved still/GIF/video frame before placement.
+    private func adjustedMediaImage(_ image: CGImage, appearance a: MediaAppearance) -> CGImage {
+        let hasColorControls = abs(a.brightness) > 0.0001 || abs(a.contrast - 1) > 0.0001
+            || abs(a.saturation - 1) > 0.0001
+        let hasTint = a.tintAmount > 0.0001
+        let hasCleanup = a.cleanup > 0.0001
+        guard hasColorControls || hasTint || hasCleanup else { return image }
+
+        let extent = CGRect(x: 0, y: 0, width: image.width, height: image.height)
+        var output = CIImage(cgImage: image)
+        if hasColorControls {
+            output = output.applyingFilter("CIColorControls", parameters: [
+                kCIInputBrightnessKey: min(1, max(-1, a.brightness)),
+                kCIInputContrastKey: min(2, max(0, a.contrast)),
+                kCIInputSaturationKey: min(2, max(0, a.saturation)),
+            ])
+        }
+        if hasTint {
+            let amount = min(1, max(0, a.tintAmount))
+            let color = CIColor(red: min(1, max(0, a.tint.red)),
+                                green: min(1, max(0, a.tint.green)),
+                                blue: min(1, max(0, a.tint.blue)), alpha: amount)
+            let overlay = CIImage(color: color).cropped(to: extent)
+            output = overlay.applyingFilter("CISourceAtopCompositing", parameters: [
+                kCIInputBackgroundImageKey: output,
+            ])
+        }
+        if hasCleanup {
+            // Raise the alpha contrast and push faint matte/fringe pixels to
+            // transparent while keeping solid artwork opaque.
+            let amount = min(1, max(0, a.cleanup))
+            let gain = 1 + amount * 6
+            let bias = -amount * 0.32
+            output = output.applyingFilter("CIColorMatrix", parameters: [
+                "inputRVector": CIVector(x: 1, y: 0, z: 0, w: 0),
+                "inputGVector": CIVector(x: 0, y: 1, z: 0, w: 0),
+                "inputBVector": CIVector(x: 0, y: 0, z: 1, w: 0),
+                "inputAVector": CIVector(x: 0, y: 0, z: 0, w: gain),
+                "inputBiasVector": CIVector(x: 0, y: 0, z: 0, w: bias),
+            ])
+        }
+        return Self.mediaEffectContext.image(output, from: extent) ?? image
+    }
+
+    /// Solid black carrying only the source alpha, used by outlines and the
+    /// light-aware shadow pass.
+    private func mediaSilhouette(_ image: CGImage) -> CGImage? {
+        let extent = CGRect(x: 0, y: 0, width: image.width, height: image.height)
+        let output = CIImage(cgImage: image).applyingFilter("CIColorMatrix", parameters: [
+            "inputRVector": CIVector(x: 0, y: 0, z: 0, w: 0),
+            "inputGVector": CIVector(x: 0, y: 0, z: 0, w: 0),
+            "inputBVector": CIVector(x: 0, y: 0, z: 0, w: 0),
+            "inputAVector": CIVector(x: 0, y: 0, z: 0, w: 1),
+        ])
+        return Self.mediaEffectContext.image(output, from: extent)
+    }
+
+    private func mediaMaskPath(_ mask: MediaMask, radius: Double, rect: CGRect) -> CGPath? {
+        guard mask != .none else { return nil }
+        let path = CGMutablePath()
+        switch mask {
+        case .none:
+            return nil
+        case .rectangle:
+            path.addRect(rect)
+        case .roundedRectangle:
+            let r = min(rect.width, rect.height) * min(0.5, max(0, radius))
+            path.addRoundedRect(in: rect, cornerWidth: r, cornerHeight: r)
+        case .circle:
+            let side = min(rect.width, rect.height)
+            path.addEllipse(in: CGRect(x: rect.midX - side / 2, y: rect.midY - side / 2,
+                                       width: side, height: side))
+        }
+        return path
+    }
+
+    private func drawMedia(_ source: CGImage, cue: ImageCue, placement p: ImagePlacement,
+                           lights: [ResolvedLight], stageWidth W: Double, stageHeight H: Double,
+                           in ctx: CGContext) {
+        let image = adjustedMediaImage(source, appearance: cue.appearance)
+        let w = p.scale * W
+        let h = w * Double(image.height) / Double(max(1, image.width))
+        let pivotX = min(1, max(0, cue.pivot.x))
+        let pivotY = min(1, max(0, cue.pivot.y))
+        let rect = CGRect(x: -pivotX * w, y: -pivotY * h, width: w, height: h)
+        let anchorX = p.x * W
+        let anchorY = p.y * H
+        let angle = p.rotation * .pi / 180
+        let silhouetteNeeded = cue.appearance.outline > 0.01 || cue.appearance.shadow > 0.001
+        let silhouette = silhouetteNeeded ? mediaSilhouette(image) : nil
+
+        // The media's visual center can differ from its anchor. Shadows move
+        // away from every active light, using that true center as the caster.
+        if cue.appearance.shadow > 0.001, let silhouette {
+            let localCenterX = (0.5 - pivotX) * w
+            let localCenterY = (0.5 - pivotY) * h
+            let centerX = anchorX + cos(angle) * localCenterX - sin(angle) * localCenterY
+            let centerY = anchorY + sin(angle) * localCenterX + cos(angle) * localCenterY
+            for light in lights where light.intensity > 0.01 {
+                var vx = centerX - light.x * W
+                var vy = centerY - light.y * H
+                let length = hypot(vx, vy)
+                if length < 0.001 { vx = 0; vy = 1 }
+                else { vx /= length; vy /= length }
+                let spread = 0.65 + min(2, max(0.2, light.size / 120)) * 0.35
+                let distance = max(4, min(w, h) * 0.08) * spread
+                let alpha = min(0.7, max(0, cue.appearance.shadow)
+                    * max(0, light.intensity) * 0.46)
+                ctx.saveGState()
+                ctx.translateBy(x: anchorX + vx * distance, y: anchorY + vy * distance)
+                ctx.rotate(by: CGFloat(angle))
+                if let path = mediaMaskPath(cue.mask, radius: cue.maskRadius, rect: rect) {
+                    ctx.addPath(path)
+                    ctx.clip()
+                }
+                ctx.setAlpha(alpha)
+                drawImage(silhouette, in: rect, ctx: ctx)
+                ctx.restoreGState()
+            }
+        }
+
+        ctx.saveGState()
+        ctx.translateBy(x: anchorX, y: anchorY)
+        ctx.rotate(by: CGFloat(angle))
+        let outline = max(0, cue.appearance.outline) * W / 1920
+        if outline > 0.05, let silhouette {
+            if let path = mediaMaskPath(cue.mask, radius: cue.maskRadius, rect: rect) {
+                ctx.addPath(path)
+                ctx.setStrokeColor(CGColor(gray: 0, alpha: 1))
+                ctx.setLineWidth(outline * 2)
+                ctx.strokePath()
+            } else {
+                for step in 0..<12 {
+                    let a = Double(step) / 12 * 2 * Double.pi
+                    drawImage(silhouette,
+                              in: rect.offsetBy(dx: cos(a) * outline, dy: sin(a) * outline),
+                              ctx: ctx)
+                }
+            }
+        }
+        if let path = mediaMaskPath(cue.mask, radius: cue.maskRadius, rect: rect) {
+            ctx.addPath(path)
+            ctx.clip()
+        }
+        drawImage(image, in: rect, ctx: ctx)
         ctx.restoreGState()
     }
 

@@ -6,8 +6,12 @@ import Testing
     let payloads: [PortableTrack.Payload] = [
         .character(Character(body: .pink, baseOutfit: [3: "flops"],
                              voicePitch: 2, voiceSpeed: 0.9,
-                             events: [.outfit(t: 2, slot: 4, name: "ribbon")],
-                             name: "Sage")),
+                             events: [
+                                 .outfit(t: 2, slot: 4, name: "ribbon"),
+                                 .motion(t: 3, speed: 400, rotationSpeed: 900,
+                                         wobble: nil, size: nil),
+                             ],
+                             name: "Sage", speed: 360, rotationSpeed: 720)),
         .audio(AudioTrack(id: "audio", name: "Media")),
         .image(ImageTrack(id: "image", name: "Props")),
         .light(LightTrack(id: "light", name: "Key light", cues: [
@@ -38,9 +42,9 @@ import Testing
         ],
         cues: [
             ImageCue(id: "cue-a", assetID: "card", start: 0, dur: 1,
-                     from: ImagePlacement()),
+                     from: ImagePlacement(), speed: 8, rotationSpeed: 75),
             ImageCue(id: "cue-b", assetID: "card", start: 1, dur: 1,
-                     from: ImagePlacement(x: 0.7)),
+                     from: ImagePlacement(x: 0.7), speed: 9, rotationSpeed: 100),
         ])
     let archive = PortableTrack(
         payload: .audio(track),
@@ -66,6 +70,8 @@ import Testing
     #expect(!remapped.cues.map(\.id).contains("cue-a"))
     #expect(Set(remapped.cues.map(\.assetID)).count == 1)
     #expect(remapped.cues[0].assetID != "card")
+    #expect(remapped.cues.map(\.speed) == [8, 9])
+    #expect(remapped.cues.map(\.rotationSpeed) == [75, 100])
 
     let newAudioID = remapped.clips[0].id
     let newAssetID = remapped.cues[0].assetID
@@ -90,5 +96,35 @@ import Testing
                         from: ImagePlacement())])))
     #expect(throws: PortableTrackError.missingAsset("poster")) {
         _ = try missingAsset.encoded()
+    }
+}
+
+@Test func portableCharacterCarriesAndRemapsReactionDefinitions() throws {
+    let definition = ReactionDefinition(id: "reaction-old", name: "Double take", dur: 1,
+                                        events: [.outfit(t: 0.2, slot: 12,
+                                                         name: "chef-hat")])
+    let character = Character(body: .orange, reactions: [
+        ReactionInstance(id: "block-old", reactionID: definition.id,
+                         start: 2, dur: 1.5),
+    ])
+    let archive = PortableTrack(payload: .character(character),
+                                reactionLibrary: [definition])
+    var counter = 0
+    let remapped = try PortableTrack(data: archive.encoded()).remapped {
+        counter += 1
+        return "new-\(counter)"
+    }
+    guard case .character(let imported) = remapped.payload else {
+        Issue.record("Expected character")
+        return
+    }
+    #expect(remapped.reactionLibrary.count == 1)
+    #expect(remapped.reactionLibrary[0].id != definition.id)
+    #expect(imported.reactions[0].id != "block-old")
+    #expect(imported.reactions[0].reactionID == remapped.reactionLibrary[0].id)
+
+    let broken = PortableTrack(payload: .character(character))
+    #expect(throws: PortableTrackError.missingReaction("reaction-old")) {
+        _ = try broken.encoded()
     }
 }

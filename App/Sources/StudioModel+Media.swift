@@ -1,5 +1,6 @@
 import Foundation
 import AVFoundation
+import UniformTypeIdentifiers
 #if os(macOS)
 import AppKit
 #endif
@@ -122,6 +123,11 @@ extension StudioModel {
                 scene.imageTracks[i].cues[ci].label = name
             }
         }
+        for i in scene.audioTracks.indices {
+            for ci in scene.audioTracks[i].cues.indices where scene.audioTracks[i].cues[ci].id == id {
+                scene.audioTracks[i].cues[ci].label = name
+            }
+        }
         for i in scene.backgroundTracks.indices {
             for ci in scene.backgroundTracks[i].cues.indices where scene.backgroundTracks[i].cues[ci].id == id {
                 scene.backgroundTracks[i].cues[ci].label = name
@@ -173,9 +179,10 @@ extension StudioModel {
     func addAsset(data: Data, ext: String, name: String) -> Asset? {
         registerUndoSnapshot(label: "Add Asset")
         let id = ShowDocumentFile.newID()
-        file?.assetsMedia[id] = (data, ext)
-        let kind: Asset.Kind = ["mp4", "mov", "webm", "m4v"].contains(ext) ? .video : .image
-        let asset = Asset(id: id, name: name, kind: kind, file: "\(id).\(ext)")
+        let normalizedExtension = ext.lowercased()
+        file?.assetsMedia[id] = (data, normalizedExtension)
+        let kind = visualAssetKind(fileExtension: normalizedExtension)
+        let asset = Asset(id: id, name: name, kind: kind, file: "\(id).\(normalizedExtension)")
         document.assets.append(asset)
         return asset
     }
@@ -189,7 +196,7 @@ extension StudioModel {
         var newAsset: Asset?
         if let urls = pb.readObjects(forClasses: [NSURL.self]) as? [URL],
            let url = urls.first,
-           ["png", "jpg", "jpeg", "gif", "svg", "webp"].contains(url.pathExtension.lowercased()) {
+           isSupportedVisualFile(url) {
             newAsset = addAsset(from: url)
         } else if let data = pb.data(forType: .png) {
             newAsset = addAsset(data: data, ext: "png", name: "Pasted image")
@@ -198,7 +205,7 @@ extension StudioModel {
                   let png = rep.representation(using: .png, properties: [:]) {
             newAsset = addAsset(data: png, ext: "png", name: "Pasted image")
         }
-        guard let asset = newAsset, asset.kind == .image else { return newAsset != nil }
+        guard let asset = newAsset else { return false }
         let ti = mediaTrackIndex
             ?? scene.audioTracks.firstIndex { $0.id == selectedTrackKey }
             ?? scene.audioTracks.indices.first
@@ -214,11 +221,12 @@ extension StudioModel {
     /// Imports an image/video file into the bank and returns the new asset.
     @discardableResult
     func addAsset(from url: URL) -> Asset? {
+        guard isSupportedVisualFile(url) else { return nil }
         let scoped = url.startAccessingSecurityScopedResource()
         defer { if scoped { url.stopAccessingSecurityScopedResource() } }
         guard let data = try? Data(contentsOf: url) else { return nil }
         let ext = url.pathExtension.isEmpty ? "png" : url.pathExtension.lowercased()
-        let kind: Asset.Kind = ["mp4", "mov", "webm", "m4v"].contains(ext) ? .video : .image
+        let kind = visualAssetKind(fileExtension: ext)
         registerUndoSnapshot(label: "Add Asset")
         let id = ShowDocumentFile.newID()
         file?.assetsMedia[id] = (data, ext)
@@ -228,12 +236,35 @@ extension StudioModel {
         return asset
     }
 
+    /// File-kind detection shared by picker, paste, and drag/drop imports.
+    /// AVFoundation-supported movies classify through UTType; common movie
+    /// extensions remain covered on systems that do not register WebM/M4V.
+    private func visualAssetKind(fileExtension ext: String) -> Asset.Kind {
+        let ext = ext.lowercased()
+        if ["mp4", "mov", "m4v", "webm"].contains(ext)
+            || UTType(filenameExtension: ext)?.conforms(to: .movie) == true {
+            return .video
+        }
+        return .image
+    }
+
+    private func isSupportedVisualFile(_ url: URL) -> Bool {
+        let ext = url.pathExtension.lowercased()
+        guard !ext.isEmpty else { return false }
+        if ["mp4", "mov", "m4v", "webm"].contains(ext) { return true }
+        guard let type = UTType(filenameExtension: ext) else { return false }
+        return type.conforms(to: .image) || type.conforms(to: .movie)
+    }
+
     func removeAsset(id: String) {
         registerUndoSnapshot(label: "Remove Asset")
         document.assets.removeAll { $0.id == id }
         // assetsMedia bytes stay for undo-safety (see removeClip).
         for i in scene.imageTracks.indices {
             scene.imageTracks[i].cues.removeAll { $0.assetID == id }
+        }
+        for i in scene.audioTracks.indices {
+            scene.audioTracks[i].cues.removeAll { $0.assetID == id }
         }
         for i in scene.backgroundTracks.indices {
             scene.backgroundTracks[i].cues.removeAll { $0.assetID == id }

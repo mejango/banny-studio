@@ -2,6 +2,11 @@ import SwiftUI
 import AVFoundation
 import UniformTypeIdentifiers
 import BannyCore
+#if os(macOS)
+import AppKit
+#else
+import UIKit
+#endif
 
 /// Audio: import a file or record from the mic onto the selected character's track.
 struct AudioSection: View {
@@ -31,7 +36,30 @@ struct AudioSection: View {
     }
 }
 
-/// The set's reusable assets: import once, use as backgrounds or stage images.
+/// Still/GIF/video import targeted at one general media track.
+struct VisualMediaSection: View {
+    @Bindable var model: StudioModel
+    let trackIndex: Int
+    @State private var importing = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("VISUAL MEDIA").font(.caption.bold()).foregroundStyle(.secondary)
+            Button("＋ Import image/GIF/video…") { importing = true }
+                .font(.caption)
+            Text("onto this media track at the playhead")
+                .font(.caption2).foregroundStyle(.secondary)
+        }
+        .fileImporter(isPresented: $importing, allowedContentTypes: [.image, .movie]) { result in
+            if case .success(let url) = result,
+               let asset = model.addAsset(from: url) {
+                model.addMediaImageCue(trackIndex: trackIndex, assetID: asset.id, at: model.time)
+            }
+        }
+    }
+}
+
+/// The set's reusable assets: import once, use as backgrounds or stage visuals.
 struct AssetBankSection: View {
     @Bindable var model: StudioModel
     let file: ShowDocumentFile
@@ -42,7 +70,7 @@ struct AssetBankSection: View {
             Text("ASSET BANK").font(.caption.bold()).foregroundStyle(.secondary)
             Button("＋ Add image/video…") { importing = true }.font(.caption)
             if model.document.assets.isEmpty {
-                Text("Assets you add live with the show and can back any number of background or image cues.")
+                Text("Assets you add live with the show and can back any number of scene or visual cues.")
                     .font(.caption2).foregroundStyle(.secondary)
             }
             ForEach(Array(model.document.assets.enumerated()), id: \.element.id) { i, asset in
@@ -59,12 +87,10 @@ struct AssetBankSection: View {
                     Spacer()
                     Button("Add") { model.addBackgroundCueApplyingAutoFrame(assetID: asset.id, assetName: asset.name) }
                         .font(.system(size: 9, weight: .bold))
-                        .help("Add to the show from the playhead onward (right-click for a floating stage image)")
+                        .help("Add to the show from the playhead onward (right-click for a floating stage visual)")
                         .contextMenu {
-                            if asset.kind == .image {
-                                Button("Add as floating stage image") {
-                                    model.addImageTrack(assetID: asset.id, assetName: asset.name)
-                                }
+                            Button("Add as floating stage visual") {
+                                model.addImageTrack(assetID: asset.id, assetName: asset.name)
                             }
                         }
                     Button("×") { model.removeAsset(id: asset.id) }
@@ -166,9 +192,14 @@ struct AssetThumb: View {
     }
 }
 
-/// Placement controls for the selected image cue: position, size, motion.
+/// Progressive inspector for a selected still/GIF/video cue. The common
+/// transform stays visible; specialized controls live in disclosure sections.
 struct ImageCueInspector: View {
     @Bindable var model: StudioModel
+    @State private var playbackExpanded = true
+    @State private var maskExpanded = false
+    @State private var lookExpanded = false
+    @State private var advancedExpanded = false
 
     var body: some View {
         if let current = model.selectedImageCueValue {
@@ -176,17 +207,31 @@ struct ImageCueInspector: View {
                 get: { model.selectedImageCueValue ?? current },
                 set: { newValue in model.updateSelectedImageCue { $0 = newValue } })
             VStack(alignment: .leading, spacing: 6) {
-                Text("IMAGE CUE").font(.caption.bold()).foregroundStyle(.secondary)
-                Text("drag it on the stage to place; use ⤢ size below")
+                Text("VISUAL CUE").font(.caption.bold()).foregroundStyle(.secondary)
+                Text("Drag on the stage to place it. Speed and rotation speed control the keyboard while placing or recording.")
                     .font(.caption2).foregroundStyle(.secondary)
-                placement("size ⤢", value: Binding(
+                placement("speed", value: Binding(
+                    get: { binding.wrappedValue.speed },
+                    set: { v in
+                        var cue = binding.wrappedValue
+                        cue.speed = v
+                        binding.wrappedValue = cue
+                    }), range: 1...10, format: "%.1f")
+                placement("rotation speed", value: Binding(
+                    get: { binding.wrappedValue.rotationSpeed },
+                    set: { v in
+                        var cue = binding.wrappedValue
+                        cue.rotationSpeed = v
+                        binding.wrappedValue = cue
+                    }), range: 1...100, format: "%.1f")
+                placement("scale ⤢", value: Binding(
                     get: { binding.wrappedValue.from.scale },
                     set: { v in
                         var cue = binding.wrappedValue
                         cue.from.scale = v
                         if cue.to != nil { cue.to?.scale = v }
                         binding.wrappedValue = cue
-                    }), range: 0.05...1.2)
+                    }), range: 0.05...1.2, format: "%.2f")
                 placement("rotate °", value: Binding(
                     get: { binding.wrappedValue.from.rotation },
                     set: { v in
@@ -194,7 +239,13 @@ struct ImageCueInspector: View {
                         cue.from.rotation = v
                         if cue.to != nil { cue.to?.rotation = v }
                         binding.wrappedValue = cue
-                    }), range: -180...180)
+                    }), range: -180...180, format: "%.0f°")
+                Button("Set start state") {
+                    model.commitSelectedImageCueStartState()
+                }
+                .buttonStyle(.bordered)
+                .disabled(!model.selectedImageCueStartStateMismatch)
+                .help("Use the exact position, scale, and rotation visible at the playhead as this cue's start")
                 Toggle(isOn: Binding(
                     get: { binding.wrappedValue.to != nil },
                     set: { on in
@@ -208,14 +259,265 @@ struct ImageCueInspector: View {
                 #if os(macOS)
                 .toggleStyle(.checkbox)
                 #endif
+
+                if let duration = model.visualSourceDuration(assetID: current.assetID) {
+                    Divider()
+                    DisclosureGroup(isExpanded: $playbackExpanded) {
+                        playbackControls(binding, duration: duration)
+                            .padding(.top, 4)
+                    } label: {
+                        Text("PLAYBACK").font(.caption.bold()).foregroundStyle(.secondary)
+                    }
+                }
+
+                Divider()
+                DisclosureGroup(isExpanded: $maskExpanded) {
+                    maskControls(binding).padding(.top, 4)
+                } label: {
+                    Text("MASK").font(.caption.bold()).foregroundStyle(.secondary)
+                }
+
+                Divider()
+                DisclosureGroup(isExpanded: $lookExpanded) {
+                    appearanceControls(binding).padding(.top, 4)
+                } label: {
+                    Text("LOOK").font(.caption.bold()).foregroundStyle(.secondary)
+                }
+
+                Divider()
+                DisclosureGroup(isExpanded: $advancedExpanded) {
+                    advancedControls(binding).padding(.top, 4)
+                } label: {
+                    Text("ADVANCED").font(.caption.bold()).foregroundStyle(.secondary)
+                }
             }
         }
     }
 
-    private func placement(_ label: String, value: Binding<Double>, range: ClosedRange<Double>) -> some View {
+    @ViewBuilder
+    private func playbackControls(_ cue: Binding<ImageCue>, duration: Double) -> some View {
+        let minGap = min(0.02, max(0.001, duration / 100))
+        let trimEnd = cue.wrappedValue.playback.trimEnd ?? duration
+        VStack(alignment: .leading, spacing: 6) {
+            Text(String(format: "source duration %.2fs", duration))
+                .font(.caption2).foregroundStyle(.secondary)
+            placement("trim in", value: Binding(
+                get: { min(duration, max(0, cue.wrappedValue.playback.trimStart)) },
+                set: { value in
+                    var updated = cue.wrappedValue
+                    let end = updated.playback.trimEnd ?? duration
+                    updated.playback.trimStart = min(max(0, value), max(0, end - minGap))
+                    if let frozen = updated.playback.freezeAt {
+                        updated.playback.freezeAt = max(updated.playback.trimStart, frozen)
+                    }
+                    cue.wrappedValue = updated
+                }), range: 0...max(minGap, duration), format: "%.2fs")
+            placement("trim out", value: Binding(
+                get: { min(duration, max(0, trimEnd)) },
+                set: { value in
+                    var updated = cue.wrappedValue
+                    updated.playback.trimEnd = min(duration,
+                        max(updated.playback.trimStart + minGap, value))
+                    if let frozen = updated.playback.freezeAt {
+                        updated.playback.freezeAt = min(updated.playback.trimEnd ?? duration, frozen)
+                    }
+                    cue.wrappedValue = updated
+                }), range: minGap...max(minGap, duration), format: "%.2fs")
+            placement("playback speed", value: Binding(
+                get: { cue.wrappedValue.playback.rate },
+                set: { value in
+                    var updated = cue.wrappedValue
+                    updated.playback.rate = value
+                    cue.wrappedValue = updated
+                }), range: 0.1...4, format: "%.2f×")
+            HStack(spacing: 12) {
+                Toggle("reverse", isOn: playbackBool(cue, keyPath: \MediaPlayback.reverse))
+                Toggle("loop", isOn: playbackBool(cue, keyPath: \MediaPlayback.loop))
+            }
+            #if os(macOS)
+            .toggleStyle(.checkbox)
+            #endif
+            Toggle("freeze frame", isOn: Binding(
+                get: { cue.wrappedValue.playback.freezeAt != nil },
+                set: { frozen in
+                    var updated = cue.wrappedValue
+                    updated.playback.freezeAt = frozen
+                        ? updated.sourceTime(at: model.time, sourceDuration: duration) : nil
+                    cue.wrappedValue = updated
+                }))
+            #if os(macOS)
+            .toggleStyle(.checkbox)
+            #endif
+            if cue.wrappedValue.playback.freezeAt != nil {
+                placement("frame", value: Binding(
+                    get: { cue.wrappedValue.playback.freezeAt ?? 0 },
+                    set: { value in
+                        var updated = cue.wrappedValue
+                        let end = updated.playback.trimEnd ?? duration
+                        updated.playback.freezeAt = min(end, max(updated.playback.trimStart, value))
+                        cue.wrappedValue = updated
+                    }), range: 0...max(minGap, duration), format: "%.2fs")
+            }
+        }
+    }
+
+    private func playbackBool(_ cue: Binding<ImageCue>,
+                              keyPath: WritableKeyPath<MediaPlayback, Bool>) -> Binding<Bool> {
+        Binding(get: { cue.wrappedValue.playback[keyPath: keyPath] }, set: { value in
+            var updated = cue.wrappedValue
+            updated.playback[keyPath: keyPath] = value
+            cue.wrappedValue = updated
+        })
+    }
+
+    @ViewBuilder
+    private func maskControls(_ cue: Binding<ImageCue>) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Picker("shape", selection: Binding(
+                get: { cue.wrappedValue.mask },
+                set: { value in
+                    var updated = cue.wrappedValue
+                    updated.mask = value
+                    cue.wrappedValue = updated
+                })) {
+                Text("None").tag(MediaMask.none)
+                Text("Rect").tag(MediaMask.rectangle)
+                Text("Rounded").tag(MediaMask.roundedRectangle)
+                Text("Circle").tag(MediaMask.circle)
+            }
+            .pickerStyle(.segmented)
+            if cue.wrappedValue.mask == .roundedRectangle {
+                placement("corner radius", value: Binding(
+                    get: { cue.wrappedValue.maskRadius },
+                    set: { value in
+                        var updated = cue.wrappedValue
+                        updated.maskRadius = value
+                        cue.wrappedValue = updated
+                    }), range: 0...0.5, format: "%.2f")
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func appearanceControls(_ cue: Binding<ImageCue>) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text("tint").font(.caption2).frame(width: 88, alignment: .leading)
+                ColorPicker("", selection: tintColor(cue), supportsOpacity: false)
+                    .labelsHidden().frame(width: 28)
+                Slider(value: appearance(cue, \MediaAppearance.tintAmount), in: 0...1)
+                Text(String(format: "%.0f%%", cue.wrappedValue.appearance.tintAmount * 100))
+                    .font(.system(size: 9, design: .monospaced)).foregroundStyle(.secondary)
+                    .frame(width: 38, alignment: .trailing)
+            }
+            placement("brightness", value: appearance(cue, \MediaAppearance.brightness),
+                      range: -1...1, format: "%+.2f")
+            placement("contrast", value: appearance(cue, \MediaAppearance.contrast),
+                      range: 0...2, format: "%.2f")
+            placement("saturation", value: appearance(cue, \MediaAppearance.saturation),
+                      range: 0...2, format: "%.2f")
+            placement("outline", value: appearance(cue, \MediaAppearance.outline),
+                      range: 0...32, format: "%.0fpx")
+            placement("light shadow", value: appearance(cue, \MediaAppearance.shadow),
+                      range: 0...1, format: "%.0f%%", displayScale: 100)
+            Text("Shadows point away from active light sources and follow their intensity and size.")
+                .font(.caption2).foregroundStyle(.secondary)
+            Button("Reset look") {
+                var updated = cue.wrappedValue
+                updated.appearance = MediaAppearance()
+                cue.wrappedValue = updated
+            }
+            .font(.caption2)
+        }
+    }
+
+    @ViewBuilder
+    private func advancedControls(_ cue: Binding<ImageCue>) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            placement("alpha cleanup", value: appearance(cue, \MediaAppearance.cleanup),
+                      range: 0...1, format: "%.0f%%", displayScale: 100)
+            Text("Tightens faint semi-transparent fringes around cut-out artwork.")
+                .font(.caption2).foregroundStyle(.secondary)
+            Text("rotation pivot").font(.caption2).foregroundStyle(.secondary)
+            HStack(spacing: 4) {
+                pivotButton("↖", .topLeft, cue)
+                pivotButton("↗", .topRight, cue)
+                pivotButton("Center", .center, cue)
+                pivotButton("↙", .bottomLeft, cue)
+                pivotButton("↘", .bottomRight, cue)
+            }
+            placement("pivot x", value: pivot(cue, \MediaPivot.x),
+                      range: 0...1, format: "%.2f")
+            placement("pivot y", value: pivot(cue, \MediaPivot.y),
+                      range: 0...1, format: "%.2f")
+        }
+    }
+
+    private func appearance(_ cue: Binding<ImageCue>,
+                            _ keyPath: WritableKeyPath<MediaAppearance, Double>) -> Binding<Double> {
+        Binding(get: { cue.wrappedValue.appearance[keyPath: keyPath] }, set: { value in
+            var updated = cue.wrappedValue
+            updated.appearance[keyPath: keyPath] = value
+            cue.wrappedValue = updated
+        })
+    }
+
+    private func pivot(_ cue: Binding<ImageCue>,
+                       _ keyPath: WritableKeyPath<MediaPivot, Double>) -> Binding<Double> {
+        Binding(get: { cue.wrappedValue.pivot[keyPath: keyPath] }, set: { value in
+            var updated = cue.wrappedValue
+            updated.pivot[keyPath: keyPath] = value
+            cue.wrappedValue = updated
+        })
+    }
+
+    private func pivotButton(_ label: String, _ value: MediaPivot,
+                             _ cue: Binding<ImageCue>) -> some View {
+        let selected = abs(cue.wrappedValue.pivot.x - value.x) < 0.001
+            && abs(cue.wrappedValue.pivot.y - value.y) < 0.001
+        return Button(label) {
+            var updated = cue.wrappedValue
+            updated.pivot = value
+            cue.wrappedValue = updated
+        }
+        .font(.caption2)
+        .buttonStyle(.bordered)
+        .tint(selected ? .orange : .gray)
+    }
+
+    private func tintColor(_ cue: Binding<ImageCue>) -> Binding<Color> {
+        Binding(get: {
+            let color = cue.wrappedValue.appearance.tint
+            return Color(red: color.red, green: color.green, blue: color.blue)
+        }, set: { value in
+            var updated = cue.wrappedValue
+            #if os(macOS)
+            if let color = NSColor(value).usingColorSpace(.sRGB) {
+                updated.appearance.tint = MediaColor(
+                    red: Double(color.redComponent), green: Double(color.greenComponent),
+                    blue: Double(color.blueComponent))
+            }
+            #else
+            let color = UIColor(value)
+            var r: CGFloat = 1, g: CGFloat = 1, b: CGFloat = 1, a: CGFloat = 1
+            if color.getRed(&r, green: &g, blue: &b, alpha: &a) {
+                updated.appearance.tint = MediaColor(
+                    red: Double(r), green: Double(g), blue: Double(b))
+            }
+            #endif
+            cue.wrappedValue = updated
+        })
+    }
+
+    private func placement(_ label: String, value: Binding<Double>, range: ClosedRange<Double>,
+                           format: String, displayScale: Double = 1) -> some View {
         HStack {
-            Text(label).font(.caption2).frame(width: 60, alignment: .leading)
+            Text(label).font(.caption2).frame(width: 88, alignment: .leading)
             Slider(value: value, in: range)
+            Text(String(format: format, value.wrappedValue * displayScale))
+                .font(.system(size: 9, design: .monospaced))
+                .foregroundStyle(.secondary)
+                .frame(width: 44, alignment: .trailing)
         }
     }
 }
@@ -514,14 +816,14 @@ struct ScriptSection: View {
     }
 }
 
-/// Per-character motion feel (web speed/wobble sliders; persisted in v2).
+/// Per-character motion feel, including independent translation and rotation rates.
 struct MotionSection: View {
     @Bindable var model: StudioModel
     let characterIndex: Int
 
     /// Motion params resolved at the playhead: editing writes the base value
     /// at t≈0, otherwise a timed keyframe (like outfits/visibility).
-    private var m: (speed: Double, wobble: Double, size: Double) {
+    private var m: (speed: Double, rotationSpeed: Double, wobble: Double, size: Double) {
         model.resolvedMotion(characterIndex: characterIndex, at: model.time)
     }
     private var keyframing: Bool { model.time >= 0.05 }
@@ -547,6 +849,18 @@ struct MotionSection: View {
                     .frame(width: 28, alignment: .trailing)
             }
             HStack {
+                Text("rotation speed").font(.caption2).frame(width: 80, alignment: .leading)
+                Slider(value: Binding(
+                    get: { StudioModel.uiRotationSpeed(m.rotationSpeed) },
+                    set: { model.setMotionParam(
+                        characterIndex: characterIndex, at: model.time,
+                        rotationSpeed: StudioModel.rotationSpeed(fromUI: ($0 * 10).rounded() / 10)) }),
+                    in: 1...100)
+                Text(String(format: "%.1f", StudioModel.uiRotationSpeed(m.rotationSpeed)))
+                    .font(.system(size: 9, design: .monospaced)).foregroundStyle(.secondary)
+                    .frame(width: 38, alignment: .trailing)
+            }
+            HStack {
                 Text("wobble").font(.caption2).frame(width: 80, alignment: .leading)
                 Slider(value: Binding(
                     get: { StudioModel.uiWobble(m.wobble) },
@@ -558,7 +872,7 @@ struct MotionSection: View {
                     .frame(width: 28, alignment: .trailing)
             }
             HStack {
-                Text("size").font(.caption2).frame(width: 80, alignment: .leading)
+                Text("Body size").font(.caption2).frame(width: 80, alignment: .leading)
                 ForEach([("Normal", 1.0), ("Small", 0.62), ("Baby", 0.38)], id: \.0) { name, value in
                     Button(name) {
                         model.setMotionParam(characterIndex: characterIndex, at: model.time, size: value)
@@ -573,6 +887,169 @@ struct MotionSection: View {
                     .font(.caption2).foregroundStyle(.secondary)
             }
         }
+    }
+}
+
+/// Reusable composite performances. Saving replaces the selected raw marks
+/// (plus outfit changes inside their time span) with one editable block.
+struct ReactionLibrarySection: View {
+    @Bindable var model: StudioModel
+    let characterIndex: Int
+    @State private var naming = false
+    @State private var draftName = ""
+    @State private var renamingID: String?
+    @State private var renameDraft = ""
+
+    private var selected: (definition: ReactionDefinition, instance: ReactionInstance)? {
+        guard model.selectedReaction?.character == characterIndex else { return nil }
+        return model.selectedReactionValue
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            HStack {
+                Text("REACTIONS").font(.caption.bold()).foregroundStyle(.secondary)
+                Spacer()
+                Button {
+                    draftName = model.suggestedReactionName()
+                    naming = true
+                } label: {
+                    Label("Save selection", systemImage: "square.stack.3d.up")
+                        .font(.caption2.bold())
+                }
+                .buttonStyle(.borderless)
+                .disabled(!model.canCaptureReaction(characterIndex: characterIndex))
+                .help("Replace the selected performance marks and in-range outfit changes with a reusable reaction block")
+            }
+
+            if let selected {
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack {
+                        Text(selected.definition.name).font(.caption.bold())
+                        Spacer()
+                        Text("SELECTED BLOCK").font(.system(size: 8, weight: .bold))
+                            .foregroundStyle(.purple)
+                    }
+                    reactionSlider("intensity", value: Binding(
+                        get: { model.selectedReactionValue?.instance.intensity ?? 1 },
+                        set: { model.setSelectedReactionIntensity($0) }), in: 0...4,
+                                   format: "%.2f")
+                    reactionSlider("duration", value: Binding(
+                        get: { model.selectedReactionValue?.instance.dur ?? selected.definition.dur },
+                        set: { model.setSelectedReactionDuration($0) }),
+                                   in: 0.08...max(10, selected.definition.dur * 4), format: "%.2fs")
+                    Text(channelSummary(selected.definition))
+                        .font(.caption2).foregroundStyle(.secondary)
+                    HStack {
+                        Button("Expand to events") {
+                            model.expandReactionBlock(character: characterIndex,
+                                                      id: selected.instance.id)
+                        }
+                        .font(.caption2)
+                        Spacer()
+                        Button("Delete block", role: .destructive) {
+                            model.deleteTimelineSelection()
+                        }
+                        .font(.caption2)
+                    }
+                }
+                .padding(8)
+                .background(Color.purple.opacity(0.09), in: RoundedRectangle(cornerRadius: 7))
+                .overlay(RoundedRectangle(cornerRadius: 7)
+                    .stroke(Color.purple.opacity(0.4), lineWidth: 1))
+            }
+
+            if model.scene.reactionLibrary.isEmpty {
+                Text(model.canCaptureReaction(characterIndex: characterIndex)
+                     ? "Save the selected performance as your first reusable reaction."
+                     : "Select one or more performance bars on this character to make a reaction.")
+                    .font(.caption2).foregroundStyle(.secondary)
+            } else {
+                ForEach(model.scene.reactionLibrary) { reaction in
+                    HStack(spacing: 7) {
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text(reaction.name).font(.caption)
+                            Text(channelSummary(reaction))
+                                .font(.system(size: 8)).foregroundStyle(.secondary)
+                                .lineLimit(1)
+                        }
+                        Spacer()
+                        Text(String(format: "%.1fs", reaction.dur))
+                            .font(.system(size: 8, design: .monospaced))
+                            .foregroundStyle(.secondary)
+                        Button {
+                            model.insertReaction(reaction.id, characterIndex: characterIndex)
+                        } label: {
+                            Image(systemName: "plus.circle.fill")
+                        }
+                        .buttonStyle(.borderless)
+                        .help("Insert at the playhead")
+                    }
+                    .contextMenu {
+                        Button("Insert at playhead") {
+                            model.insertReaction(reaction.id, characterIndex: characterIndex)
+                        }
+                        Button("Rename…") {
+                            renameDraft = reaction.name
+                            renamingID = reaction.id
+                        }
+                        let used = model.scene.characters.contains { character in
+                            character.reactions.contains { $0.reactionID == reaction.id }
+                        }
+                        Button("Delete from library", role: .destructive) {
+                            model.deleteReactionDefinition(id: reaction.id)
+                        }
+                        .disabled(used)
+                    }
+                }
+            }
+        }
+        .alert("Save as Reaction", isPresented: $naming) {
+            TextField("Reaction name", text: $draftName)
+            Button("Cancel", role: .cancel) {}
+            Button("Save") {
+                model.captureReaction(name: draftName, characterIndex: characterIndex)
+            }
+        } message: {
+            Text("The selected performance and outfit changes in its time span become one reusable block.")
+        }
+        .alert("Rename Reaction", isPresented: Binding(
+            get: { renamingID != nil },
+            set: { if !$0 { renamingID = nil } })) {
+            TextField("Reaction name", text: $renameDraft)
+            Button("Cancel", role: .cancel) { renamingID = nil }
+            Button("Rename") {
+                if let id = renamingID { model.renameReaction(id: id, to: renameDraft) }
+                renamingID = nil
+            }
+        }
+    }
+
+    private func reactionSlider(_ label: String, value: Binding<Double>,
+                                in range: ClosedRange<Double>, format: String) -> some View {
+        HStack {
+            Text(label).font(.caption2).frame(width: 52, alignment: .leading)
+            Slider(value: value, in: range) { editing in
+                if editing { model.registerUndoSnapshot(label: "Edit Reaction") }
+            }
+            Text(String(format: format, value.wrappedValue))
+                .font(.system(size: 8, design: .monospaced)).foregroundStyle(.secondary)
+                .frame(width: 38, alignment: .trailing)
+        }
+    }
+
+    private func channelSummary(_ reaction: ReactionDefinition) -> String {
+        var names = EventGroup.allCases.filter { reaction.ownedGroups.contains($0) }
+            .map { $0.rawValue.capitalized }
+        if reaction.ownsWobble { names.append("Wobble") }
+        if reaction.ownsSize { names.append("Body size") }
+        if !reaction.outfitSlots.isEmpty {
+            let slots = reaction.outfitSlots.sorted().map {
+                SharedAssets.catalog.slotName($0) ?? "slot \($0)"
+            }
+            names.append("Outfit: " + slots.joined(separator: ", "))
+        }
+        return names.isEmpty ? "No owned channels" : names.joined(separator: " · ")
     }
 }
 

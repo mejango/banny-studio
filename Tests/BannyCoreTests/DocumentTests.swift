@@ -15,13 +15,33 @@ import Testing
                     .key(t: 0.7, code: .keyM, down: false),
                     .outfit(t: 3, slot: 12, name: "proff-hair"),
                     .outfit(t: 5, slot: 12, name: nil),
+                    .motion(t: 6, speed: 180, rotationSpeed: 135, wobble: 4, size: 0.8),
                 ],
+                reactions: [ReactionInstance(id: "ri", reactionID: "shock",
+                                             start: 7, dur: 2.5, intensity: 1.4)],
                 name: "DARL",
-                recStart: StartPose(x: 0.3, depth: 0, face: 1))],
+                recStart: StartPose(x: 0.3, depth: 0, face: 1, spin: 42, zoom: 1.35),
+                speed: 280, rotationSpeed: 72)],
+            reactionLibrary: [ReactionDefinition(id: "shock", name: "Shock", dur: 2,
+                                                 events: [
+                                                    .key(t: 0, code: .slash, down: true),
+                                                    .outfit(t: 0.3, slot: 12, name: "chef-hat"),
+                                                    .key(t: 2, code: .slash, down: false),
+                                                 ])],
             audioTracks: [AudioTrack(id: "t1", name: "SAGE")],
             imageTracks: [ImageTrack(id: "it", name: "Props", cues: [
                 ImageCue(id: "ic", assetID: "a1", start: 0, dur: 3,
-                         from: ImagePlacement(), to: ImagePlacement(x: 0.9, y: 0.1, scale: 0.5)),
+                         from: ImagePlacement(), to: ImagePlacement(x: 0.9, y: 0.1, scale: 0.5),
+                         speed: 7.2, rotationSpeed: 3.4,
+                         playback: MediaPlayback(trimStart: 0.4, trimEnd: 2.7, rate: 1.5,
+                                                 reverse: true, loop: false, freezeAt: 1.2,
+                                                 phaseOffset: 0.6),
+                         appearance: MediaAppearance(
+                            tint: MediaColor(red: 0.2, green: 0.4, blue: 0.8),
+                            tintAmount: 0.35, brightness: 0.1, contrast: 1.2,
+                            saturation: 0.7, outline: 8, shadow: 0.6, cleanup: 0.4),
+                         mask: .roundedRectangle, maskRadius: 0.2,
+                         pivot: MediaPivot(x: 0.25, y: 0.75)),
             ])],
             backgroundTracks: [BackgroundTrack(id: "bt", name: "BG", cues: [
                 BackgroundCue(id: "bc", assetID: "a1", start: 0, dur: 10, crop: .fit),
@@ -36,6 +56,78 @@ import Testing
     let data = try JSONEncoder().encode(doc)
     let back = try JSONDecoder().decode(ShowDocument.self, from: data)
     #expect(back == doc)
+}
+
+@Test func visualAndCharacterSpeedDefaultsDecode() throws {
+    let cue = try JSONDecoder().decode(
+        ImageCue.self,
+        from: Data(#"{"id":"i","assetID":"a","start":0,"dur":2,"from":{"x":0.5,"y":0.5,"scale":0.2,"rotation":0}}"#.utf8))
+    #expect(cue.speed == ImageCue.defaultSpeed)
+    #expect(cue.rotationSpeed == ImageCue.defaultRotationSpeed)
+    #expect(cue.playback == MediaPlayback())
+    #expect(cue.appearance == MediaAppearance())
+    #expect(cue.mask == .none)
+    #expect(cue.maskRadius == 0.12)
+    #expect(cue.pivot == .center)
+
+    let character = try JSONDecoder().decode(
+        Character.self,
+        from: Data(#"{"body":"orange"}"#.utf8))
+    #expect(character.speed == 320)
+    #expect(character.rotationSpeed == 90)
+    #expect(character.reactions.isEmpty)
+
+    let reaction = try JSONDecoder().decode(
+        ReactionInstance.self,
+        from: Data(#"{"id":"i","reactionID":"r","start":1,"dur":2}"#.utf8))
+    #expect(reaction.intensity == 1)
+
+    let oldStart = try JSONDecoder().decode(
+        StartPose.self,
+        from: Data(#"{"x":0.25,"depth":-0.4,"face":-1}"#.utf8))
+    #expect(oldStart == StartPose(x: 0.25, depth: -0.4, face: -1, spin: 0, zoom: 1))
+}
+
+@Test func mediaPlaybackMapsShowTimeIntoTrimmedSource() {
+    var cue = ImageCue(id: "v", assetID: "video", start: 5, dur: 20,
+                       from: ImagePlacement(),
+                       playback: MediaPlayback(trimStart: 2, trimEnd: 6, rate: 2,
+                                               reverse: false, loop: false))
+    #expect(cue.sourceTime(at: 5, sourceDuration: 10) == 2)
+    #expect(abs(cue.sourceTime(at: 6, sourceDuration: 10) - 4) < 1e-9)
+    #expect(cue.sourceTime(at: 99, sourceDuration: 10) < 6)
+    #expect(cue.sourceTime(at: 99, sourceDuration: 10) > 5.99)
+
+    cue.playback.reverse = true
+    #expect(cue.sourceTime(at: 5, sourceDuration: 10) < 6)
+    #expect(cue.sourceTime(at: 5, sourceDuration: 10) > 5.99)
+    #expect(abs(cue.sourceTime(at: 6, sourceDuration: 10) - 3.999) < 0.002)
+
+    cue.playback.loop = true
+    cue.playback.reverse = false
+    #expect(cue.sourceTime(at: 7, sourceDuration: 10) == 2) // 4 source seconds wraps
+    cue.playback.freezeAt = 3.25
+    #expect(cue.sourceTime(at: 5, sourceDuration: 10) == 3.25)
+    #expect(cue.sourceTime(at: 50, sourceDuration: 10) == 3.25)
+}
+
+@Test func continuedMediaPlaybackPreservesSourcePhaseAcrossSplits() {
+    let original = ImageCue(
+        id: "head", assetID: "video", start: 5, dur: 8,
+        from: ImagePlacement(),
+        playback: MediaPlayback(trimStart: 1, trimEnd: 5, rate: 1.5,
+                                reverse: true, loop: true, phaseOffset: 0.4))
+    let splitTime = 7.25
+    var tail = original
+    tail.id = "tail"
+    tail.playback = original.continuedPlayback(at: splitTime)
+    tail.start = splitTime
+    tail.dur = original.start + original.dur - splitTime
+
+    for t in [splitTime, splitTime + 0.2, splitTime + 2.75] {
+        #expect(abs(original.sourceTime(at: t, sourceDuration: 7)
+                    - tail.sourceTime(at: t, sourceDuration: 7)) < 1e-9)
+    }
 }
 
 @Test func cameraAndFrameDefaults() throws {
@@ -74,6 +166,13 @@ import Testing
     let change = outfitJSON["outfit"] as! [String: Any]
     #expect(change["slot"] as? Int == 12)
     #expect(change["name"] == nil)
+
+    let motion = PerfEvent.motion(t: 3, speed: 240, rotationSpeed: 135, wobble: nil, size: nil)
+    let motionJSON = try JSONSerialization.jsonObject(with: JSONEncoder().encode(motion)) as! [String: Any]
+    let params = motionJSON["motion"] as! [String: Any]
+    #expect(params["speed"] as? Double == 240)
+    #expect(params["rotationSpeed"] as? Double == 135)
+    #expect(try JSONDecoder().decode(PerfEvent.self, from: JSONEncoder().encode(motion)) == motion)
 }
 
 @Test func panWireFormat() throws {

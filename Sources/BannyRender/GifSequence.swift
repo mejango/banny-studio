@@ -35,8 +35,19 @@ public struct GifSequence {
     public func frame(at t: Double) -> CGImage {
         var looped = t.truncatingRemainder(dividingBy: duration)
         if looped < 0 { looped += duration }
+        return frame(atSourceTime: looped)
+    }
+
+    /// Samples an absolute point in the GIF source without wrapping. Playback
+    /// policy (trim, reverse, loop, freeze) is owned by ImageCue.
+    public func frame(atSourceTime t: Double) -> CGImage {
+        let sampled = min(max(0, duration - 1e-9), max(0, t))
+        // ImageIO commonly decodes a nominal 0.2-second GIF delay as a nearby
+        // floating-point value (for example, 0.20000000298). Treat source times
+        // on that boundary as the new frame without shifting visible timing.
+        let boundaryTolerance = 1e-7
         // ponytail: linear scan — GIFs are tens of frames, not thousands.
-        for i in (0..<frames.count).reversed() where starts[i] <= looped + 1e-9 {
+        for i in (0..<frames.count).reversed() where starts[i] <= sampled + boundaryTolerance {
             return frames[i]
         }
         return frames[0]

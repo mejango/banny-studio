@@ -111,7 +111,11 @@ struct StageView: View {
                     FrameRenderer(assets: SharedAssets.catalog).draw(
                         scene: drawScene, at: model.time, size: frameSize,
                         background: bg,
-                        imageAsset: { media.still(assetID: $0, file: file) },
+                        visualAsset: { cue, t in
+                            media.visual(cue: cue, at: t, playing: model.playing,
+                                         revision: model.backgroundRevision,
+                                         assets: model.document.assets, file: file)
+                        },
                         poseOverride: poseOverride,
                         in: cg)
                     cg.restoreGState()
@@ -216,15 +220,36 @@ struct StageView: View {
     private func drawImageCueHighlight(context: GraphicsContext, rect frame: CGRect) {
         guard let cue = model.selectedImageCueValue else { return }
         guard model.time >= cue.start, model.time < cue.start + cue.dur,
-              let img = media.still(assetID: cue.assetID, file: file) else { return }
+              let img = media.visual(cue: cue, at: model.time, playing: model.playing,
+                                     revision: model.backgroundRevision,
+                                     assets: model.document.assets, file: file) else { return }
         let W = Double(frame.width), H = Double(frame.height)
         let p = cue.placement(at: model.time)
         let w = p.scale * W
         let h = w * Double(img.height) / Double(max(1, img.width))
-        let rect = CGRect(x: frame.minX + p.x * W - w / 2, y: frame.minY + p.y * H - h / 2,
-                          width: w, height: h)
-        context.stroke(Path(roundedRect: rect, cornerRadius: 2),
-                       with: .color(.orange), style: StrokeStyle(lineWidth: 1.5, dash: [5, 4]))
+        var highlight = context
+        highlight.translateBy(x: frame.minX + p.x * W, y: frame.minY + p.y * H)
+        highlight.rotate(by: .degrees(p.rotation))
+        let px = min(1, max(0, cue.pivot.x))
+        let py = min(1, max(0, cue.pivot.y))
+        let rect = CGRect(x: -px * w, y: -py * h, width: w, height: h)
+        let path: Path
+        switch cue.mask {
+        case .none, .rectangle:
+            path = Path(roundedRect: rect, cornerRadius: 2)
+        case .roundedRectangle:
+            path = Path(roundedRect: rect,
+                        cornerRadius: min(w, h) * min(0.5, max(0, cue.maskRadius)))
+        case .circle:
+            let side = min(w, h)
+            path = Path(ellipseIn: CGRect(x: rect.midX - side / 2, y: rect.midY - side / 2,
+                                          width: side, height: side))
+        }
+        highlight.stroke(path,
+                         with: .color(.orange),
+                         style: StrokeStyle(lineWidth: 1.5, dash: [5, 4]))
+        highlight.fill(Path(ellipseIn: CGRect(x: -3, y: -3, width: 6, height: 6)),
+                       with: .color(.orange))
     }
 
     /// Temporary editor-only handle for the selected light cue: lights never
@@ -236,17 +261,22 @@ struct StageView: View {
         // While recording image motion, ghost the asset at the pen.
         if model.isImageRecording, let pen = model.imagePenNow {
             let p = point(pen.x, pen.y)
-            if let assetID = model.imageRecordAsset,
-               let img = media.still(assetID: assetID, file: file) {
+            if let cue = model.selectedImageCueValue,
+               let img = media.visual(cue: cue, at: model.time, playing: model.playing,
+                                      revision: model.backgroundRevision,
+                                      assets: model.document.assets, file: file) {
                 let w = pen.scale * frame.width
                 let h = w * CGFloat(img.height) / CGFloat(max(1, img.width))
                 var ghost = context
                 ghost.opacity = 0.75
-                ghost.draw(Image(decorative: img, scale: 1).interpolation(.none),
-                           in: CGRect(x: p.x - w / 2, y: p.y - h / 2, width: w, height: h))
-                context.stroke(Path(roundedRect: CGRect(x: p.x - w / 2, y: p.y - h / 2,
-                                                        width: w, height: h), cornerRadius: 2),
-                               with: .color(.red), style: StrokeStyle(lineWidth: 1.5, dash: [5, 4]))
+                ghost.translateBy(x: p.x, y: p.y)
+                ghost.rotate(by: .degrees(pen.rotation))
+                let px = min(1, max(0, cue.pivot.x))
+                let py = min(1, max(0, cue.pivot.y))
+                let rect = CGRect(x: -px * w, y: -py * h, width: w, height: h)
+                ghost.draw(Image(decorative: img, scale: 1).interpolation(.none), in: rect)
+                ghost.stroke(Path(roundedRect: rect, cornerRadius: 2),
+                             with: .color(.red), style: StrokeStyle(lineWidth: 1.5, dash: [5, 4]))
             } else {
                 context.stroke(Path(ellipseIn: CGRect(x: p.x - 8, y: p.y - 8, width: 16, height: 16)),
                                with: .color(.red), lineWidth: 1.5)
@@ -356,7 +386,7 @@ struct StageView: View {
                 }
                 // Frame pan: grab-the-world drag while the Scenes track is
                 // selected — moves the freeform pen; commit with the Scenes
-                // row's "Set start position".
+                // row's "Set start state".
                 if let key = model.selectedTrackKey,
                    model.scene.backgroundTracks.contains(where: { $0.id == key }) {
                     model.cameraFreeformDrag(dx: dx, dy: dy)
@@ -382,7 +412,9 @@ struct StageView: View {
                 c.x = min(1 - 0.044, max(0.044, c.x + dx))
                 c.depth = min(1, max(-12, c.depth - dy * 900 / 120 / (900 / stageRect.height) * 0.016))
                 if model.time < 0.1 {
-                    c.recStart = StartPose(x: c.x, depth: c.depth, face: c.face)
+                    let start = c.recStart ?? StartPose(x: c.x, depth: c.depth, face: c.face)
+                    c.recStart = StartPose(x: c.x, depth: c.depth, face: c.face,
+                                           spin: start.spin, zoom: start.zoom)
                 }
                 model.scene.characters[i] = c
             }
@@ -395,7 +427,7 @@ struct StageView: View {
     }
 }
 
-/// Decodes bank assets for the stage. Stills are cached. Background videos use
+/// Decodes bank assets for the stage. Stills are cached. Stage videos use
 /// two paths: while PLAYING, a muted AVPlayer + AVPlayerItemVideoOutput streams
 /// hardware-decoded frames at full rate (kept within 0.3s of the show clock);
 /// while paused/scrubbing, an AVAssetImageGenerator seeks the exact frame.
@@ -439,18 +471,7 @@ final class StageMediaCache {
 
     func background(cue: BackgroundCue, at t: Double, playing: Bool, revision: Int,
                     assets: [Asset], file: ShowDocumentFile) -> (image: CGImage, crop: Crop)? {
-        if revision != self.revision {
-            stills = [:]
-            gifs = [:]
-            notAnimated = []
-            failed = []
-            videoGen = [:]
-            videoFrame = [:]
-            for entry in players.values { entry.player.pause() }
-            players = [:]
-            playbackFrame = [:]
-            self.revision = revision
-        }
+        refreshIfNeeded(revision: revision)
         guard let asset = assets.first(where: { $0.id == cue.assetID }) else { return nil }
         switch asset.kind {
         case .image:
@@ -460,15 +481,64 @@ final class StageMediaCache {
             }
             return still(assetID: asset.id, file: file).map { ($0, cue.crop) }
         case .video:
-            if playing, let img = playerFrame(assetID: asset.id, at: t - cue.start, file: file) {
+            let playbackID = "scene-\(cue.id)"
+            if playing,
+               let img = playerFrame(assetID: asset.id, playbackID: playbackID,
+                                     at: t - cue.start, file: file) {
                 return (img, cue.crop)
             }
-            if !playing {
-                for entry in players.values where entry.player.rate != 0 { entry.player.pause() }
-            }
-            return videoPreviewFrame(assetID: asset.id, at: t - cue.start, file: file)
-                .map { ($0, cue.crop) }
+            if !playing { pausePlayers() }
+            return videoPreviewFrame(assetID: asset.id, playbackID: playbackID,
+                                     at: t - cue.start, file: file).map { ($0, cue.crop) }
         }
+    }
+
+    /// A floating visual cue can be a still, an animated GIF, or a movie. Its
+    /// animation clock starts at the cue's leading edge and loops within it.
+    func visual(cue: ImageCue, at t: Double, playing: Bool, revision: Int,
+                assets: [Asset], file: ShowDocumentFile) -> CGImage? {
+        refreshIfNeeded(revision: revision)
+        guard let asset = assets.first(where: { $0.id == cue.assetID }) else { return nil }
+        switch asset.kind {
+        case .image:
+            if let seq = gif(assetID: asset.id, file: file) {
+                let sourceTime = cue.sourceTime(at: t, sourceDuration: seq.duration)
+                return seq.frame(atSourceTime: sourceTime)
+            }
+            return still(assetID: asset.id, file: file)
+        case .video:
+            let playbackID = "visual-\(cue.id)"
+            let canStreamForward = !cue.playback.reverse && cue.playback.freezeAt == nil
+            if playing, canStreamForward,
+               let img = playerFrame(assetID: asset.id, playbackID: playbackID,
+                                     at: t - cue.start, playback: cue, file: file) {
+                return img
+            }
+            if !playing { pausePlayers() }
+            else if !canStreamForward { players[playbackID]?.player.pause() }
+            return videoPreviewFrame(assetID: asset.id, playbackID: playbackID,
+                                     at: t - cue.start, playback: cue, file: file)
+        }
+    }
+
+    private func refreshIfNeeded(revision: Int) {
+        if revision != self.revision {
+            stills = [:]
+            gifs = [:]
+            notAnimated = []
+            failed = []
+            videoGen = [:]
+            videoFrame = [:]
+            videoBusy = []
+            for entry in players.values { entry.player.pause() }
+            players = [:]
+            playbackFrame = [:]
+            self.revision = revision
+        }
+    }
+
+    private func pausePlayers() {
+        for entry in players.values where entry.player.rate != 0 { entry.player.pause() }
     }
 
     private func gif(assetID: String, file: ShowDocumentFile) -> GifSequence? {
@@ -484,8 +554,10 @@ final class StageMediaCache {
 
     /// Streaming path while the transport runs: a muted AVPlayer decodes in
     /// hardware and we pull whatever frame is current each render tick.
-    private func playerFrame(assetID: String, at t: Double, file: ShowDocumentFile) -> CGImage? {
-        if players[assetID] == nil {
+    private func playerFrame(assetID: String, playbackID: String,
+                             at t: Double, playback cue: ImageCue? = nil,
+                             file: ShowDocumentFile) -> CGImage? {
+        if players[playbackID] == nil {
             guard !failed.contains(assetID), let url = mediaURL(assetID: assetID, file: file) else { return nil }
             let asset = AVURLAsset(url: url)
             let dur = CMTimeGetSeconds(asset.duration)
@@ -498,13 +570,19 @@ final class StageMediaCache {
             let player = AVPlayer(playerItem: item)
             player.isMuted = true
             player.actionAtItemEnd = .none // looping = the drift check seeks back
-            players[assetID] = (player, output, dur)
+            players[playbackID] = (player, output, dur)
         }
-        guard let p = players[assetID] else { return nil }
-        let vt = max(0, t).truncatingRemainder(dividingBy: p.duration)
-        if p.player.rate == 0 { p.player.play() }
-        // Keep the player within 0.3s of the show clock (also handles the loop wrap).
-        if abs(p.player.currentTime().seconds - vt) > 0.3 {
+        guard let p = players[playbackID] else { return nil }
+        let vt = cue.map { $0.sourceTime(at: $0.start + max(0, t), sourceDuration: p.duration) }
+            ?? max(0, t).truncatingRemainder(dividingBy: p.duration)
+        let desiredRate = Float(max(0.01, cue?.playback.rate ?? 1))
+        if abs(p.player.rate - desiredRate) > 0.001 {
+            p.player.playImmediately(atRate: desiredRate)
+        }
+        // Floating cues need tighter sync for trim points; backgrounds retain
+        // the looser threshold that avoids unnecessary seeks during playback.
+        let syncTolerance = cue == nil ? 0.3 : 0.07
+        if abs(p.player.currentTime().seconds - vt) > syncTolerance {
             p.player.seek(to: CMTime(seconds: vt, preferredTimescale: 600),
                           toleranceBefore: CMTime(value: 1, timescale: 10),
                           toleranceAfter: CMTime(value: 1, timescale: 10))
@@ -514,10 +592,10 @@ final class StageMediaCache {
            let buf = p.output.copyPixelBuffer(forItemTime: itemTime, itemTimeForDisplay: nil) {
             var img: CGImage?
             VTCreateCGImageFromCVPixelBuffer(buf, options: nil, imageOut: &img)
-            if let img { playbackFrame[assetID] = img }
+            if let img { playbackFrame[playbackID] = img }
         }
         // Until the first buffer lands, fall through to the generator's frame.
-        return playbackFrame[assetID] ?? videoFrame[assetID]?.image
+        return playbackFrame[playbackID] ?? videoFrame[playbackID]?.image
     }
 
     private func mediaURL(assetID: String, file: ShowDocumentFile) -> URL? {
@@ -530,9 +608,11 @@ final class StageMediaCache {
         return url
     }
 
-    private func videoPreviewFrame(assetID: String, at t: Double, file: ShowDocumentFile) -> CGImage? {
+    private func videoPreviewFrame(assetID: String, playbackID: String,
+                                   at t: Double, playback cue: ImageCue? = nil,
+                                   file: ShowDocumentFile) -> CGImage? {
         guard !failed.contains(assetID) else { return nil }
-        if videoGen[assetID] == nil {
+        if videoGen[playbackID] == nil {
             guard let media = file.assetsMedia[assetID] else { failed.insert(assetID); return nil }
             let url = FileManager.default.temporaryDirectory
                 .appendingPathComponent("bgvid-\(assetID).\(media.ext)")
@@ -547,20 +627,21 @@ final class StageMediaCache {
             gen.maximumSize = CGSize(width: 1280, height: 720)
             let dur = CMTimeGetSeconds(asset.duration)
             guard dur > 0 else { failed.insert(assetID); return nil }
-            videoGen[assetID] = (gen, dur)
+            videoGen[playbackID] = (gen, dur)
         }
-        guard let entry = videoGen[assetID] else { return nil }
-        let vt = max(0, t).truncatingRemainder(dividingBy: entry.duration)
-        let current = videoFrame[assetID]
-        if current == nil || abs(current!.t - vt) > 0.07, !videoBusy.contains(assetID) {
-            videoBusy.insert(assetID)
+        guard let entry = videoGen[playbackID] else { return nil }
+        let vt = cue.map { $0.sourceTime(at: $0.start + max(0, t), sourceDuration: entry.duration) }
+            ?? max(0, t).truncatingRemainder(dividingBy: entry.duration)
+        let current = videoFrame[playbackID]
+        if current == nil || abs(current!.t - vt) > 0.07, !videoBusy.contains(playbackID) {
+            videoBusy.insert(playbackID)
             let gen = entry.gen
             Task.detached(priority: .userInitiated) { [weak self] in
                 let img = try? gen.copyCGImage(at: CMTime(seconds: vt, preferredTimescale: 600),
                                                actualTime: nil)
                 await MainActor.run { [weak self] in
-                    if let img { self?.videoFrame[assetID] = (img, vt) }
-                    self?.videoBusy.remove(assetID)
+                    if let img { self?.videoFrame[playbackID] = (img, vt) }
+                    self?.videoBusy.remove(playbackID)
                 }
             }
         }

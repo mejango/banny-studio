@@ -38,4 +38,40 @@ final class ShowLintTests: XCTestCase {
         XCTAssertTrue(messages.contains("unfiled"), messages)
         XCTAssertTrue(diags.allSatisfy { $0.severity == .error })
     }
+
+    func testReactionReferencesRangesAndOutfitsAreLinted() throws {
+        let catalog = try AssetCatalog(assetsRoot: Self.assetsRoot)
+        let bad = ReactionDefinition(id: "bad", name: "Bad reaction", dur: 1, events: [
+            .outfit(t: 2, slot: 12, name: "no-such-reaction-outfit"),
+        ])
+        let character = Character(body: .orange, reactions: [
+            ReactionInstance(id: "missing-block", reactionID: "missing",
+                             start: -1, dur: 0, intensity: 5),
+        ])
+        let doc = ShowDocument(stage: SceneState(characters: [character],
+                                                  reactionLibrary: [bad]))
+        let messages = ShowLint.check(document: doc, audioIDs: [], assetFileIDs: [],
+                                      catalog: catalog).map(\.message).joined(separator: "\n")
+        XCTAssertTrue(messages.contains("outside its range"), messages)
+        XCTAssertTrue(messages.contains("no-such-reaction-outfit"), messages)
+        XCTAssertTrue(messages.contains("unknown reaction"), messages)
+        XCTAssertTrue(messages.contains("invalid range"), messages)
+        XCTAssertTrue(messages.contains("intensity outside"), messages)
+    }
+
+    func testNegativeVisualPlaybackPhaseIsLinted() {
+        var cue = ImageCue(id: "visual", assetID: "asset", start: 0, dur: 1,
+                           from: ImagePlacement())
+        cue.playback.phaseOffset = -0.25
+        let doc = ShowDocument(
+            stage: SceneState(imageTracks: [
+                ImageTrack(id: "visuals", name: "Visuals", cues: [cue]),
+            ]),
+            assets: [Asset(id: "asset", name: "Asset", kind: .image,
+                           file: "asset.png")])
+        let messages = ShowLint.check(document: doc, audioIDs: [],
+                                      assetFileIDs: ["asset"], catalog: nil)
+            .map(\.message).joined(separator: "\n")
+        XCTAssertTrue(messages.contains("playback phase before 0"), messages)
+    }
 }

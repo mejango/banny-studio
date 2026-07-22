@@ -32,6 +32,7 @@ func run() throws {
             struct Info: Codable {
                 var characters: Int; var events: Int; var audioTracks: Int
                 var imageTracks: Int; var backgroundTracks: Int
+                var reactionDefinitions: Int; var reactionBlocks: Int
                 var assets: Int; var contentEnd: Double
                 var characterNames: [String]
             }
@@ -40,11 +41,13 @@ func run() throws {
                                audioTracks: st.audioTracks.count,
                                imageTracks: st.imageTracks.count,
                                backgroundTracks: st.backgroundTracks.count,
+                               reactionDefinitions: st.reactionLibrary.count,
+                               reactionBlocks: st.characters.map(\.reactions.count).reduce(0, +),
                                assets: contents.document.assets.count,
                                contentEnd: st.contentEnd,
                                characterNames: st.characters.map(\.name)))
         } else {
-            print("tracks: \(st.characters.count) characters (\(st.characters.map(\.events.count).reduce(0,+)) events), \(st.audioTracks.count) audio, \(st.imageTracks.count) image, \(st.backgroundTracks.count) background; \(contents.document.assets.count) assets; end \(st.contentEnd)s")
+            print("tracks: \(st.characters.count) characters (\(st.characters.map(\.events.count).reduce(0,+)) events, \(st.characters.map(\.reactions.count).reduce(0,+)) reaction blocks / \(st.reactionLibrary.count) definitions), \(st.audioTracks.count) audio, \(st.imageTracks.count) image, \(st.backgroundTracks.count) background; \(contents.document.assets.count) assets; end \(st.contentEnd)s")
         }
     case "ship":
         try shipCommand(Array(args.dropFirst(2)))

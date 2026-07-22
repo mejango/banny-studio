@@ -91,6 +91,8 @@ extension StudioModel {
 
         let assetIDs = payload.referencedAssetIDs
         let assets = document.assets.filter { assetIDs.contains($0.id) }
+        let reactionIDs = payload.referencedReactionIDs
+        let reactions = scene.reactionLibrary.filter { reactionIDs.contains($0.id) }
         var assetMedia: [String: PortableTrack.MediaFile] = [:]
         for id in assetIDs.sorted() {
             guard let media = file?.assetsMedia[id] else {
@@ -100,7 +102,7 @@ extension StudioModel {
                                                      fileExtension: media.ext)
         }
 
-        let archive = PortableTrack(payload: payload, assets: assets,
+        let archive = PortableTrack(payload: payload, reactionLibrary: reactions, assets: assets,
                                     audio: audio, assetMedia: assetMedia)
         try archive.validate()
         return archive
@@ -122,6 +124,7 @@ extension StudioModel {
         registerUndoSnapshot(label: "Import Track")
 
         document.assets.append(contentsOf: imported.assets)
+        scene.reactionLibrary.append(contentsOf: imported.reactionLibrary)
         for (id, media) in imported.audio {
             file?.audio[id] = (media.data, media.fileExtension)
         }

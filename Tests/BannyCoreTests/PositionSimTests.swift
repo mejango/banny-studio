@@ -108,6 +108,24 @@ let ep1Exists = FileManager.default.fileExists(atPath: "/Users/jango/Documents/b
     #expect(left.x == 0.044)
 }
 
+@Test func startStateSeedsRotationAndZoom() {
+    let start = StartPose(x: 0.37, depth: -0.8, face: -1, spin: 137.5, zoom: 1.85)
+    for t in [0.0, 0.25, 12.0] {
+        let pose = simulatePosition(events: [], recStart: start, speed: 320,
+                                    rotationSpeed: 90, gScale: 0.6, at: t)
+        #expect(pose.x == start.x)
+        #expect(pose.depth == start.depth)
+        #expect(pose.face == start.face)
+        #expect(pose.spin == start.spin)
+        #expect(pose.zoom == start.zoom)
+    }
+
+    let timeline = PositionTimeline(events: [], recStart: start, speed: 320,
+                                    rotationSpeed: 90, gScale: 0.6, upTo: 30)
+    #expect(timeline.pose(at: 18).spin == start.spin)
+    #expect(timeline.pose(at: 18).zoom == start.zoom)
+}
+
 @Test func turnDelayBlocksMovement() {
     // Facing left, press right: face flips instantly but movement waits 0.1s.
     let events: [PerfEvent] = [.key(t: 0, code: .arrowRight, down: true)]
@@ -148,12 +166,12 @@ let ep1Exists = FileManager.default.fileExists(atPath: "/Users/jango/Documents/b
 }
 
 @Test func motionEventChangesSpeedOverTime() {
-    // Walk right the whole time; halve speed at t=1. Distance covered in
-    // [1,2] must be ~half of [0,1], and rotation rate scales with speed too.
+    // Walk and rotate right the whole time; halve translation speed at t=1.
+    // Distance covered in [1,2] halves, while rotation remains unchanged.
     let events: [PerfEvent] = [
         .key(t: 0, code: .arrowRight, down: true),
         .key(t: 0, code: .rotateRight, down: true),
-        .motion(t: 1, speed: 160, wobble: nil, size: nil),  // base 320 → 160
+        .motion(t: 1, speed: 160, rotationSpeed: nil, wobble: nil, size: nil),
     ]
     let rs = StartPose(x: 0.1, depth: 0, face: 1)
     func x(_ t: Double) -> Double {
@@ -166,15 +184,36 @@ let ep1Exists = FileManager.default.fileExists(atPath: "/Users/jango/Documents/b
     let d12 = x(2) - x(1)
     #expect(d01 > 0 && d12 > 0)
     #expect(abs(d12 - d01 / 2) < 0.01, "speed halved → half the distance")
-    // Spin: 90°/s for [0,1], 45°/s for [1,2].
+    // Translation speed does not alter the independent 90°/s rotation rate.
     #expect(abs(spin(1) - 90) < 1)
-    #expect(abs(spin(2) - 135) < 1)
+    #expect(abs(spin(2) - 180) < 1)
 
     // Checkpointed timeline stays bit-identical with motion events present.
     let tl = PositionTimeline(events: events, recStart: rs, speed: 320, gScale: 0.6, upTo: 30)
     for q in stride(from: 0.0, through: 3.0, by: 0.137) {
         #expect(tl.pose(at: q) == simulatePosition(events: events, recStart: rs,
                                                    speed: 320, gScale: 0.6, at: q))
+    }
+}
+
+@Test func rotationSpeedChangesIndependentlyOverTime() {
+    let events: [PerfEvent] = [
+        .key(t: 0, code: .rotateRight, down: true),
+        .motion(t: 1, speed: nil, rotationSpeed: 180, wobble: nil, size: nil),
+    ]
+    func spin(_ t: Double) -> Double {
+        simulatePosition(events: events, recStart: nil, speed: 600,
+                         rotationSpeed: 45, gScale: 0.6, at: t).spin
+    }
+    #expect(abs(spin(1) - 45) < 1)
+    #expect(abs(spin(2) - 225) < 1)
+
+    let tl = PositionTimeline(events: events, recStart: nil, speed: 600,
+                              rotationSpeed: 45, gScale: 0.6, upTo: 30)
+    for q in stride(from: 0.0, through: 3.0, by: 0.137) {
+        #expect(tl.pose(at: q) == simulatePosition(
+            events: events, recStart: nil, speed: 600,
+            rotationSpeed: 45, gScale: 0.6, at: q))
     }
 }
 

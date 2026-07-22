@@ -66,11 +66,12 @@ All times are seconds. The timeline ends at the last event/clip/cue.
       "body": "orange",            // banny catalog: bodies
       "x": 0.35,                   // 0..1 across the stage
       "depth": 0,                  // >0 farther/smaller, <0 closer
-      "size": 1,                   // 1 normal, 0.62 small, 0.38 baby
+      "size": 1,                   // body size: 1 normal, 0.62 small, 0.38 baby
       "face": 1,                   // 1 → faces right, -1 → faces left
       "name": "Coach",
       "baseOutfit": {"6": "banny-vision-pro"},   // slot → outfit name, at t=0 (6 = Glasses)
       "events": [...],             // the performance (below)
+      "reactions": [...],          // placed reusable reaction blocks (below)
       "clips": [...],              // this character's voice audio
       "subs": [{"text": "GOAL!", "start": 1.2, "dur": 2.0}],
       "voicePitch": 0, "voiceSpeed": 1
@@ -100,19 +101,46 @@ Held keys need a down event AND an up event: `{"t": 1.0, "code": "KeyM",
 | `ArrowUp` / `ArrowDown` | move deeper / closer |
 | `KeyJ` | jump (tap: down then up ~0.1s later) |
 | `RotateLeft` / `RotateRight` | spin |
-| `ZoomIn` / `ZoomOut` | camera zoom on this character |
+| `ZoomIn` / `ZoomOut` | animated scale on this character |
 
 Other event forms, same array:
 
 - Outfit change: `{"t": 3, "outfit": {"slot": 6, "name": "investor-shades"}}`
   (name `null` clears the slot).
-- Motion params: `{"t": 5, "motion": {"speed": 400, "wobble": 10, "size": 0.62}}`
+- Motion params: `{"t": 5, "motion": {"speed": 400, "rotationSpeed": 180, "wobble": 10, "size": 0.62}}`
   (omit fields to leave unchanged; last-writer-wins).
 
 **Talking that reads as speech:** alternate KeyM down/up at syllable rate
 while the voice clip plays — down 60–120 ms, up 40–80 ms, roughly 4–7
 cycles/sec, pausing where the audio pauses. Sprinkle a 150 ms `Comma` blink
 every 2–5 s. Keep events sorted by `t`.
+
+## Reaction blocks
+
+Reusable composite performances live once in `stage.reactionLibrary` and are
+placed on any character with `characters[].reactions`:
+
+    "reactionLibrary": [{
+      "id": "shock", "name": "Shock", "dur": 1.4,
+      "events": [
+        {"t": 0, "code": "Slash", "down": true},
+        {"t": 0.15, "outfit": {"slot": 12, "name": "chef-hat"}},
+        {"t": 0.7, "code": "Slash", "down": false}
+      ]
+    }]
+
+    "reactions": [
+      {"id": "shock-1", "reactionID": "shock", "start": 4,
+       "dur": 2.8, "intensity": 1}
+    ]
+
+Definition event times are local (`0...dur`). A placed block time-stretches
+the definition to its own `dur`; `intensity` is `0...4` and scales continuous
+movement, jump, spin, tilt, zoom, wobble, and body-size changes. A reaction
+owns only the key groups and outfit slots present in its events, so unmentioned
+performance keeps playing.
+Movement is relative to the character's live pose. Outfit changes are temporary:
+the underlying items return when the block ends. Keep definition events sorted.
 
 ## Voice audio
 
@@ -139,6 +167,22 @@ Add the file to `assets/` + the `assets` bank, then cue it:
     "from": {"x": 0.8, "y": 0.25, "scale": 0.3, "rotation": 0}}`
   (optional `"to"` placement animates it).
 
+Floating still/GIF/video cues also accept these optional groups:
+
+- `"playback": {"trimStart": 1, "trimEnd": 5, "rate": 1.5,
+  "reverse": false, "loop": true, "freezeAt": null, "phaseOffset": 0}`.
+  Times address the source asset; set `freezeAt` to a source time for a still
+  frame. `phaseOffset` is advanced automatically when Studio splits a cue.
+- `"mask": "none"|"rectangle"|"roundedRectangle"|"circle"` plus
+  `"maskRadius": 0.12` for rounded corners.
+- `"appearance": {"tint": {"red": 1, "green": 0.4, "blue": 0.2},
+  "tintAmount": 0.35, "brightness": 0, "contrast": 1, "saturation": 1,
+  "outline": 0, "shadow": 0, "cleanup": 0}`. Outline is 1080p pixels;
+  shadow 0...1 responds to light tracks; cleanup tightens alpha fringes.
+- `"pivot": {"x": 0.5, "y": 0.5}` chooses the placement/rotation anchor;
+  corners are 0 or 1. `from.scale` is animated Scale, separate from a
+  character's Normal/Small/Baby body size.
+
 Tracks need `{"id", "name", "cues": [...]}`; ids are any unique strings.
 
 ## Reusing characters across episodes
@@ -159,6 +203,7 @@ app versions; re-check `banny catalog` after app updates.
   if the outfit/layout is wrong.
 - Hand a show to a human anytime: `banny pack show.bs shareable.bs`, and
   they import it in the app (File > Import Project) for finishing touches.
+
 """#
 
 func skillCommand(_ args: [String]) throws {

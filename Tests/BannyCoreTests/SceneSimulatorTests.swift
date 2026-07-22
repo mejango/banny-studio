@@ -109,6 +109,84 @@ private func makeScene(_ character: Character, gravity: Double = 1) -> SceneStat
     #expect(sim.pose(characterIndex: 0, at: 11).activeSubtitle == nil)
 }
 
+@Test func reactionBlocksTimeStretchAndTemporarilyOwnOutfitSlots() {
+    let reaction = ReactionDefinition(id: "shock", name: "Shock", dur: 2, events: [
+        .key(t: 0.2, code: .keyM, down: true),
+        .outfit(t: 0.5, slot: 12, name: "chef-hat"),
+        .key(t: 0.8, code: .keyM, down: false),
+    ])
+    let block = ReactionInstance(id: "shock-1", reactionID: reaction.id,
+                                 start: 10, dur: 4)
+    let character = Character(body: .orange, baseOutfit: [6: "nerd"],
+                              reactions: [block])
+    let sim = SceneSimulator(state: SceneState(characters: [character],
+                                               reactionLibrary: [reaction]))
+
+    // 2x timeline stretch: local 0.2/0.5/0.8 happen at 10.4/11/11.6.
+    let speaking = sim.pose(characterIndex: 0, at: 10.6)
+    #expect(speaking.talking)
+    #expect(speaking.outfit == [6: "nerd"])
+    let dressed = sim.pose(characterIndex: 0, at: 11.2)
+    #expect(dressed.talking)
+    #expect(dressed.outfit[6] == "nerd")
+    #expect(dressed.outfit[12] == "chef-hat")
+    #expect(!sim.pose(characterIndex: 0, at: 12).talking)
+
+    // The reaction owns slot 12 only while its block is active.
+    let after = sim.pose(characterIndex: 0, at: 14)
+    #expect(after.outfit == [6: "nerd"])
+}
+
+@Test func reactionIntensityScalesRelativeMotionAndUnderlyingStateResumes() {
+    let spin = ReactionDefinition(id: "spin", name: "Spin", dur: 1, events: [
+        .key(t: 0, code: .rotateRight, down: true),
+        .key(t: 1, code: .rotateRight, down: false),
+    ])
+    let blink = ReactionDefinition(id: "blink", name: "Blink", dur: 1, events: [
+        .key(t: 0, code: .comma, down: true),
+        .key(t: 1, code: .comma, down: false),
+    ])
+    let character = Character(
+        body: .pink,
+        events: [.key(t: 0, code: .keyM, down: true)],
+        reactions: [
+            ReactionInstance(id: "s", reactionID: "spin", start: 2, dur: 1,
+                             intensity: 2),
+            ReactionInstance(id: "b", reactionID: "blink", start: 2, dur: 1),
+        ],
+        recStart: StartPose(x: 0.4, depth: 0, face: 1, spin: 30, zoom: 1),
+        rotationSpeed: 90)
+    let sim = SceneSimulator(state: SceneState(characters: [character],
+                                               reactionLibrary: [spin, blink]))
+    let active = sim.pose(characterIndex: 0, at: 2.5)
+    #expect(active.spin > 100 && active.spin < 125)
+    #expect(active.eye == .closed)
+    #expect(active.talking) // blink reaction does not own the talk channel
+
+    let after = sim.pose(characterIndex: 0, at: 3)
+    #expect(abs(after.spin - 30) < 0.01)
+    #expect(after.eye == .open)
+    #expect(after.talking)
+}
+
+@Test func reactionMotionEventsTemporarilyOwnBodySizeAndWobble() {
+    let definition = ReactionDefinition(id: "squash", name: "Squash", dur: 1, events: [
+        .motion(t: 0.1, speed: nil, rotationSpeed: nil, wobble: 3, size: 0.5),
+    ])
+    let character = Character(body: .orange, reactions: [
+        ReactionInstance(id: "sq", reactionID: "squash", start: 1, dur: 1,
+                         intensity: 0.5),
+    ], wobble: 7)
+    let sim = SceneSimulator(state: SceneState(characters: [character],
+                                               reactionLibrary: [definition]))
+    let active = sim.pose(characterIndex: 0, at: 1.5)
+    #expect(abs(active.size - 0.75) < 1e-9)
+    #expect(abs(active.wobble - 5) < 1e-9)
+    let after = sim.pose(characterIndex: 0, at: 2)
+    #expect(after.size == 1)
+    #expect(after.wobble == 7)
+}
+
 @Test(.enabled(if: ep1Exists)) func poseQueryFastEnough() throws {
     let ep1 = try loadEp1V1()
     let darl = ep1.values.flatMap { $0 }.max { $0.events.count < $1.events.count }!
