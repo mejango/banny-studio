@@ -49,6 +49,12 @@ private struct AdvancedJSONEditor: View {
         var id: Self { self }
     }
 
+    /// One typed payload prevents stale character/show values from coexisting.
+    private enum DecodedDraft {
+        case character(Character)
+        case show(ShowDocument)
+    }
+
     @Bindable var model: StudioModel
     var file: ShowDocumentFile?
     let characterIndex: Int
@@ -59,15 +65,17 @@ private struct AdvancedJSONEditor: View {
     @State private var baseline = ""
     @State private var errors: [String] = []
     @State private var warnings: [String] = []
-    @State private var decodedCharacter: Character?
-    @State private var decodedDocument: ShowDocument?
+    @State private var decodedDraft: DecodedDraft?
+    @State private var validatedText = ""
+    @State private var validationPending = false
+    @State private var validationTask: Task<Void, Never>?
     @State private var confirmDiscard = false
     @FocusState private var editorFocused: Bool
 
     private var dirty: Bool { text != baseline }
     private var canApply: Bool {
-        dirty && errors.isEmpty
-            && (scope == .character ? decodedCharacter != nil : decodedDocument != nil)
+        dirty && !validationPending && text == validatedText
+            && errors.isEmpty && decodedDraft != nil
     }
 
     var body: some View {
@@ -113,15 +121,16 @@ private struct AdvancedJSONEditor: View {
                     .background(Color.primary.opacity(0.045),
                                 in: RoundedRectangle(cornerRadius: 8))
                     .overlay(RoundedRectangle(cornerRadius: 8)
-                        .stroke(errors.isEmpty ? Color.primary.opacity(0.16)
-                                               : Color.red.opacity(0.7), lineWidth: 1))
+                        .stroke(validationPending || errors.isEmpty
+                                ? Color.primary.opacity(0.16) : Color.red.opacity(0.7),
+                                lineWidth: 1))
                     .accessibilityIdentifier("advanced-json-editor")
 
                 diagnostics
 
                 HStack {
                     Button("Format") { formatDraft() }
-                        .disabled(decodedCharacter == nil && decodedDocument == nil)
+                        .disabled(decodedDraft == nil || validationPending)
                     Button("Copy") { copyDraft() }
                     Button("Revert") { loadScope() }
                         .disabled(!dirty)
@@ -158,7 +167,8 @@ private struct AdvancedJSONEditor: View {
             editorFocused = true
         }
         .onChange(of: scope) { _, _ in loadScope() }
-        .onChange(of: text) { _, _ in validateDraft() }
+        .onChange(of: text) { _, _ in scheduleValidation() }
+        .onDisappear { validationTask?.cancel() }
         .alert("Discard JSON draft?", isPresented: $confirmDiscard) {
             Button("Keep editing", role: .cancel) {}
             Button("Discard", role: .destructive) { dismiss() }
@@ -168,7 +178,14 @@ private struct AdvancedJSONEditor: View {
     }
 
     @ViewBuilder private var diagnostics: some View {
-        if !errors.isEmpty || !warnings.isEmpty {
+        if validationPending {
+            HStack(spacing: 6) {
+                ProgressView().controlSize(.small)
+                Text("Checking show JSON…")
+            }
+            .font(.caption)
+            .foregroundStyle(.secondary)
+        } else if !errors.isEmpty || !warnings.isEmpty {
             ScrollView {
                 VStack(alignment: .leading, spacing: 4) {
                     ForEach(Array(errors.enumerated()), id: \.offset) { _, message in
@@ -196,14 +213,20 @@ private struct AdvancedJSONEditor: View {
         case .character:
             let name = model.scene.characters[safe: characterIndex]?.name
                 .trimmingCharacters(in: .whitespacesAndNewlines)
+            let suffix = name.flatMap { $0.isEmpty ? nil : " › \($0)" } ?? ""
             return "show.json › stage › characters[\(characterIndex)]"
-                + ((name?.isEmpty == false) ? " › \(name!)" : "")
+                + suffix
         case .show:
             return "show.json"
         }
     }
 
     private func loadScope() {
+        validationTask?.cancel()
+        validationPending = false
+        decodedDraft = nil
+        errors = []
+        warnings = []
         do {
             switch scope {
             case .character:
@@ -222,9 +245,32 @@ private struct AdvancedJSONEditor: View {
         }
     }
 
+    /// Character payloads are small enough to validate immediately. Whole-show
+    /// JSON is debounced so typing never decodes and lints a large document on
+    /// every keystroke; Apply remains unavailable until the exact text is checked.
+    private func scheduleValidation() {
+        validationTask?.cancel()
+        if text == validatedText {
+            validationPending = false
+            return
+        }
+        guard scope == .show else {
+            validateDraft()
+            return
+        }
+        validationPending = true
+        let draft = text
+        validationTask = Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(180))
+            guard !Task.isCancelled, text == draft else { return }
+            validateDraft()
+        }
+    }
+
     private func validateDraft() {
-        decodedCharacter = nil
-        decodedDocument = nil
+        validationPending = false
+        validatedText = text
+        decodedDraft = nil
         warnings = []
         guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             errors = ["JSON cannot be empty."]
@@ -239,25 +285,26 @@ private struct AdvancedJSONEditor: View {
                     return
                 }
                 let character = try ShowJSONCodec.decodeCharacter(text)
-                decodedCharacter = character
+                decodedDraft = .character(character)
                 var document = model.document
                 document.stage.characters[characterIndex] = character
                 candidate = document
             case .show:
                 let document = try ShowJSONCodec.decodeDocument(text)
-                decodedDocument = document
+                decodedDraft = .show(document)
                 candidate = document
             }
 
-            let structureErrors = structuralErrors(in: candidate)
             let diagnostics = ShowLint.check(
                 document: candidate,
-                audioIDs: file.map { Set($0.audio.keys) } ?? audioIDs(in: candidate),
+                audioIDs: file.map { Set($0.audio.keys) }
+                    ?? Set(candidate.stage.characters.flatMap(\.clips).map(\.id)
+                        + candidate.stage.audioTracks.flatMap(\.clips).map(\.id)),
                 assetFileIDs: file.map { Set($0.assetsMedia.keys) }
                     ?? Set(candidate.assets.map(\.id)),
-                catalog: SharedAssets.catalog)
-            errors = structureErrors + diagnostics
-                .filter { $0.severity == .error }
+                catalog: SharedAssets.catalog,
+                profile: .editableShow)
+            errors = diagnostics.filter { $0.severity == .error }
                 .map(\.message)
             warnings = diagnostics
                 .filter { $0.severity == .warning }
@@ -267,54 +314,15 @@ private struct AdvancedJSONEditor: View {
         }
     }
 
-    private func structuralErrors(in document: ShowDocument) -> [String] {
-        var result: [String] = []
-        if document.version != 3 {
-            result.append("The editable show schema version must remain 3.")
-        }
-        if document.stage.backgroundTracks.count != 1 {
-            result.append("The show must contain exactly one Scenes track.")
-        }
-        func duplicateMessage(_ values: [String], _ label: String) {
-            let duplicates = Dictionary(grouping: values.filter { !$0.isEmpty }, by: { $0 })
-                .filter { $0.value.count > 1 }.keys.sorted()
-            if !duplicates.isEmpty {
-                result.append("Duplicate \(label) identifiers: \(duplicates.joined(separator: ", ")).")
-            }
-            if values.contains("") { result.append("\(label.capitalized) identifiers cannot be empty.") }
-        }
-        duplicateMessage(document.assets.map(\.id), "asset")
-        duplicateMessage(document.stage.audioTracks.map(\.id)
-                         + document.stage.imageTracks.map(\.id)
-                         + document.stage.lightTracks.map(\.id)
-                         + document.stage.backgroundTracks.map(\.id), "track")
-        let clipIDs = document.stage.characters.flatMap(\.clips).map(\.id)
-            + document.stage.audioTracks.flatMap(\.clips).map(\.id)
-        if clipIDs.contains("") { result.append("Audio clip identifiers cannot be empty.") }
-        let visualIDs = document.stage.imageTracks.flatMap(\.cues).map(\.id)
-            + document.stage.audioTracks.flatMap(\.cues).map(\.id)
-        duplicateMessage(visualIDs, "visual cue")
-        duplicateMessage(document.stage.backgroundTracks.flatMap(\.cues).map(\.id),
-                         "scene cue")
-        duplicateMessage(document.stage.lightTracks.flatMap(\.cues).map(\.id),
-                         "light cue")
-        return result
-    }
-
-    private func audioIDs(in document: ShowDocument) -> Set<String> {
-        Set(document.stage.characters.flatMap(\.clips).map(\.id)
-            + document.stage.audioTracks.flatMap(\.clips).map(\.id))
-    }
-
     private func formatDraft() {
         do {
-            switch scope {
-            case .character:
-                guard let decodedCharacter else { return }
-                text = try ShowJSONCodec.encode(character: decodedCharacter)
-            case .show:
-                guard let decodedDocument else { return }
-                text = try ShowJSONCodec.encode(document: decodedDocument)
+            switch decodedDraft {
+            case .character(let character):
+                text = try ShowJSONCodec.encode(character: character)
+            case .show(let document):
+                text = try ShowJSONCodec.encode(document: document)
+            case nil:
+                return
             }
         } catch {
             errors = [ShowJSONCodec.readableMessage(for: error)]
@@ -335,15 +343,15 @@ private struct AdvancedJSONEditor: View {
     }
 
     private func applyDraft() {
-        guard canApply else { return }
-        switch scope {
-        case .character:
-            guard let decodedCharacter else { return }
-            model.applyAdvancedJSON(character: decodedCharacter, at: characterIndex)
-        case .show:
-            guard let decodedDocument else { return }
-            model.applyAdvancedJSON(document: decodedDocument,
+        guard canApply, let decodedDraft else { return }
+        switch (scope, decodedDraft) {
+        case (.character, .character(let character)):
+            model.applyAdvancedJSON(character: character, at: characterIndex)
+        case (.show, .show(let document)):
+            model.applyAdvancedJSON(document: document,
                                     preferredCharacter: characterIndex)
+        default:
+            return
         }
         dismiss()
     }

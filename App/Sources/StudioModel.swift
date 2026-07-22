@@ -641,15 +641,6 @@ final class StudioModel {
     /// Output frame aspect (w/h) from the document settings.
     var frameAspect: Double { document.settings.frameAspect }
 
-    /// The selected image cue's track/cue indices, if any.
-    var selectedImageCuePath: (track: Int, cue: Int)? {
-        guard let id = selectedImageCue else { return nil }
-        for (ti, track) in scene.imageTracks.enumerated() {
-            if let ci = track.cues.firstIndex(where: { $0.id == id }) { return (ti, ci) }
-        }
-        return nil
-    }
-
     /// The selected image cue wherever it lives (image track OR media track).
     var selectedImageCueValue: ImageCue? {
         guard let id = selectedImageCue else { return nil }
@@ -846,14 +837,25 @@ final class StudioModel {
 
     // MARK: - Image path recording (drag an image cue around over time)
 
-    private(set) var imageRecordCueID: String?
-    private var imageRecordOwnerIsMedia = false
-    private var imageRecordTrack = 0
-    private var imageRecordAssetID = ""
+    private enum ImageRecordOwner {
+        case imageTrack(Int)
+        case mediaTrack(Int)
+    }
+
+    /// Immutable identity for one take. Keeping owner, cue, and asset together
+    /// prevents partially configured recording state.
+    private struct ImageRecordTarget {
+        let owner: ImageRecordOwner
+        let cueID: String
+        let assetID: String
+    }
+
+    private var imageRecordTarget: ImageRecordTarget?
     private var imageSamples: [(t: Double, x: Double, y: Double, scale: Double, rotation: Double)] = []
-    private var imagePen: (x: Double, y: Double, scale: Double, rotation: Double) = (0.5, 0.5, 0.3, 0)
-    var isImageRecording: Bool { imageRecordCueID != nil }
-    var imagePenNow: (x: Double, y: Double, scale: Double, rotation: Double)? {
+    private var imagePen = ImagePlacement()
+    var imageRecordCueID: String? { imageRecordTarget?.cueID }
+    var isImageRecording: Bool { imageRecordTarget != nil }
+    var imagePenNow: ImagePlacement? {
         isImageRecording ? imagePen : nil
     }
 
@@ -873,15 +875,61 @@ final class StudioModel {
         imageRecordSample(x: imagePen.x, y: imagePen.y)
     }
 
+    /// Applies the live pen to the known recording owner in O(cues in one
+    /// track), avoiding a scan of every visual track on every rendered frame.
+    func applyImageRecordingPreview(to preview: inout SceneState) {
+        guard let target = imageRecordTarget else { return }
+        func apply(to cues: inout [ImageCue]) {
+            guard let index = cues.firstIndex(where: { $0.id == target.cueID }) else { return }
+            cues[index].from = imagePen
+            cues[index].to = nil
+        }
+        switch target.owner {
+        case .imageTrack(let index) where preview.imageTracks.indices.contains(index):
+            apply(to: &preview.imageTracks[index].cues)
+        case .mediaTrack(let index) where preview.audioTracks.indices.contains(index):
+            apply(to: &preview.audioTracks[index].cues)
+        default:
+            break
+        }
+    }
+
+    private func imageCues(for target: ImageRecordTarget) -> [ImageCue]? {
+        switch target.owner {
+        case .imageTrack(let index) where scene.imageTracks.indices.contains(index):
+            return scene.imageTracks[index].cues
+        case .mediaTrack(let index) where scene.audioTracks.indices.contains(index):
+            return scene.audioTracks[index].cues
+        default:
+            return nil
+        }
+    }
+
+    private func imageCue(for target: ImageRecordTarget) -> ImageCue? {
+        imageCues(for: target)?.first { $0.id == target.cueID }
+    }
+
+    private func replaceImageCues(for target: ImageRecordTarget, with cues: [ImageCue]) {
+        switch target.owner {
+        case .imageTrack(let index) where scene.imageTracks.indices.contains(index):
+            scene.imageTracks[index].cues = cues
+        case .mediaTrack(let index) where scene.audioTracks.indices.contains(index):
+            scene.audioTracks[index].cues = cues
+        default:
+            break
+        }
+    }
+
     private func commitImageRecording() {
         defer {
-            imageRecordCueID = nil
+            imageRecordTarget = nil
             imageSamples = []
         }
         if let last = imageSamples.last, time - last.t > 0.02 {
             imageSamples.append((time, imagePen.x, imagePen.y, imagePen.scale, imagePen.rotation))
         }
-        guard imageSamples.count >= 2, let recordedCueID = imageRecordCueID else { return }
+        guard imageSamples.count >= 2, let target = imageRecordTarget else { return }
+        let recordedCueID = target.cueID
         let origin = imageSamples[0]
         guard imageSamples.contains(where: {
             abs($0.x - origin.x) > 0.001 || abs($0.y - origin.y) > 0.001
@@ -889,15 +937,7 @@ final class StudioModel {
                 || abs($0.rotation - origin.rotation) > 0.1
         }) else { return }
         registerUndoSnapshot(label: "Record Image Motion")
-        let recordedCue: ImageCue? = {
-            if imageRecordOwnerIsMedia, scene.audioTracks.indices.contains(imageRecordTrack) {
-                return scene.audioTracks[imageRecordTrack].cues.first { $0.id == recordedCueID }
-            }
-            if scene.imageTracks.indices.contains(imageRecordTrack) {
-                return scene.imageTracks[imageRecordTrack].cues.first { $0.id == recordedCueID }
-            }
-            return nil
-        }()
+        let recordedCue = imageCue(for: target)
         let recordedLabel = recordedCue?.label
         let t0 = imageSamples[0].t
         let tEnd = imageSamples[imageSamples.count - 1].t
@@ -916,7 +956,7 @@ final class StudioModel {
                 i += 1
             }
         }
-        let assetID = imageRecordAssetID
+        let assetID = target.assetID
         let recordedSpeed = recordedCue?.speed ?? ImageCue.defaultSpeed
         let recordedRotationSpeed = recordedCue?.rotationSpeed
             ?? ImageCue.defaultRotationSpeed
@@ -981,11 +1021,8 @@ final class StudioModel {
             }
             return out.sorted { $0.start < $1.start }
         }
-        if imageRecordOwnerIsMedia, scene.audioTracks.indices.contains(imageRecordTrack) {
-            scene.audioTracks[imageRecordTrack].cues = rebuilt(scene.audioTracks[imageRecordTrack].cues)
-        } else if scene.imageTracks.indices.contains(imageRecordTrack) {
-            scene.imageTracks[imageRecordTrack].cues = rebuilt(scene.imageTracks[imageRecordTrack].cues)
-        }
+        guard let existingCues = imageCues(for: target) else { return }
+        replaceImageCues(for: target, with: rebuilt(existingCues))
         selectedImageCue = continuationID ?? recordedIDs.last
     }
 
@@ -1335,19 +1372,20 @@ final class StudioModel {
         if let id = selectedImageCue, let owner = selectedImageCueOwner,
            selectedVisualCueOnSelectedTrack {
             guard time >= owner.cue.start, time < owner.cue.start + owner.cue.dur else { return }
-            clearFreeform()
-            imageRecordCueID = id
-            imageRecordAssetID = owner.cue.assetID
-            if let ti = scene.audioTracks.firstIndex(where: { $0.id == owner.trackID }) {
-                imageRecordOwnerIsMedia = true
-                imageRecordTrack = ti
-            } else if let ti = scene.imageTracks.firstIndex(where: { $0.id == owner.trackID }) {
-                imageRecordOwnerIsMedia = false
-                imageRecordTrack = ti
+            let recordOwner: ImageRecordOwner
+            if let index = scene.audioTracks.firstIndex(where: { $0.id == owner.trackID }) {
+                recordOwner = .mediaTrack(index)
+            } else if let index = scene.imageTracks.firstIndex(where: { $0.id == owner.trackID }) {
+                recordOwner = .imageTrack(index)
+            } else {
+                return
             }
+            clearFreeform()
+            imageRecordTarget = ImageRecordTarget(owner: recordOwner, cueID: id,
+                                                  assetID: owner.cue.assetID)
             imageSamples = []
             let p = owner.cue.placement(at: time)
-            imagePen = (p.x, p.y, p.scale, p.rotation)
+            imagePen = p
             imageSamples = [(time, p.x, p.y, p.scale, p.rotation)]
             recording = true
             playing = true
@@ -1983,12 +2021,10 @@ final class StudioModel {
     func applyAdvancedJSON(document newDocument: ShowDocument,
                            preferredCharacter: Int) {
         pause()
-        registerDocumentUndoSnapshot(label: "Edit Show JSON")
-        document = newDocument
-        backgroundRevision += 1
-        clearSelectionAfterJSONEdit(preferredCharacter: preferredCharacter)
-        time = min(time, duration)
-        file?.audioEngine?.syncPlayback(self)
+        registerDocumentUndoSnapshot(label: "Edit Show JSON",
+                                     preferredCharacter: preferredCharacter)
+        restoreDocument(DocumentUndoSnapshot(document: newDocument, time: time,
+                                             preferredCharacter: preferredCharacter))
     }
 
     private func clearSelectionAfterJSONEdit(preferredCharacter: Int) {
@@ -2012,38 +2048,57 @@ final class StudioModel {
         }
     }
 
-    private func registerDocumentUndoSnapshot(label: String) {
-        let snapshot = document
+    private struct DocumentUndoSnapshot {
+        let document: ShowDocument
+        let time: Double
+        let preferredCharacter: Int
+    }
+
+    private func registerDocumentUndoSnapshot(label: String, preferredCharacter: Int) {
+        let snapshot = DocumentUndoSnapshot(
+            document: document,
+            time: time,
+            preferredCharacter: selection.first ?? preferredCharacter)
+        registerDocumentUndo(snapshot, label: label)
+    }
+
+    /// Undo and redo use the same transition, so repeated undo/redo cycles keep
+    /// working and always reconcile editor selection, time, rendering, and audio.
+    private func registerDocumentUndo(_ snapshot: DocumentUndoSnapshot, label: String) {
         undoManager?.registerUndo(withTarget: self) { model in
             MainActor.assumeIsolated {
-                let redo = model.document
-                model.document = snapshot
-                model.backgroundRevision += 1
-                model.undoManager?.registerUndo(withTarget: model) { redoModel in
-                    MainActor.assumeIsolated {
-                        redoModel.document = redo
-                        redoModel.backgroundRevision += 1
-                    }
-                }
+                let inverse = DocumentUndoSnapshot(
+                    document: model.document,
+                    time: model.time,
+                    preferredCharacter: model.selection.first ?? snapshot.preferredCharacter)
+                model.restoreDocument(snapshot)
+                model.registerDocumentUndo(inverse, label: label)
             }
         }
         undoManager?.setActionName(label)
     }
 
+    private func restoreDocument(_ snapshot: DocumentUndoSnapshot) {
+        document = snapshot.document
+        backgroundRevision += 1
+        clearSelectionAfterJSONEdit(preferredCharacter: snapshot.preferredCharacter)
+        time = min(max(0, snapshot.time), duration)
+        file?.audioEngine?.syncPlayback(self)
+    }
+
     /// Stage snapshot undo (the whole timeline state).
     func registerUndoSnapshot(label: String) {
-        let snapshot = document.stage
+        registerStageUndo(document.stage, label: label)
+    }
+
+    private func registerStageUndo(_ snapshot: SceneState, label: String) {
         undoManager?.registerUndo(withTarget: self) { model in
             MainActor.assumeIsolated {
-                let redo = model.document.stage
+                let inverse = model.document.stage
                 model.document.stage = snapshot
                 model.backgroundRevision += 1
-                model.undoManager?.registerUndo(withTarget: model) { m in
-                    MainActor.assumeIsolated {
-                        m.document.stage = redo
-                        m.backgroundRevision += 1
-                    }
-                }
+                model.file?.audioEngine?.syncPlayback(model)
+                model.registerStageUndo(inverse, label: label)
             }
         }
         undoManager?.setActionName(label)

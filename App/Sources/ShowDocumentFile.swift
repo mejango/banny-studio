@@ -95,6 +95,7 @@ final class ShowDocumentFile: ReferenceFileDocument {
     private static func readArchive(_ zip: Data)
         throws -> (document: ShowDocument, audio: [String: (data: Data, ext: String)],
                    assets: [String: (data: Data, ext: String)]) {
+        #if os(macOS)
         let tmp = FileManager.default.temporaryDirectory
             .appendingPathComponent("banny-open-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: tmp, withIntermediateDirectories: true)
@@ -104,17 +105,12 @@ final class ShowDocumentFile: ReferenceFileDocument {
         let outDir = tmp.appendingPathComponent("out", isDirectory: true)
         try FileManager.default.createDirectory(at: outDir, withIntermediateDirectories: true)
 
-        #if os(macOS)
         let ditto = Process()
         ditto.executableURL = URL(fileURLWithPath: "/usr/bin/ditto")
         ditto.arguments = ["-x", "-k", zipURL.path, outDir.path]
         try ditto.run()
         ditto.waitUntilExit()
         guard ditto.terminationStatus == 0 else { throw CocoaError(.fileReadCorruptFile) }
-        #else
-        // iOS has no ditto/Process; zipped .bs import needs a zip reader.
-        throw CocoaError(.featureUnsupported)
-        #endif
 
         // The package root is wherever show.json landed (ditto's root layout
         // varies), so find it rather than assume a fixed depth.
@@ -138,6 +134,10 @@ final class ShowDocumentFile: ReferenceFileDocument {
         var assets = media("bg")
         assets.merge(media("assets")) { _, new in new }
         return (doc, media("audio"), assets)
+        #else
+        // iOS has no ditto/Process; zipped .bs import needs a zip reader.
+        throw CocoaError(.featureUnsupported)
+        #endif
     }
 
     private static func findFile(named name: String, under dir: URL) -> URL? {
@@ -147,11 +147,15 @@ final class ShowDocumentFile: ReferenceFileDocument {
         return nil
     }
 
-    @MainActor
     func snapshot(contentType: UTType) throws -> ShowDocument {
-        let indicator = saveIndicator
-        DispatchQueue.main.async { indicator.pulse() }
-        return model.document
+        // ReferenceFileDocument requests snapshots synchronously from the UI
+        // transaction. Keep the protocol witness nonisolated while making the
+        // main-actor boundary explicit for the live editor model.
+        MainActor.assumeIsolated {
+            let indicator = saveIndicator
+            DispatchQueue.main.async { indicator.pulse() }
+            return model.document
+        }
     }
 
     func fileWrapper(snapshot: ShowDocument, configuration: WriteConfiguration) throws -> FileWrapper {

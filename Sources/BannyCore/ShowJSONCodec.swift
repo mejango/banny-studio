@@ -9,7 +9,7 @@ import Foundation
 /// round-trip.
 public enum ShowJSONCodec {
     public struct UnsupportedDocumentVersionError: LocalizedError, Equatable, Sendable {
-        public var version: Int
+        public let version: Int
 
         public init(version: Int) {
             self.version = version
@@ -21,7 +21,7 @@ public enum ShowJSONCodec {
     }
 
     public struct UnsupportedFieldsError: LocalizedError, Equatable, Sendable {
-        public var paths: [String]
+        public let paths: [String]
 
         public init(paths: [String]) {
             self.paths = paths
@@ -42,7 +42,6 @@ public enum ShowJSONCodec {
     }
 
     public static func decodeDocument(_ text: String) throws -> ShowDocument {
-        struct VersionEnvelope: Decodable { let version: Int }
         let version = try JSONDecoder().decode(VersionEnvelope.self,
                                                from: Data(text.utf8)).version
         guard version == 3 else {
@@ -57,9 +56,6 @@ public enum ShowJSONCodec {
 
     /// A concise, coding-path-aware message suitable for an inline editor.
     public static func readableMessage(for error: Error) -> String {
-        if let error = error as? LocalizedError, let message = error.errorDescription {
-            return message
-        }
         switch error {
         case DecodingError.keyNotFound(let key, let context):
             return "Missing \(path(context.codingPath, appending: key)): \(context.debugDescription)"
@@ -70,6 +66,9 @@ public enum ShowJSONCodec {
         case DecodingError.dataCorrupted(let context):
             return "Invalid value at \(path(context.codingPath)): \(context.debugDescription)"
         default:
+            if let error = error as? LocalizedError, let message = error.errorDescription {
+                return message
+            }
             return error.localizedDescription
         }
     }
@@ -107,11 +106,12 @@ public enum ShowJSONCodec {
             var paths: [String] = []
             for key in supplied.keys.sorted() {
                 let childPath = path + "." + key
-                guard let canonicalValue = canonical[key] else {
+                guard let suppliedValue = supplied[key],
+                      let canonicalValue = canonical[key] else {
                     paths.append(childPath)
                     continue
                 }
-                paths.append(contentsOf: unsupportedPaths(in: supplied[key]!,
+                paths.append(contentsOf: unsupportedPaths(in: suppliedValue,
                                                           canonical: canonicalValue,
                                                           path: childPath))
             }
@@ -138,5 +138,9 @@ public enum ShowJSONCodec {
             }
         }
         return result
+    }
+
+    private struct VersionEnvelope: Decodable {
+        let version: Int
     }
 }

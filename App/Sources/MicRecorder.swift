@@ -145,8 +145,13 @@ final class CueThumbCache {
                 img = ns.cgImage(forProposedRect: &rect, context: nil, hints: nil)
             }
             #endif
+            let thumbnail = img
             await MainActor.run { [weak self] in
-                if let img { self?.cache[assetID] = img } else { self?.failed.insert(assetID) }
+                if let thumbnail {
+                    self?.cache[assetID] = thumbnail
+                } else {
+                    self?.failed.insert(assetID)
+                }
                 self?.pending.remove(assetID)
             }
         }

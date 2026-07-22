@@ -104,6 +104,13 @@ import Testing
         try ShowJSONCodec.decodeDocument(#"{"version":2,"scenes":[]}"#)
     }
 
+    do {
+        _ = try ShowJSONCodec.decodeCharacter(#"{"body":42}"#)
+        Issue.record("Expected a typed decoding error")
+    } catch {
+        #expect(ShowJSONCodec.readableMessage(for: error).contains("$.body"))
+    }
+
     let typo = #"{"body":"pink","x":0.25,"speeed":400}"#
     do {
         _ = try ShowJSONCodec.decodeCharacter(typo)

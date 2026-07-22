@@ -22,9 +22,12 @@ struct StageView: View {
     /// A recording drag latches only when it starts on the selected visual.
     /// The offset keeps the exact grabbed point under the mouse/finger instead
     /// of snapping the asset's pivot to it.
-    @State private var imageDragResolved = false
-    @State private var imageDragActive = false
-    @State private var imageDragOffset: CGSize = .zero
+    private struct ImageDragState {
+        var resolved = false
+        var active = false
+        var offset: CGSize = .zero
+    }
+    @State private var imageDrag = ImageDragState()
     /// Where the frame currently sits inside the canvas (normal: aspect-fit
     /// centered; overview: possibly shrunk). Gestures normalize against it.
     @State private var stageRect = CGRect(x: 0, y: 0, width: 1280, height: 720)
@@ -93,22 +96,7 @@ struct StageView: View {
                 // During a visual take, direct manipulation is the live source
                 // of truth. Override only this render copy; the recorded cue is
                 // punched in when REC stops.
-                if let cueID = model.imageRecordCueID, let pen = model.imagePenNow {
-                    let placement = ImagePlacement(x: pen.x, y: pen.y, scale: pen.scale,
-                                                   rotation: pen.rotation)
-                    for ti in scene.imageTracks.indices {
-                        if let ci = scene.imageTracks[ti].cues.firstIndex(where: { $0.id == cueID }) {
-                            scene.imageTracks[ti].cues[ci].from = placement
-                            scene.imageTracks[ti].cues[ci].to = nil
-                        }
-                    }
-                    for ti in scene.audioTracks.indices {
-                        if let ci = scene.audioTracks[ti].cues.firstIndex(where: { $0.id == cueID }) {
-                            scene.audioTracks[ti].cues[ci].from = placement
-                            scene.audioTracks[ti].cues[ci].to = nil
-                        }
-                    }
-                }
+                model.applyImageRecordingPreview(to: &scene)
                 let bg = scene.activeBackgroundCue(at: model.time).flatMap {
                     media.background(cue: $0, at: model.time, playing: model.playing,
                                      revision: model.backgroundRevision,
@@ -253,8 +241,7 @@ struct StageView: View {
         let p: ImagePlacement
         let isRecordedCue = model.imageRecordCueID == cue.id
         if isRecordedCue, let pen = model.imagePenNow {
-            p = ImagePlacement(x: pen.x, y: pen.y, scale: pen.scale,
-                               rotation: pen.rotation)
+            p = pen
         } else {
             p = cue.placement(at: model.time)
         }
@@ -367,10 +354,10 @@ struct StageView: View {
                 let fx = (value.location.x - stageRect.minX) / stageRect.width
                 let fy = (value.location.y - stageRect.minY) / stageRect.height
                 if model.isImageRecording {
-                    if !imageDragResolved { resolveImageRecordingDrag(at: value.startLocation) }
-                    guard imageDragActive else { return }
-                    model.imageRecordSample(x: fx - imageDragOffset.width,
-                                            y: fy - imageDragOffset.height)
+                    if !imageDrag.resolved { resolveImageRecordingDrag(at: value.startLocation) }
+                    guard imageDrag.active else { return }
+                    model.imageRecordSample(x: fx - imageDrag.offset.width,
+                                            y: fy - imageDrag.offset.height)
                     return
                 }
                 if model.isCameraRecording {
@@ -439,9 +426,7 @@ struct StageView: View {
             }
             .onEnded { _ in
                 dragLast = nil
-                imageDragResolved = false
-                imageDragActive = false
-                imageDragOffset = .zero
+                imageDrag = ImageDragState()
                 if !model.isImageRecording, model.selectedImageCueValue != nil {
                     model.registerUndoSnapshot(label: "Place Image")
                 }
@@ -449,7 +434,7 @@ struct StageView: View {
     }
 
     private func resolveImageRecordingDrag(at location: CGPoint) {
-        imageDragResolved = true
+        imageDrag.resolved = true
         guard stageRect.width > 1, stageRect.height > 1,
               let cue = model.selectedImageCueValue,
               model.imageRecordCueID == cue.id,
@@ -460,12 +445,10 @@ struct StageView: View {
                                  revision: model.backgroundRevision,
                                  assets: model.document.assets, file: file)
         let assetAspect = image.map { Double($0.width) / Double(max(1, $0.height)) } ?? 1
-        let placement = ImagePlacement(x: pen.x, y: pen.y, scale: pen.scale,
-                                       rotation: pen.rotation)
         let inside = cue.containsStagePoint(x: x, y: y, at: model.time,
                                             assetAspect: assetAspect,
                                             stageAspect: model.frameAspect,
-                                            placement: placement)
+                                            placement: pen)
         // Keep tiny assets grabbable around the pivot even when their rendered
         // rectangle is smaller. Touch gets the standard 44pt minimum target.
         #if os(macOS)
@@ -478,8 +461,8 @@ struct StageView: View {
         let nearPivot = hypot(location.x - pivotPoint.x,
                               location.y - pivotPoint.y) <= grabRadius
         guard inside || nearPivot else { return }
-        imageDragOffset = CGSize(width: x - pen.x, height: y - pen.y)
-        imageDragActive = true
+        imageDrag.offset = CGSize(width: x - pen.x, height: y - pen.y)
+        imageDrag.active = true
     }
 }
 

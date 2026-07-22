@@ -74,7 +74,7 @@ struct ProjectMenu: View {
             NSApp.sendAction(#selector(NSDocument.save(_:)), to: doc, from: nil)
             return
         }
-        NSApp.sendAction(Selector(("renameDocument:")), to: doc, from: nil)
+        NSApp.sendAction(#selector(NSDocument.rename(_:)), to: doc, from: nil)
         #endif
     }
 

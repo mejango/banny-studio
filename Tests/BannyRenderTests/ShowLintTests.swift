@@ -74,4 +74,69 @@ final class ShowLintTests: XCTestCase {
             .map(\.message).joined(separator: "\n")
         XCTAssertTrue(messages.contains("playback phase before 0"), messages)
     }
+
+    func testEditableShowProfileEnforcesCanonicalIdentityStructure() {
+        let asset = Asset(id: "asset", name: "Asset", kind: .image, file: "asset.png")
+        let visual = ImageCue(id: "visual", assetID: asset.id, start: 0, dur: 1,
+                              from: ImagePlacement())
+        let sceneCue = BackgroundCue(id: "scene", assetID: asset.id, start: 0, dur: 1)
+        let lightCue = LightCue(id: "light", start: 0, dur: 1, from: LightState())
+        let stage = SceneState(
+            audioTracks: [AudioTrack(id: "duplicate-track", name: "Media", cues: [visual])],
+            imageTracks: [ImageTrack(id: "duplicate-track", name: "Visuals", cues: [visual])],
+            backgroundTracks: [
+                BackgroundTrack(id: "scenes-a", name: "Scenes", cues: [sceneCue]),
+                BackgroundTrack(id: "scenes-b", name: "Scenes 2", cues: [sceneCue]),
+            ],
+            lightTracks: [LightTrack(id: "lights", name: "Lights",
+                                     cues: [lightCue, lightCue])])
+        let document = ShowDocument(version: 2, stage: stage, assets: [asset, asset])
+
+        let messages = ShowLint.check(document: document, audioIDs: [],
+                                      assetFileIDs: [asset.id], catalog: nil,
+                                      profile: .editableShow)
+            .map(\.message).joined(separator: "\n")
+        XCTAssertTrue(messages.contains("schema version must remain 3"), messages)
+        XCTAssertTrue(messages.contains("exactly one Scenes track"), messages)
+        XCTAssertTrue(messages.contains("Duplicate asset identifiers"), messages)
+        XCTAssertTrue(messages.contains("Duplicate track identifiers"), messages)
+        XCTAssertTrue(messages.contains("Duplicate visual cue identifiers"), messages)
+        XCTAssertTrue(messages.contains("Duplicate scene cue identifiers"), messages)
+        XCTAssertTrue(messages.contains("Duplicate light cue identifiers"), messages)
+    }
+
+    func testEditableShowProfileAllowsReusedAudioMediaReferences() {
+        let clips = [
+            AudioClip(id: "voice", name: "First", start: 0, dur: 1, srcDur: 1),
+            AudioClip(id: "voice", name: "Second", start: 2, dur: 1, srcDur: 1),
+        ]
+        let document = ShowDocument(stage: SceneState(
+            characters: [Character(body: .orange, clips: clips)],
+            backgroundTracks: [BackgroundTrack(id: "scenes", name: "Scenes")]))
+
+        XCTAssertEqual(ShowLint.check(document: document, audioIDs: ["voice"],
+                                      assetFileIDs: [], catalog: nil,
+                                      profile: .editableShow), [])
+    }
+
+    func testLightAndVisualPlacementRangesAreLinted() {
+        let asset = Asset(id: "asset", name: "Asset", kind: .image, file: "asset.png")
+        let visual = ImageCue(id: "visual", assetID: asset.id, start: 0, dur: 1,
+                              from: ImagePlacement(scale: 0))
+        let light = LightCue(id: "light", start: -1, dur: 0,
+                             from: LightState(intensity: 2, size: 0))
+        let document = ShowDocument(
+            stage: SceneState(
+                imageTracks: [ImageTrack(id: "visuals", name: "Visuals", cues: [visual])],
+                lightTracks: [LightTrack(id: "lights", name: "Lights", cues: [light])]),
+            assets: [asset])
+
+        let messages = ShowLint.check(document: document, audioIDs: [],
+                                      assetFileIDs: [asset.id], catalog: nil)
+            .map(\.message).joined(separator: "\n")
+        XCTAssertTrue(messages.contains("non-positive placement scale"), messages)
+        XCTAssertTrue(messages.contains("invalid range"), messages)
+        XCTAssertTrue(messages.contains("intensity outside 0...1"), messages)
+        XCTAssertTrue(messages.contains("non-positive size"), messages)
+    }
 }

@@ -1,10 +1,18 @@
 import Foundation
 import BannyCore
 
-/// Semantic checks an agent runs before shipping. Decode failures are the
-/// caller's problem (they throw earlier); this catches what decodes fine but
-/// renders wrong or silently drops content.
+/// Semantic integrity checks shared by the editor and command-line tooling.
+/// Decode failures are the caller's problem (they throw earlier); this catches
+/// what decodes successfully but renders wrong or silently drops content.
 public enum ShowLint {
+    /// Validation policy for the caller. Normal rendering tolerates the
+    /// editor's repairable container shape; raw JSON replacement must preserve
+    /// the canonical schema and identity invariants before it is applied.
+    public enum Profile: Sendable {
+        case renderable
+        case editableShow
+    }
+
     public struct Diagnostic: Codable, Equatable, Sendable {
         public enum Severity: String, Codable, Sendable { case error, warning }
         public var severity: Severity
@@ -23,9 +31,13 @@ public enum ShowLint {
     public static func check(document: ShowDocument,
                              audioIDs: Set<String>,
                              assetFileIDs: Set<String>,
-                             catalog: AssetCatalog?) -> [Diagnostic] {
+                             catalog: AssetCatalog?,
+                             profile: Profile = .renderable) -> [Diagnostic] {
         var out: [Diagnostic] = []
         let stage = document.stage
+        if case .editableShow = profile {
+            checkEditableStructure(document, into: &out)
+        }
         let bankIDs = Set(document.assets.map(\.id))
         let reactionIDs = stage.reactionLibrary.map(\.id)
         let reactionsByID = Dictionary(stage.reactionLibrary.map { ($0.id, $0) },
@@ -83,6 +95,9 @@ public enum ShowLint {
                 out.append(.init(.error, "\(who): reaction blocks contain duplicate identifiers"))
             }
             for block in ch.reactions {
+                if block.id.isEmpty {
+                    out.append(.init(.error, "\(who): reaction block has an empty identifier"))
+                }
                 if reactionsByID[block.reactionID] == nil {
                     out.append(.init(.error, "\(who): reaction block \(block.id) references unknown reaction \"\(block.reactionID)\""))
                 }
@@ -114,10 +129,68 @@ public enum ShowLint {
             checkAssetRefs(track.cues.map { ($0.id, $0.assetID, $0.start, $0.dur) },
                            owner: "background track \"\(track.name)\"", bankIDs: bankIDs, into: &out)
         }
+        for track in stage.lightTracks {
+            let owner = "light track \"\(track.name)\""
+            checkCues(track.cues.map { ("cue \($0.id)", $0.start, $0.dur) },
+                      owner: owner, into: &out)
+            for cue in track.cues {
+                checkLightState(cue.from, cueID: cue.id, owner: owner, into: &out)
+                if let to = cue.to {
+                    checkLightState(to, cueID: cue.id, owner: owner, into: &out)
+                }
+            }
+        }
         for asset in document.assets where !assetFileIDs.contains(asset.id) {
             out.append(.init(.error, "asset \"\(asset.name)\" (\(asset.id)) has no file in assets/"))
         }
         return out
+    }
+
+    private static func checkEditableStructure(_ document: ShowDocument,
+                                               into out: inout [Diagnostic]) {
+        let stage = document.stage
+        if document.version != 3 {
+            out.append(.init(.error, "The editable show schema version must remain 3."))
+        }
+        if stage.backgroundTracks.count != 1 {
+            out.append(.init(.error, "The show must contain exactly one Scenes track."))
+        }
+
+        checkIdentifiers(document.assets.map(\.id), label: "asset", into: &out)
+        checkIdentifiers(stage.audioTracks.map(\.id)
+                         + stage.imageTracks.map(\.id)
+                         + stage.lightTracks.map(\.id)
+                         + stage.backgroundTracks.map(\.id), label: "track", into: &out)
+        let audioIDs = stage.characters.flatMap(\.clips).map(\.id)
+            + stage.audioTracks.flatMap(\.clips).map(\.id)
+        if audioIDs.contains("") {
+            out.append(.init(.error, "Audio clip identifiers cannot be empty."))
+        }
+        checkIdentifiers(stage.imageTracks.flatMap(\.cues).map(\.id)
+                         + stage.audioTracks.flatMap(\.cues).map(\.id),
+                         label: "visual cue", into: &out)
+        checkIdentifiers(stage.backgroundTracks.flatMap(\.cues).map(\.id),
+                         label: "scene cue", into: &out)
+        checkIdentifiers(stage.lightTracks.flatMap(\.cues).map(\.id),
+                         label: "light cue", into: &out)
+    }
+
+    /// Audio clip identifiers are reusable media references, so this helper is
+    /// intentionally used only for true editor identities.
+    private static func checkIdentifiers(_ values: [String], label: String,
+                                         into out: inout [Diagnostic]) {
+        var seen: Set<String> = []
+        var duplicates: Set<String> = []
+        for value in values where !value.isEmpty {
+            if !seen.insert(value).inserted { duplicates.insert(value) }
+        }
+        if !duplicates.isEmpty {
+            out.append(.init(.error,
+                             "Duplicate \(label) identifiers: \(duplicates.sorted().joined(separator: ", "))."))
+        }
+        if values.contains("") {
+            out.append(.init(.error, "\(label.capitalized) identifiers cannot be empty."))
+        }
     }
 
     private static func checkClips(_ clips: [AudioClip], owner: String,
@@ -173,6 +246,19 @@ public enum ShowLint {
         if !(0...1).contains(cue.appearance.shadow) { error("has shadow outside 0...1") }
         if !(0...1).contains(cue.appearance.cleanup) { error("has cleanup outside 0...1") }
         if !(0...1).contains(cue.appearance.tintAmount) { error("has tintAmount outside 0...1") }
+        if cue.from.scale <= 0 || (cue.to?.scale ?? 1) <= 0 {
+            error("has a non-positive placement scale")
+        }
+    }
+
+    private static func checkLightState(_ state: LightState, cueID: String,
+                                        owner: String, into out: inout [Diagnostic]) {
+        if !(0...1).contains(state.intensity) {
+            out.append(.init(.error, "\(owner): cue \(cueID) has intensity outside 0...1"))
+        }
+        if state.size <= 0 {
+            out.append(.init(.error, "\(owner): cue \(cueID) has non-positive size"))
+        }
     }
 
     private static func checkOutfit(name: String, slot: Int, owner: String,
