@@ -88,6 +88,52 @@ import Testing
     #expect(oldStart == StartPose(x: 0.25, depth: -0.4, face: -1, spin: 0, zoom: 1))
 }
 
+@Test func editableShowJSONRoundTripsAndRejectsUnknownFields() throws {
+    let character = Character(body: .pink, x: 0.25, name: "Pinky")
+    let text = try ShowJSONCodec.encode(character: character)
+    #expect(try ShowJSONCodec.decodeCharacter(text) == character)
+    #expect(text.contains("\n"))
+
+    let document = ShowDocument(stage: SceneState(
+        characters: [character],
+        backgroundTracks: [BackgroundTrack(id: "scenes", name: "Scenes")]))
+    let documentText = try ShowJSONCodec.encode(document: document)
+    #expect(try ShowJSONCodec.decodeDocument(documentText) == document)
+
+    #expect(throws: ShowJSONCodec.UnsupportedDocumentVersionError(version: 2)) {
+        try ShowJSONCodec.decodeDocument(#"{"version":2,"scenes":[]}"#)
+    }
+
+    let typo = #"{"body":"pink","x":0.25,"speeed":400}"#
+    do {
+        _ = try ShowJSONCodec.decodeCharacter(typo)
+        Issue.record("Expected the unsupported field to be rejected")
+    } catch let error as ShowJSONCodec.UnsupportedFieldsError {
+        #expect(error.paths == ["$.speeed"])
+    }
+
+    let nestedTypo = #"{"body":"pink","recStart":{"x":0.5,"depth":0,"face":1,"spinn":30}}"#
+    do {
+        _ = try ShowJSONCodec.decodeCharacter(nestedTypo)
+        Issue.record("Expected the nested unsupported field to be rejected")
+    } catch let error as ShowJSONCodec.UnsupportedFieldsError {
+        #expect(error.paths == ["$.recStart.spinn"])
+    }
+}
+
+@Test func rotatedVisualHitTestHonorsAspectAndPivot() {
+    var cue = ImageCue(id: "visual", assetID: "asset", start: 0, dur: 2,
+                       from: ImagePlacement(x: 0.5, y: 0.5, scale: 0.4,
+                                            rotation: 90))
+    cue.pivot = MediaPivot(x: 0, y: 0.5)
+
+    // A 2:1 asset rotated 90° extends vertically from its left-edge pivot.
+    #expect(cue.containsStagePoint(x: 0.5, y: 0.75, at: 0,
+                                   assetAspect: 2, stageAspect: 16.0 / 9.0))
+    #expect(!cue.containsStagePoint(x: 0.8, y: 0.5, at: 0,
+                                    assetAspect: 2, stageAspect: 16.0 / 9.0))
+}
+
 @Test func mediaPlaybackMapsShowTimeIntoTrimmedSource() {
     var cue = ImageCue(id: "v", assetID: "video", start: 5, dur: 20,
                        from: ImagePlacement(),

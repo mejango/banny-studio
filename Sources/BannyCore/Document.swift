@@ -310,6 +310,39 @@ public struct ImageCue: Codable, Equatable, Identifiable, Sendable {
     }
 }
 
+public extension ImageCue {
+    /// Hit-tests the visual's rotated rectangular bounds in normalized stage
+    /// coordinates. Editors use this to begin a direct-manipulation drag only
+    /// when the pointer actually grabs the selected asset.
+    func containsStagePoint(x: Double, y: Double, at showTime: Double,
+                            assetAspect: Double, stageAspect: Double,
+                            placement override: ImagePlacement? = nil) -> Bool {
+        let p = override ?? placement(at: showTime)
+        let safeStageAspect = max(0.001, stageAspect)
+        let safeAssetAspect = max(0.001, assetAspect)
+
+        // Work in stage-width units so X and Y share the same scale before
+        // undoing the asset rotation.
+        let dx = x - p.x
+        let dy = (y - p.y) / safeStageAspect
+        let radians = p.rotation * .pi / 180
+        let cosine = cos(radians)
+        let sine = sin(radians)
+        let localX = dx * cosine + dy * sine
+        let localY = -dx * sine + dy * cosine
+
+        let width = max(0, p.scale)
+        let height = width / safeAssetAspect
+        let px = min(1, max(0, pivot.x))
+        let py = min(1, max(0, pivot.y))
+        let epsilon = 1e-9
+        return localX >= -px * width - epsilon
+            && localX <= (1 - px) * width + epsilon
+            && localY >= -py * height - epsilon
+            && localY <= (1 - py) * height + epsilon
+    }
+}
+
 public struct MediaPlayback: Equatable, Sendable {
     /// Seconds from the beginning of the source.
     public var trimStart: Double

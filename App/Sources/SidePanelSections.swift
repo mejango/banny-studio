@@ -208,7 +208,7 @@ struct ImageCueInspector: View {
                 set: { newValue in model.updateSelectedImageCue { $0 = newValue } })
             VStack(alignment: .leading, spacing: 6) {
                 Text("VISUAL CUE").font(.caption.bold()).foregroundStyle(.secondary)
-                Text("Drag on the stage to place it. Speed and rotation speed control the keyboard while placing or recording.")
+                Text("Drag on the stage to place it. During REC, grab and perform the asset directly—or use the keyboard for precise motion.")
                     .font(.caption2).foregroundStyle(.secondary)
                 placement("speed", value: Binding(
                     get: { binding.wrappedValue.speed },

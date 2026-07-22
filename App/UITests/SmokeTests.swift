@@ -28,8 +28,34 @@ final class SmokeTests: XCTestCase {
         #endif
         XCTAssertEqual(app.state, .runningForeground)
     }
+
+    #if os(macOS)
+    @MainActor
+    func testAdvancedJSONEditorOpensFromCharacterInspector() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["-ApplePersistenceIgnoreState", "YES"]
+        app.launch()
+        if !app.windows.firstMatch.waitForExistence(timeout: 3) {
+            app.typeKey("n", modifierFlags: .command)
+        }
+
+        let trackCard = app.windows.firstMatch.buttons["track-card-c-0"]
+        XCTAssertTrue(trackCard.waitForExistence(timeout: 10), "character track card missing")
+        trackCard.click()
+
+        let editJSON = app.buttons["edit-advanced-json"]
+        XCTAssertTrue(editJSON.waitForExistence(timeout: 5), "advanced control missing")
+        editJSON.click()
+
+        let editor = app.textViews["advanced-json-editor"]
+        XCTAssertTrue(editor.waitForExistence(timeout: 5), "JSON editor did not open")
+        XCTAssertTrue(app.staticTexts["Valid JSON"].exists, "initial character JSON is invalid")
+        XCTAssertFalse(app.buttons["Apply"].isEnabled, "unchanged JSON should not apply")
+    }
+    #endif
 }
 
+#if !os(macOS)
 extension SmokeTests {
     /// Screenshot harness: open the seeded show (via BANNY_OPEN_DOC) and hold
     /// it on screen while the host grabs simctl screenshots.
@@ -62,3 +88,4 @@ extension SmokeTests {
         XCTAssertEqual(app.state, .runningForeground)
     }
 }
+#endif

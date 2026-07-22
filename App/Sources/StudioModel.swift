@@ -865,6 +865,14 @@ final class StudioModel {
         imageSamples.append((time, imagePen.x, imagePen.y, imagePen.scale, imagePen.rotation))
     }
 
+    /// Captures holds as well as movement. Without periodic stationary samples,
+    /// waiting before a drag would be simplified into one slow move from the
+    /// beginning of the take to the first pointer update.
+    func imageRecordTick() {
+        guard isImageRecording else { return }
+        imageRecordSample(x: imagePen.x, y: imagePen.y)
+    }
+
     private func commitImageRecording() {
         defer {
             imageRecordCueID = nil
@@ -1959,6 +1967,68 @@ final class StudioModel {
     }
 
     // MARK: - Undo
+
+    /// Applies a validated raw character edit as one ordinary timeline edit.
+    func applyAdvancedJSON(character: Character, at index: Int) {
+        guard scene.characters.indices.contains(index) else { return }
+        pause()
+        registerUndoSnapshot(label: "Edit Character JSON")
+        scene.characters[index] = character
+        clearSelectionAfterJSONEdit(preferredCharacter: index)
+    }
+
+    /// Applies a validated complete show document. Unlike normal editor undo,
+    /// this snapshot includes assets, export range, and settings as well as the
+    /// stage because all of them are exposed by the full-show JSON scope.
+    func applyAdvancedJSON(document newDocument: ShowDocument,
+                           preferredCharacter: Int) {
+        pause()
+        registerDocumentUndoSnapshot(label: "Edit Show JSON")
+        document = newDocument
+        backgroundRevision += 1
+        clearSelectionAfterJSONEdit(preferredCharacter: preferredCharacter)
+        time = min(time, duration)
+        file?.audioEngine?.syncPlayback(self)
+    }
+
+    private func clearSelectionAfterJSONEdit(preferredCharacter: Int) {
+        selectedMarks = []
+        selectedClips = []
+        selectedImageCue = nil
+        selectedBackgroundCue = nil
+        selectedBackgroundCues = []
+        selectedOutfitEvent = nil
+        selectedMotionEvent = nil
+        selectedReaction = nil
+        selectedLightCue = nil
+        clearFreeform()
+        if scene.characters.isEmpty {
+            selection = []
+            selectedTrackKey = scene.backgroundTracks.first?.id
+        } else {
+            let index = min(max(0, preferredCharacter), scene.characters.count - 1)
+            selection = [index]
+            selectedTrackKey = "c-\(index)"
+        }
+    }
+
+    private func registerDocumentUndoSnapshot(label: String) {
+        let snapshot = document
+        undoManager?.registerUndo(withTarget: self) { model in
+            MainActor.assumeIsolated {
+                let redo = model.document
+                model.document = snapshot
+                model.backgroundRevision += 1
+                model.undoManager?.registerUndo(withTarget: model) { redoModel in
+                    MainActor.assumeIsolated {
+                        redoModel.document = redo
+                        redoModel.backgroundRevision += 1
+                    }
+                }
+            }
+        }
+        undoManager?.setActionName(label)
+    }
 
     /// Stage snapshot undo (the whole timeline state).
     func registerUndoSnapshot(label: String) {

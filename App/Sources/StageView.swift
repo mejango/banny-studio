@@ -19,6 +19,12 @@ struct StageView: View {
     @State private var frameClock = FrameClock()
     @AppStorage("studioLightMode") private var lightMode = false
     @State private var dragLast: CGSize?
+    /// A recording drag latches only when it starts on the selected visual.
+    /// The offset keeps the exact grabbed point under the mouse/finger instead
+    /// of snapping the asset's pivot to it.
+    @State private var imageDragResolved = false
+    @State private var imageDragActive = false
+    @State private var imageDragOffset: CGSize = .zero
     /// Where the frame currently sits inside the canvas (normal: aspect-fit
     /// centered; overview: possibly shrunk). Gestures normalize against it.
     @State private var stageRect = CGRect(x: 0, y: 0, width: 1280, height: 720)
@@ -59,6 +65,7 @@ struct StageView: View {
                 frameClock.last = timeline.date
                 model.freeformNudge(dt: dt)
                 model.lightTick(dt: dt)
+                model.imageRecordTick()
                 file.audioEngine?.tick(model: model)
                 var scene = model.scene
                 // Live shadows while drawing a light: the pen stands in for
@@ -80,6 +87,25 @@ struct StageView: View {
                         for ci in scene.backgroundTracks[ti].cues.indices {
                             scene.backgroundTracks[ti].cues[ci].camFrom = liveCam
                             scene.backgroundTracks[ti].cues[ci].camTo = nil
+                        }
+                    }
+                }
+                // During a visual take, direct manipulation is the live source
+                // of truth. Override only this render copy; the recorded cue is
+                // punched in when REC stops.
+                if let cueID = model.imageRecordCueID, let pen = model.imagePenNow {
+                    let placement = ImagePlacement(x: pen.x, y: pen.y, scale: pen.scale,
+                                                   rotation: pen.rotation)
+                    for ti in scene.imageTracks.indices {
+                        if let ci = scene.imageTracks[ti].cues.firstIndex(where: { $0.id == cueID }) {
+                            scene.imageTracks[ti].cues[ci].from = placement
+                            scene.imageTracks[ti].cues[ci].to = nil
+                        }
+                    }
+                    for ti in scene.audioTracks.indices {
+                        if let ci = scene.audioTracks[ti].cues.firstIndex(where: { $0.id == cueID }) {
+                            scene.audioTracks[ti].cues[ci].from = placement
+                            scene.audioTracks[ti].cues[ci].to = nil
                         }
                     }
                 }
@@ -224,7 +250,14 @@ struct StageView: View {
                                      revision: model.backgroundRevision,
                                      assets: model.document.assets, file: file) else { return }
         let W = Double(frame.width), H = Double(frame.height)
-        let p = cue.placement(at: model.time)
+        let p: ImagePlacement
+        let isRecordedCue = model.imageRecordCueID == cue.id
+        if isRecordedCue, let pen = model.imagePenNow {
+            p = ImagePlacement(x: pen.x, y: pen.y, scale: pen.scale,
+                               rotation: pen.rotation)
+        } else {
+            p = cue.placement(at: model.time)
+        }
         let w = p.scale * W
         let h = w * Double(img.height) / Double(max(1, img.width))
         var highlight = context
@@ -245,11 +278,19 @@ struct StageView: View {
             path = Path(ellipseIn: CGRect(x: rect.midX - side / 2, y: rect.midY - side / 2,
                                           width: side, height: side))
         }
+        let accent: Color = isRecordedCue ? .red : .orange
         highlight.stroke(path,
-                         with: .color(.orange),
+                         with: .color(accent),
                          style: StrokeStyle(lineWidth: 1.5, dash: [5, 4]))
         highlight.fill(Path(ellipseIn: CGRect(x: -3, y: -3, width: 6, height: 6)),
-                       with: .color(.orange))
+                       with: .color(accent))
+        if isRecordedCue {
+            context.draw(Text("REC · DRAG TO MOVE")
+                            .font(.system(size: 9, weight: .bold))
+                            .foregroundStyle(Color.white),
+                         at: CGPoint(x: frame.minX + p.x * W,
+                                     y: frame.minY + p.y * H - 16))
+        }
     }
 
     /// Temporary editor-only handle for the selected light cue: lights never
@@ -257,31 +298,6 @@ struct StageView: View {
     private func drawLightHandle(context: GraphicsContext, rect frame: CGRect) {
         func point(_ x: Double, _ y: Double) -> CGPoint {
             CGPoint(x: frame.minX + x * frame.width, y: frame.minY + y * frame.height)
-        }
-        // While recording image motion, ghost the asset at the pen.
-        if model.isImageRecording, let pen = model.imagePenNow {
-            let p = point(pen.x, pen.y)
-            if let cue = model.selectedImageCueValue,
-               let img = media.visual(cue: cue, at: model.time, playing: model.playing,
-                                      revision: model.backgroundRevision,
-                                      assets: model.document.assets, file: file) {
-                let w = pen.scale * frame.width
-                let h = w * CGFloat(img.height) / CGFloat(max(1, img.width))
-                var ghost = context
-                ghost.opacity = 0.75
-                ghost.translateBy(x: p.x, y: p.y)
-                ghost.rotate(by: .degrees(pen.rotation))
-                let px = min(1, max(0, cue.pivot.x))
-                let py = min(1, max(0, cue.pivot.y))
-                let rect = CGRect(x: -px * w, y: -py * h, width: w, height: h)
-                ghost.draw(Image(decorative: img, scale: 1).interpolation(.none), in: rect)
-                ghost.stroke(Path(roundedRect: rect, cornerRadius: 2),
-                             with: .color(.red), style: StrokeStyle(lineWidth: 1.5, dash: [5, 4]))
-            } else {
-                context.stroke(Path(ellipseIn: CGRect(x: p.x - 8, y: p.y - 8, width: 16, height: 16)),
-                               with: .color(.red), lineWidth: 1.5)
-            }
-            return
         }
         // While drawing a light path, show the pen position.
         if model.isLightRecording {
@@ -351,7 +367,10 @@ struct StageView: View {
                 let fx = (value.location.x - stageRect.minX) / stageRect.width
                 let fy = (value.location.y - stageRect.minY) / stageRect.height
                 if model.isImageRecording {
-                    model.imageRecordSample(x: fx, y: fy)
+                    if !imageDragResolved { resolveImageRecordingDrag(at: value.startLocation) }
+                    guard imageDragActive else { return }
+                    model.imageRecordSample(x: fx - imageDragOffset.width,
+                                            y: fy - imageDragOffset.height)
                     return
                 }
                 if model.isCameraRecording {
@@ -420,10 +439,47 @@ struct StageView: View {
             }
             .onEnded { _ in
                 dragLast = nil
-                if model.selectedImageCueValue != nil {
+                imageDragResolved = false
+                imageDragActive = false
+                imageDragOffset = .zero
+                if !model.isImageRecording, model.selectedImageCueValue != nil {
                     model.registerUndoSnapshot(label: "Place Image")
                 }
             }
+    }
+
+    private func resolveImageRecordingDrag(at location: CGPoint) {
+        imageDragResolved = true
+        guard stageRect.width > 1, stageRect.height > 1,
+              let cue = model.selectedImageCueValue,
+              model.imageRecordCueID == cue.id,
+              let pen = model.imagePenNow else { return }
+        let x = (location.x - stageRect.minX) / stageRect.width
+        let y = (location.y - stageRect.minY) / stageRect.height
+        let image = media.visual(cue: cue, at: model.time, playing: model.playing,
+                                 revision: model.backgroundRevision,
+                                 assets: model.document.assets, file: file)
+        let assetAspect = image.map { Double($0.width) / Double(max(1, $0.height)) } ?? 1
+        let placement = ImagePlacement(x: pen.x, y: pen.y, scale: pen.scale,
+                                       rotation: pen.rotation)
+        let inside = cue.containsStagePoint(x: x, y: y, at: model.time,
+                                            assetAspect: assetAspect,
+                                            stageAspect: model.frameAspect,
+                                            placement: placement)
+        // Keep tiny assets grabbable around the pivot even when their rendered
+        // rectangle is smaller. Touch gets the standard 44pt minimum target.
+        #if os(macOS)
+        let grabRadius: CGFloat = 12
+        #else
+        let grabRadius: CGFloat = 22
+        #endif
+        let pivotPoint = CGPoint(x: stageRect.minX + pen.x * stageRect.width,
+                                 y: stageRect.minY + pen.y * stageRect.height)
+        let nearPivot = hypot(location.x - pivotPoint.x,
+                              location.y - pivotPoint.y) <= grabRadius
+        guard inside || nearPivot else { return }
+        imageDragOffset = CGSize(width: x - pen.x, height: y - pen.y)
+        imageDragActive = true
     }
 }
 

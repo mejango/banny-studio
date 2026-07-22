@@ -224,6 +224,8 @@ struct TrackInspector: View {
                 .focused($nameFocused)
             switch kind {
             case .character(let i):
+                AdvancedJSONSection(model: model, file: file, characterIndex: i)
+                Divider()
                 MotionSection(model: model, characterIndex: i)
                 ReactionLibrarySection(model: model, characterIndex: i)
                 MixSection(model: model, kind: kind)
@@ -432,6 +434,7 @@ struct TrackCardButton: View {
         }
         .buttonStyle(.plain)
         .help("Track settings")
+        .accessibilityIdentifier("track-card-\(row.key(in: model.scene))")
         .onChange(of: model.inspectorRequest) { _, req in
             if req == row.key(in: model.scene) {
                 open = true
