@@ -12,6 +12,11 @@ public extension ShowDocument {
                              face: x <= 0.5 ? 1 : -1,
                              name: "Banny \(i + 1)")
         }
-        return ShowDocument(stage: SceneState(characters: characters))
+        return ShowDocument(stage: SceneState(
+            characters: characters,
+            backgroundTracks: [
+                BackgroundTrack(id: "scenes", name: "Scenes"),
+            ],
+            rowOrder: ["scenes"] + characters.indices.map { "c-\($0)" }))
     }
 }

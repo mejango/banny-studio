@@ -1,0 +1,4 @@
+interface:
+  display_name: "Banny Studio Production"
+  short_description: "Build, inspect, validate, and ship Banny shows"
+  default_prompt: "Use $banny-studio to produce or edit this Banny Studio show safely from the CLI."

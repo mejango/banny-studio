@@ -106,9 +106,11 @@ extension ShowDocument: Codable {
             }
             cursor += sceneEnd
         }
-        if !bgCues.isEmpty {
-            stage.backgroundTracks = [BackgroundTrack(id: "bgtrack", name: "Backgrounds", cues: bgCues)]
-        }
+        // Every v4 document owns exactly one Scenes track, even when the
+        // legacy production had no backdrop media.
+        stage.backgroundTracks = [
+            BackgroundTrack(id: "scenes", name: "Scenes", cues: bgCues),
+        ]
         let migratedShow = show.compactMap { seg -> ShowSegment? in
             guard let off = offsets[seg.sceneID] else { return nil }
             return ShowSegment(sceneID: "", name: seg.name, from: seg.from + off, to: seg.to + off)
@@ -984,6 +986,38 @@ extension Character: Codable {
         locked = try c.decodeIfPresent(Bool.self, forKey: .locked) ?? false
         solo = try c.decodeIfPresent(Bool.self, forKey: .solo) ?? false
         presence = try c.decodeIfPresent([VisibilityEvent].self, forKey: .presence) ?? []
+    }
+
+    /// Explicit encoding keeps the set-backed armed channel list in a stable
+    /// order. Canonical show.json hashes must not change between processes.
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(body, forKey: .body)
+        try c.encode(x, forKey: .x)
+        try c.encode(depth, forKey: .depth)
+        try c.encode(size, forKey: .size)
+        try c.encode(face, forKey: .face)
+        try c.encode(baseOutfit, forKey: .baseOutfit)
+        try c.encode(subs, forKey: .subs)
+        try c.encode(voicePitch, forKey: .voicePitch)
+        try c.encode(voiceSpeed, forKey: .voiceSpeed)
+        try c.encode(speechVoice, forKey: .speechVoice)
+        try c.encode(clips, forKey: .clips)
+        try c.encode(events, forKey: .events)
+        try c.encode(reactions, forKey: .reactions)
+        try c.encode(EventGroup.allCases.filter(armedGroups.contains),
+                     forKey: .armedGroups)
+        try c.encode(name, forKey: .name)
+        try c.encode(trackFx, forKey: .trackFx)
+        try c.encodeIfPresent(recStart, forKey: .recStart)
+        try c.encode(speed, forKey: .speed)
+        try c.encode(rotationSpeed, forKey: .rotationSpeed)
+        try c.encodeIfPresent(rotationPivot, forKey: .rotationPivot)
+        try c.encode(wobble, forKey: .wobble)
+        try c.encode(hidden, forKey: .hidden)
+        try c.encode(locked, forKey: .locked)
+        try c.encode(solo, forKey: .solo)
+        try c.encode(presence, forKey: .presence)
     }
 }
 

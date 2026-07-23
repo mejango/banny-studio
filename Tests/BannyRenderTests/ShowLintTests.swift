@@ -39,6 +39,34 @@ final class ShowLintTests: XCTestCase {
         XCTAssertTrue(diags.allSatisfy { $0.severity == .error })
     }
 
+    func testFaceWardrobeSlotsUseEyeAndMouthCatalogs() throws {
+        let catalog = try AssetCatalog(assetsRoot: Self.assetsRoot)
+        let valid = Character(
+            body: .orange,
+            baseOutfit: [5: "fierce", 7: "gapteeth"],
+            events: [
+                .outfit(t: 1, slot: 5, name: "introspective"),
+                .outfit(t: 2, slot: 7, name: "lipstick"),
+            ])
+        let validDocument = ShowDocument(stage: SceneState(characters: [valid]))
+        XCTAssertEqual(
+            ShowLint.check(document: validDocument, audioIDs: [],
+                           assetFileIDs: [], catalog: catalog),
+            [])
+
+        let invalid = Character(
+            body: .orange,
+            baseOutfit: [5: "not-an-eye", 7: "not-a-mouth"])
+        let invalidDocument = ShowDocument(stage: SceneState(characters: [invalid]))
+        let messages = ShowLint.check(
+            document: invalidDocument,
+            audioIDs: [],
+            assetFileIDs: [],
+            catalog: catalog).map(\.message).joined(separator: "\n")
+        XCTAssertTrue(messages.contains("unknown eye option \"not-an-eye\""), messages)
+        XCTAssertTrue(messages.contains("unknown mouth option \"not-a-mouth\""), messages)
+    }
+
     func testReactionReferencesRangesAndOutfitsAreLinted() throws {
         let catalog = try AssetCatalog(assetsRoot: Self.assetsRoot)
         let bad = ReactionDefinition(id: "bad", name: "Bad reaction", dur: 1, events: [

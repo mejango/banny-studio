@@ -98,12 +98,14 @@ final class StudioModel {
 
     /// ⌘-drag: duplicate the selected marks (nudged +0.05s so the copies are
     /// distinct) and select the copies — the drag then moves the copies.
-    func duplicateSelectedMarksInPlace() {
+    func duplicateSelectedMarksInPlace(registerUndo: Bool = true) {
         let editableMarks = selectedMarks.filter {
             scene.characters[safe: $0.character]?.locked == false
         }
         guard !editableMarks.isEmpty else { return }
-        registerUndoSnapshot(label: "Duplicate Marks")
+        if registerUndo {
+            registerUndoSnapshot(label: "Duplicate Marks")
+        }
         var dups: Set<PerfMark> = []
         for m in editableMarks {
             var events = scene.characters[m.character].events
@@ -155,9 +157,11 @@ final class StudioModel {
     }
 
     /// ⌘-drag: clone a clip in place (media ref copied) and return the copy's id.
-    func duplicateClip(id: String) -> String? {
+    func duplicateClip(id: String, registerUndo: Bool = true) -> String? {
         guard !isClipLocked(id) else { return nil }
-        registerUndoSnapshot(label: "Duplicate Clip")
+        if registerUndo {
+            registerUndoSnapshot(label: "Duplicate Clip")
+        }
         func clone(_ clips: inout [AudioClip]) -> String? {
             guard let ci = clips.firstIndex(where: { $0.id == id }) else { return nil }
             var copy = clips[ci]
@@ -231,9 +235,15 @@ final class StudioModel {
     }
 
     /// ⌘-drag: clone a cue in place; returns the copy's id.
-    func duplicateCue(kind: TrackRowKind, id: String) -> String? {
+    func duplicateCue(
+        kind: TrackRowKind,
+        id: String,
+        registerUndo: Bool = true
+    ) -> String? {
         guard !isTrackLocked(kind) else { return nil }
-        registerUndoSnapshot(label: "Duplicate Cue")
+        if registerUndo {
+            registerUndoSnapshot(label: "Duplicate Cue")
+        }
         switch kind {
         case .image(let i):
             guard scene.imageTracks.indices.contains(i),
@@ -1979,12 +1989,18 @@ final class StudioModel {
     }
 
     /// ⌘-drag on a chain: clone the whole run in place; returns the copies' ids.
-    func duplicateLightRun(track: Int, containing id: String) -> [String]? {
+    func duplicateLightRun(
+        track: Int,
+        containing id: String,
+        registerUndo: Bool = true
+    ) -> [String]? {
         guard scene.lightTracks.indices.contains(track),
               !scene.lightTracks[track].locked else { return nil }
         let run = Self.lightRun(in: scene.lightTracks[track].cues, containing: id)
         guard !run.isEmpty else { return nil }
-        registerUndoSnapshot(label: "Duplicate Light Take")
+        if registerUndo {
+            registerUndoSnapshot(label: "Duplicate Light Take")
+        }
         var ids: [String] = []
         for cue in run {
             var copy = cue
@@ -2415,6 +2431,13 @@ final class StudioModel {
     /// Stage snapshot undo (the whole timeline state).
     func registerUndoSnapshot(label: String) {
         registerStageUndo(document.stage, label: label)
+    }
+
+    /// Registers a snapshot captured before a continuous gesture. Drag
+    /// handlers apply live values first, so they must preserve their initial
+    /// state explicitly rather than accidentally registering the final state.
+    func registerUndoSnapshot(_ snapshot: SceneState, label: String) {
+        registerStageUndo(snapshot, label: label)
     }
 
     private func registerStageUndo(_ snapshot: SceneState, label: String) {

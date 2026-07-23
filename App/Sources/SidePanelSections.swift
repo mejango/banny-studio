@@ -1601,6 +1601,7 @@ struct ScriptSection: View {
                 .font(.caption)
                 .frame(height: 80)
                 .overlay(RoundedRectangle(cornerRadius: 4).stroke(.quaternary))
+                .accessibilityIdentifier("script-editor")
                 .onChange(of: text) {
                     model.syncCaptions(characterIndex: characterIndex, fromText: text)
                 }

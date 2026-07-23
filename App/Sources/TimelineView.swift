@@ -167,16 +167,24 @@ struct StudioTimelineView: View {
     @State private var resizing: (mark: PerfMark, leading: Bool, baseEvents: [PerfEvent])?
     @State private var draggingClip: (id: String, baseStart: Double, baseDur: Double,
                                       baseOffset: Double, srcDur: Double, edge: Int)?
+    /// A zero-distance clip drag is also a click. The press phase selects the
+    /// clip so it can be dragged immediately; remember it so mouse-up does not
+    /// run the ordinary click-toggle path and deselect it again.
+    @State private var pressedClipID: String?
     @State private var draggingFade: (id: String, leading: Bool, start: Double, dur: Double)?
     @State private var draggingReaction: (char: Int, id: String, baseStart: Double,
                                           baseDur: Double, edge: Int, undoRegistered: Bool)?
     @State private var draggingCue: (row: TrackRow, cueID: String, baseStart: Double, baseDur: Double, edge: Int)?
     @State private var draggingSub: (char: Int, index: Int, baseStart: Double, baseDur: Double, edge: Int)?
+    @State private var subtitleStageBeforeDrag: SceneState?
     /// Export-range drag: edge -1/1 = a marker, 0 = slide the range, 2 = drag out a new one.
     @State private var draggingExport: (edge: Int, baseFrom: Double, baseTo: Double)?
+    @State private var exportRangeBeforeDrag: (from: Double, to: Double)?
+    @State private var exportStageBeforeDrag: SceneState?
     @State private var exportRangeSelected = false
     @State private var draggingPresence: (row: TrackRow, index: Int)?
     @State private var selectedPresence: (rowKey: String, index: Int)?
+    @State private var laneStageBeforeDrag: SceneState?
     @State private var lastTap: (location: CGPoint, at: Date)?
     @State private var resizingTrack: (key: String, baseHeight: CGFloat, minHeight: CGFloat)?
     @State private var draggingRow: (row: TrackRow, currentY: CGFloat)?
@@ -435,6 +443,7 @@ struct StudioTimelineView: View {
             }
         }
         .background(theme.surface)
+        .accessibilityIdentifier("studio-timeline")
         .onChange(of: neededGutterWidth) { _, needed in
             if needed > laneLabelWidthStore {
                 laneLabelWidthStore = min(300, needed)
@@ -443,6 +452,7 @@ struct StudioTimelineView: View {
         .simultaneousGesture(
                 MagnifyGesture()
                     .onChanged { g in
+                        reclaimTimelineKeyboardFocus()
                         let base = pinchZoomBase ?? zoom
                         pinchZoomBase = base
                         if pinchAnchor == nil {
@@ -529,7 +539,9 @@ struct StudioTimelineView: View {
         #else
         .toolbar {
             if !model.selectedMarks.isEmpty || !model.selectedClips.isEmpty
-                || model.selectedReaction != nil {
+                || model.selectedReaction != nil || model.selectedOutfitEvent != nil
+                || model.selectedMotionEvent != nil || exportRangeSelected
+                || selectedPresence != nil {
                 Button("Delete", role: .destructive) { deleteSelection() }
             }
         }
@@ -865,6 +877,12 @@ struct StudioTimelineView: View {
         .contextMenu {
             let point = hoverHeaderPoint ?? CGPoint(x: 0, y: rulerTop)
             let markerTime = (time(forX: point.x + scrollOffset.x) * 10).rounded() / 10
+            if point.y < exportRowH, exportRangeContains(markerTime) {
+                Button("Delete Export Range", role: .destructive) {
+                    deleteExportRange()
+                }
+                Divider()
+            }
             Button(String(format: "Add marker at %.1fs", markerTime)) {
                 model.addTimelineMarker(kind: .marker, at: markerTime)
             }
@@ -885,6 +903,7 @@ struct StudioTimelineView: View {
     private var headerInteraction: some Gesture {
         DragGesture(minimumDistance: 0)
             .onChanged { value in
+                reclaimTimelineKeyboardFocus()
                 if editingLabel != nil {
                     // The second click of a double-click must not commit-and-
                     // reopen (the chips resort and the strip appears to jump).
@@ -904,6 +923,8 @@ struct StudioTimelineView: View {
                     // Export row: grab a marker, slide the range, or drag out a new one.
                     let sx = value.startLocation.x + scrollOffset.x
                     let t0 = time(forX: sx)
+                    exportRangeBeforeDrag = model.exportRange
+                    exportStageBeforeDrag = model.scene
                     if let r = model.exportRange {
                         let grab: CGFloat = 6
                         if abs(sx - x(forTime: r.from)) < grab { draggingExport = (-1, r.from, r.to) }
@@ -913,9 +934,15 @@ struct StudioTimelineView: View {
                     } else {
                         draggingExport = (2, t0, t0)
                     }
-                    if let de = draggingExport { applyExportDrag(de, value: value) }
+                    if let de = draggingExport {
+                        // Selection begins on mouse-down, matching clips and
+                        // marks. Dragging empty space starts a new selection.
+                        exportRangeSelected = de.edge != 2
+                        applyExportDrag(de, value: value)
+                    }
                     return
                 }
+                exportRangeSelected = false
                 if value.startLocation.y < captionsTop + captionsRowH {
                     let sx = value.startLocation.x + scrollOffset.x
                     if let st = subtitleAt(contentX: sx) {
@@ -923,6 +950,7 @@ struct StudioTimelineView: View {
                         let startX = x(forTime: st.sub.start)
                         let endX = x(forTime: st.sub.start + st.sub.dur)
                         let e = abs(sx - startX) < edge ? -1 : abs(sx - endX) < edge ? 1 : 0
+                        subtitleStageBeforeDrag = model.scene
                         draggingSub = (st.char, st.index, st.sub.start, st.sub.dur, e)
                     }
                     return
@@ -953,9 +981,19 @@ struct StudioTimelineView: View {
                         // A plain click: on the range selects it (Delete removes),
                         // on the empty row deselects.
                         exportRangeSelected = de.edge != 2
+                    } else if model.exportRange != nil {
+                        exportRangeSelected = true
                     }
-                    model.registerUndoSnapshot(label: "Export Range")
+                    if exportRangeChanged(from: exportRangeBeforeDrag, to: model.exportRange) {
+                        if let snapshot = exportStageBeforeDrag {
+                            model.registerUndoSnapshot(
+                                snapshot,
+                                label: "Export Range")
+                        }
+                    }
                     draggingExport = nil
+                    exportRangeBeforeDrag = nil
+                    exportStageBeforeDrag = nil
                     return
                 }
                 if value.translation.width.magnitude < 3, value.translation.height.magnitude < 3,
@@ -986,10 +1024,14 @@ struct StudioTimelineView: View {
                         }
                     }
                 }
-                if draggingSub != nil {
-                    model.registerUndoSnapshot(label: "Edit Captions")
+                if let snapshot = subtitleStageBeforeDrag,
+                   snapshot != model.scene {
+                    model.registerUndoSnapshot(
+                        snapshot,
+                        label: "Edit Captions")
                 }
                 draggingSub = nil
+                subtitleStageBeforeDrag = nil
                 scrubZoomBase = nil
                 pinchAnchor = nil
             }
@@ -1229,6 +1271,8 @@ struct StudioTimelineView: View {
     private var gutterInteraction: some Gesture {
         DragGesture(minimumDistance: 0)
             .onChanged { value in
+                reclaimTimelineKeyboardFocus()
+                exportRangeSelected = false
                 if editingLabel != nil {
                     // The second click of a double-click must not commit-and-
                     // reopen (the chips resort and the strip appears to jump).
@@ -2418,31 +2462,34 @@ struct StudioTimelineView: View {
     private var interaction: some Gesture {
         DragGesture(minimumDistance: 0)
             .onChanged { value in
+                reclaimTimelineKeyboardFocus()
+                exportRangeSelected = false
                 // A click anywhere on the timeline while renaming commits the edit.
                 if editingLabel != nil {
                     commitLabelEdit()
                     return
                 }
+                if laneStageBeforeDrag == nil {
+                    laneStageBeforeDrag = model.scene
+                }
                 handleLaneDrag(value)
             }
             .onEnded { value in
-                if value.translation.width.magnitude < 3, value.translation.height.magnitude < 3 {
-                    handleTap(at: value.location)
+                if let snapshot = laneStageBeforeDrag,
+                   snapshot != model.scene {
+                    model.registerUndoSnapshot(
+                        snapshot,
+                        label: "Edit Timeline")
                 }
-                if dragStartMarks != nil || resizing != nil || draggingClip != nil
-                    || draggingFade != nil || draggingCue != nil || draggingSub != nil
-                    || draggingPresence != nil
-                    || runDrag != nil || bgGroupDrag != nil || draggingOutfit != nil {
-                    model.registerUndoSnapshot(label: "Edit Timeline")
+                laneStageBeforeDrag = nil
+                if value.translation.width.magnitude < 3, value.translation.height.magnitude < 3 {
+                    handleTap(at: value.location, preservingPressedClip: pressedClipID)
                 }
                 stopAutoScroll()
                 snapGuide = nil
                 if let m = marquee {
                     applyMarquee(m.start, m.current)
                     marquee = nil
-                }
-                if dragStartMarks != nil || dragStartClips != nil {
-                    model.registerUndoSnapshot(label: "Move Selection")
                 }
                 dragStartClips = nil
                 dragStartMarks = nil
@@ -2451,6 +2498,7 @@ struct StudioTimelineView: View {
                 bgGroupDrag = nil
                 draggingOutfit = nil
                 draggingClip = nil
+                pressedClipID = nil
                 draggingFade = nil
                 draggingReaction = nil
                 draggingCue = nil
@@ -2507,7 +2555,6 @@ struct StudioTimelineView: View {
         if var drag = draggingReaction {
             let dt = Double(value.translation.width / pxPerSecond)
             if !drag.undoRegistered, abs(dt) > 0.0001 {
-                model.registerUndoSnapshot(label: drag.edge == 0 ? "Move Reaction" : "Resize Reaction")
                 drag.undoRegistered = true
                 draggingReaction = drag
             }
@@ -2617,7 +2664,6 @@ struct StudioTimelineView: View {
         if dragStartMarks == nil {
             if let handle = fadeHandle(at: value.startLocation),
                !model.isClipLocked(handle.clip.id) {
-                model.registerUndoSnapshot(label: "Adjust Clip Fade")
                 draggingFade = (handle.clip.id, handle.leading,
                                 handle.clip.start, handle.clip.dur)
                 return
@@ -2647,7 +2693,10 @@ struct StudioTimelineView: View {
                 var block = hit.block
                 #if os(macOS)
                 if e == 0, NSEvent.modifierFlags.contains(.command),
-                   let newID = model.duplicateReactionBlock(character: hit.char, id: hit.block.id),
+                   let newID = model.duplicateReactionBlock(
+                       character: hit.char,
+                       id: hit.block.id,
+                       registerUndo: false),
                    let copy = model.scene.characters[hit.char].reactions
                     .first(where: { $0.id == newID }) {
                     block = copy
@@ -2671,7 +2720,7 @@ struct StudioTimelineView: View {
                     #if os(macOS)
                     // ⌘-drag duplicates the selection and drags the copies.
                     if NSEvent.modifierFlags.contains(.command) {
-                        model.duplicateSelectedMarksInPlace()
+                        model.duplicateSelectedMarksInPlace(registerUndo: false)
                     }
                     #endif
                     dragStartMarks = Dictionary(uniqueKeysWithValues:
@@ -2698,13 +2747,15 @@ struct StudioTimelineView: View {
                     #if os(macOS)
                     // ⌘-drag duplicates the clip and drags the copy.
                     if e == 0, NSEvent.modifierFlags.contains(.command),
-                       let nid = model.duplicateClip(id: c.id) {
+                       let nid = model.duplicateClip(id: c.id, registerUndo: false) {
                         clipID = nid
                     }
                     #endif
                     draggingClip = (clipID, c.start, c.dur, c.offset, c.srcDur, e)
+                    pressedClipID = clipID
                     model.selectedClips = [clipID]
                 }
+                if pressedClipID == nil { pressedClipID = c.id }
                 return
             } else if let (row, cue) = cue(at: value.startLocation)
                         ?? cue(at: CGPoint(x: value.startLocation.x - 6, y: value.startLocation.y))
@@ -2729,7 +2780,10 @@ struct StudioTimelineView: View {
                             var ids = run.map(\.id)
                             #if os(macOS)
                             if NSEvent.modifierFlags.contains(.command),
-                               let copies = model.duplicateLightRun(track: li, containing: cue.id) {
+                               let copies = model.duplicateLightRun(
+                                   track: li,
+                                   containing: cue.id,
+                                   registerUndo: false) {
                                 ids = copies
                             }
                             #endif
@@ -2761,7 +2815,10 @@ struct StudioTimelineView: View {
                 #if os(macOS)
                 // ⌘-drag duplicates the cue and drags the copy.
                 if e == 0, NSEvent.modifierFlags.contains(.command),
-                   let nid = model.duplicateCue(kind: kind(of: row), id: cue.id) {
+                   let nid = model.duplicateCue(
+                       kind: kind(of: row),
+                       id: cue.id,
+                       registerUndo: false) {
                     cueID = nid
                 }
                 #endif
@@ -3059,7 +3116,7 @@ struct StudioTimelineView: View {
         }
     }
 
-    private func handleTap(at point: CGPoint) {
+    private func handleTap(at point: CGPoint, preservingPressedClip pressedClipID: String? = nil) {
         let y = point.y
         let now = Date()
         let isDoubleClick = lastTap.map {
@@ -3196,6 +3253,18 @@ struct StudioTimelineView: View {
         }
         if model.selectedOutfitEvent != nil { model.selectedOutfitEvent = nil }
         if model.selectedMotionEvent != nil { model.selectedMotionEvent = nil }
+        // The drag recognizer selects clips on mouse-down so a user can grab
+        // them without a preliminary click. Preserve that selection on a
+        // zero-distance mouse-up instead of toggling it off. A second click
+        // still opens the clip mix inspector.
+        if let pressedClipID {
+            model.selectedReaction = nil
+            model.selectedClips = [pressedClipID]
+            if isDoubleClick, let row = row(at: point.y) {
+                clipMix = (kind(of: row), pressedClipID, point.x, point.y)
+            }
+            return
+        }
         let splitting = isCommandDown()
         if let hit = mark(at: point) {
             model.selectedReaction = nil
@@ -3483,12 +3552,48 @@ struct StudioTimelineView: View {
             return
         }
         if exportRangeSelected {
-            model.registerUndoSnapshot(label: "Delete Export Range")
-            model.exportRange = nil
-            exportRangeSelected = false
+            deleteExportRange()
             return
         }
         model.deleteTimelineSelection()
+    }
+
+    private func deleteExportRange() {
+        guard model.exportRange != nil else {
+            exportRangeSelected = false
+            return
+        }
+        model.registerUndoSnapshot(label: "Delete Export Range")
+        model.exportRange = nil
+        exportRangeSelected = false
+    }
+
+    private func exportRangeContains(_ time: Double) -> Bool {
+        guard let range = model.exportRange else { return false }
+        return time >= range.from && time <= range.to
+    }
+
+    private func exportRangeChanged(from old: (from: Double, to: Double)?,
+                                    to new: (from: Double, to: Double)?) -> Bool {
+        switch (old, new) {
+        case (nil, nil): return false
+        case (nil, .some(_)), (.some(_), nil): return true
+        case let (.some(a), .some(b)):
+            return abs(a.from - b.from) > 0.000_001 || abs(a.to - b.to) > 0.000_001
+        }
+    }
+
+    /// Timeline gestures own transport and editing shortcuts. Explicitly end
+    /// text editing when the user clicks or scrubs here so Space returns to
+    /// Play/Pause instead of being inserted into the script editor.
+    private func reclaimTimelineKeyboardFocus() {
+        #if os(macOS)
+        guard let window = NSApp.keyWindow,
+              let responder = window.firstResponder as? NSText,
+              responder.superview != nil,
+              !responder.isHidden else { return }
+        window.makeFirstResponder(nil)
+        #endif
     }
 }
 

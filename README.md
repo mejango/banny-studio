@@ -10,10 +10,11 @@ Spec: `docs/superpowers/specs/2026-07-07-banny-studio-native-design.md`
 
 | Path | What |
 |------|------|
-| `Sources/BannyCore` | Document model (schema v2), event semantics, deterministic simulator, legacy v1 importer, `.bannyshow` package I/O. Platform-free. |
+| `Sources/BannyCore` | Strict document model (schema v4), event semantics, deterministic simulator, legacy v1 importer, and portable show package I/O. Platform-free. |
 | `Sources/BannyRender` | Baked-asset catalog + pure `draw(t)` CoreGraphics frame compositor. Same code path for editor and export. |
-| `Sources/BannyMedia` | AVAudioEngine clip graph (EQ/pan/reverb, live + offline) and the offline mp4 exporter (AVAssetWriter, 30 fps, H.264+AAC). |
-| `Sources/banny-tool` | `banny` CLI: catalog, new, validate, preview, info, ship (headless mp4), stylize, skill. |
+| `Sources/BannyMedia` | Audio graph, TTS/lip-sync production, media probing, preview, and offline H.264/AAC export. |
+| `Sources/BannyCLI` | Testable production API for strict JSON Patch, speech, media, validation, previews, packaging, and shipping. |
+| `Sources/banny-tool` | Thin `banny` executable entry point around `BannyCLI`. |
 | `App/` | The universal SwiftUI app (XcodeGen project). Editor, timeline, wardrobe, performance deck, Ship. |
 | `App/Resources/BannyAssets` | Extracted + baked art (catalog.json, png/, svg/). |
 | `tools/` | `extract-assets.mjs` (pull art constants from index.html), `bake-assets.sh` (rasterize via headless Chrome), `gen-golden.mjs` (golden sim fixtures from the ORIGINAL JS math). |
@@ -34,18 +35,28 @@ permission grant; on the iOS simulator it runs unattended).
 ## CLI
 
 ```sh
-swift run banny catalog --json                     # wardrobe options
-swift run banny new show.bs --characters 2         # starter project (folder)
-swift run banny validate show.bs                   # lint before shipping
-swift run banny preview show.bs frame.png --t 2    # render one frame
-swift run banny ship show.bs out.mp4 --720         # headless mp4 export
-swift run banny pack show.bs shareable.bs          # zip for sharing/app import
-banny skill install                                # AI production skill → ~/.claude/skills
-
-A .bs project is a folder or a zip (the app shares zips); every command accepts both.
-
-Install without a checkout: `brew install mejango/banny/banny`
+swift run banny capabilities --json                    # machine contract
+swift run banny schema --example                       # canonical v4 example
+swift run banny catalog --json                         # wardrobe vocabulary
+swift run banny voices --json                          # installed TTS voices
+swift run banny new show.bs --characters 2             # editable folder
+swift run banny migrate legacy-show.bs --dry-run        # explicit v2/v3 → v4
+swift run banny apply show.bs patch.json --dry-run     # atomic RFC 6902
+swift run banny tts show.bs --character 1 --captions   # speech + mouth cues
+swift run banny media import show.bs take.wav \
+  --character 1 --kind microphone --lipsync            # portable recorded take
+swift run banny validate show.bs                       # strict preflight
+swift run banny preview show.bs frame.png --t 2        # deterministic frame
+swift run banny ship show.bs out.mp4 --720             # headless mp4 export
+swift run banny pack show.bs shareable.bs              # zipped app handoff
+banny skill install --target all                       # Codex + Claude skill
 ```
+
+Read-only commands accept editable folders and zipped `.bs` archives. Mutation
+commands require an unpacked folder and reject unknown options and JSON fields.
+Use `banny capabilities --json` as the exact AI/automation contract.
+
+Install without a checkout: `brew install mejango/banny/banny`.
 
 `ep1-native-ship.mp4` in this folder is ep1 shipped natively (160.9 s,
 1280×720@30, H.264+AAC) from `show/ep1/beat1/staging/1.json`.

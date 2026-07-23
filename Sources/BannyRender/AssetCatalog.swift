@@ -92,6 +92,17 @@ public final class AssetCatalog: @unchecked Sendable {
         catalog.outfits[name]?.slot
     }
 
+    /// Whether `name` is a real selectable eye option. Rendering falls back to
+    /// `default` for resilience, but validation must reject misspelled options.
+    public func hasEyeOption(_ name: String) -> Bool {
+        catalog.eyes[name] != nil
+    }
+
+    /// Whether `name` is a real selectable mouth option.
+    public func hasMouthOption(_ name: String) -> Bool {
+        catalog.mouths[name] != nil
+    }
+
     public func outfitImage(_ name: String, body: Body) -> CGImage? {
         catalog.outfits[name]?.ref.file(for: body).flatMap(image(named:))
     }

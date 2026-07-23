@@ -68,7 +68,8 @@ public enum ShowLint {
                     out.append(.init(.error, "\(label) has event outside its range at t=\(clean(event.t))"))
                 }
                 if case .outfit(_, let slot, let name) = event, let name, let catalog {
-                    checkOutfit(name: name, slot: slot, owner: label, catalog: catalog, into: &out)
+                    checkWardrobeChoice(name: name, slot: slot, owner: label,
+                                        catalog: catalog, into: &out)
                 }
             }
         }
@@ -76,9 +77,10 @@ public enum ShowLint {
         for (i, ch) in stage.characters.enumerated() {
             let who = ch.name.isEmpty ? "character \(i + 1)" : ch.name
             if let catalog {
-                for (slot, name) in ch.baseOutfit.sorted(by: { $0.key < $1.key })
-                    where catalog.outfitSlot(name) == nil {
-                    out.append(.init(.error, "\(who): baseOutfit slot \(slot) references unknown outfit \"\(name)\" — run `banny catalog` for valid names"))
+                for (slot, name) in ch.baseOutfit.sorted(by: { $0.key < $1.key }) {
+                    checkWardrobeChoice(name: name, slot: slot,
+                                        owner: "\(who): baseOutfit",
+                                        catalog: catalog, into: &out)
                 }
             }
             for event in ch.events {
@@ -86,8 +88,8 @@ public enum ShowLint {
                     out.append(.init(.error, "\(who): event at t=\(clean(event.t)) is before 0"))
                 }
                 if case .outfit(_, let slot, let name) = event, let name, let catalog {
-                    checkOutfit(name: name, slot: slot, owner: who,
-                                catalog: catalog, into: &out)
+                    checkWardrobeChoice(name: name, slot: slot, owner: who,
+                                        catalog: catalog, into: &out)
                 }
             }
             let instanceIDs = ch.reactions.map(\.id)
@@ -341,11 +343,30 @@ public enum ShowLint {
         }
     }
 
-    private static func checkOutfit(name: String, slot: Int, owner: String,
-                                    catalog: AssetCatalog, into out: inout [Diagnostic]) {
+    private static func checkWardrobeChoice(name: String, slot: Int, owner: String,
+                                            catalog: AssetCatalog,
+                                            into out: inout [Diagnostic]) {
+        if slot == 5 {
+            if !catalog.hasEyeOption(name) {
+                out.append(.init(
+                    .error,
+                    "\(owner) slot 5 references unknown eye option \"\(name)\" — run `banny catalog` for valid names"))
+            }
+            return
+        }
+        if slot == 7 {
+            if !catalog.hasMouthOption(name) {
+                out.append(.init(
+                    .error,
+                    "\(owner) slot 7 references unknown mouth option \"\(name)\" — run `banny catalog` for valid names"))
+            }
+            return
+        }
         switch catalog.outfitSlot(name) {
         case nil:
-            out.append(.init(.error, "\(owner): outfit event references unknown outfit \"\(name)\""))
+            out.append(.init(
+                .error,
+                "\(owner) slot \(slot) references unknown outfit \"\(name)\" — run `banny catalog` for valid names"))
         case .some(let actual) where actual != slot:
             out.append(.init(.warning, "\(owner): outfit \"\(name)\" belongs to slot \(actual), event says slot \(slot)"))
         default: break

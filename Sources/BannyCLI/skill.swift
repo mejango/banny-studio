@@ -1,3 +1,7 @@
+import Foundation
+
+// Embedded so the single-file release binary can install its production skill.
+let skillMarkdown = #"""
 ---
 name: banny-studio
 description: Produce, edit, validate, preview, and ship Banny Studio shows with the banny CLI. Use for AI/LLM-driven Banny episodes, scenes, dialogue, TTS, lip sync, media placement, timeline performance, production automation, or safe show.json changes.
@@ -266,3 +270,65 @@ reaction blocks. Use `banny schema --compact` for their exact shape.
 
 If a requested concept is not represented in `banny capabilities --json` or
 `banny schema --compact`, report that limitation instead of inventing syntax.
+
+"""#
+
+func skillCommand(_ args: [String]) throws {
+    let action = args.first ?? "print"
+    var options = CLIOptions(args.isEmpty ? [] : Array(args.dropFirst()))
+    switch action {
+    case "print":
+        try options.finish(usage: "banny skill print")
+        print(skillMarkdown, terminator: "")
+    case "install":
+        let target = try options.value("--target") ?? "all"
+        try options.finish(
+            usage: "banny skill install [--target codex|claude|all]")
+        guard ["codex", "claude", "all"].contains(target) else {
+            throw CLIError.invalid("--target must be codex, claude, or all")
+        }
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        var destinations: [(url: URL, codex: Bool)] = []
+        if target == "claude" || target == "all" {
+            destinations.append((
+                home.appendingPathComponent(".claude/skills/banny-studio"),
+                false))
+        }
+        if target == "codex" || target == "all" {
+            let codexHome = ProcessInfo.processInfo.environment["CODEX_HOME"]
+                .map { URL(fileURLWithPath: $0) }
+                ?? home.appendingPathComponent(".codex")
+            destinations.append((
+                codexHome.appendingPathComponent("skills/banny-studio"),
+                true))
+        }
+        for destination in destinations {
+            try FileManager.default.createDirectory(
+                at: destination.url, withIntermediateDirectories: true)
+            try skillMarkdown.write(
+                to: destination.url.appendingPathComponent("SKILL.md"),
+                atomically: true,
+                encoding: .utf8)
+            if destination.codex {
+                let agents = destination.url.appendingPathComponent("agents")
+                try FileManager.default.createDirectory(
+                    at: agents, withIntermediateDirectories: true)
+                try skillOpenAIYAML.write(
+                    to: agents.appendingPathComponent("openai.yaml"),
+                    atomically: true,
+                    encoding: .utf8)
+            }
+            print("installed \(destination.url.path)")
+        }
+    default:
+        throw CLIError.usage(
+            "banny skill [print|install] [--target codex|claude|all]")
+    }
+}
+
+private let skillOpenAIYAML = """
+interface:
+  display_name: "Banny Studio Production"
+  short_description: "Build, inspect, validate, and ship Banny shows"
+  default_prompt: "Use $banny-studio to produce or edit this Banny Studio show safely from the CLI."
+"""

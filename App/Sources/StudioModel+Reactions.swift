@@ -147,12 +147,18 @@ extension StudioModel {
     }
 
     @discardableResult
-    func duplicateReactionBlock(character: Int, id: String) -> String? {
+    func duplicateReactionBlock(
+        character: Int,
+        id: String,
+        registerUndo: Bool = true
+    ) -> String? {
         guard scene.characters.indices.contains(character),
               !scene.characters[character].locked,
               let source = scene.characters[character].reactions.first(where: { $0.id == id })
         else { return nil }
-        registerUndoSnapshot(label: "Duplicate Reaction")
+        if registerUndo {
+            registerUndoSnapshot(label: "Duplicate Reaction")
+        }
         var copy = source
         copy.id = ShowDocumentFile.newID()
         copy.start += 0.05

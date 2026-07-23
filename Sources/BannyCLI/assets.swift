@@ -1,9 +1,13 @@
 import Foundation
 
+// Shared CLI engine; the executable target is intentionally a tiny entry point.
+
 enum CLIError: Error, CustomStringConvertible {
     case assetsNotFound
     case usage(String)
     case notAPackage(String, String)
+    case invalid(String)
+    case validationFailed([String])
 
     var description: String {
         switch self {
@@ -15,6 +19,11 @@ enum CLIError: Error, CustomStringConvertible {
         case .usage(let u): return "usage: \(u)"
         case .notAPackage(let path, let why):
             return "cannot read \(path): \(why)"
+        case .invalid(let message):
+            return message
+        case .validationFailed(let messages):
+            return (["validation failed:"] + messages.map { "  - \($0)" })
+                .joined(separator: "\n")
         }
     }
 }

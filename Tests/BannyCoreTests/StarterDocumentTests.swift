@@ -7,6 +7,8 @@ final class StarterDocumentTests: XCTestCase {
         XCTAssertEqual(doc.stage.characters.count, 2)
         XCTAssertEqual(doc.stage.characters.map(\.name), ["Banny 1", "Banny 2"])
         XCTAssertNotEqual(doc.stage.characters[0].x, doc.stage.characters[1].x)
+        XCTAssertEqual(doc.stage.backgroundTracks.count, 1)
+        XCTAssertEqual(doc.stage.backgroundTracks[0].name, "Scenes")
 
         let dir = FileManager.default.temporaryDirectory
             .appendingPathComponent("starter-\(UUID().uuidString).bs")
