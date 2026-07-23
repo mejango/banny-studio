@@ -277,8 +277,9 @@ public struct SceneSimulator: Sendable {
                 mouthShape = activeClip.mouthShape(at: t) ?? .closed
             }
         }
-        // A held M key is an explicit live/manual performance and wins over
-        // generated lip sync. Releasing it hands control back to automation.
+        // Automatic intervals above and manual input below are the exact same
+        // binary M-key action. A held physical M wins; releasing it hands
+        // control back to the baked virtual presses.
         if manualMouthOpen { mouthShape = .open }
 
         return CharacterPose(x: sim.x, depth: sim.depth, phase: sim.phase, tilt: tilt,

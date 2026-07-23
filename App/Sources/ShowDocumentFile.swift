@@ -362,7 +362,8 @@ final class ShowDocumentFile: ReferenceFileDocument {
 
     static func defaultSceneState() -> SceneState {
         var state = SceneState(characters: [Character(body: .original, x: 0.5)],
-                               lights: [Light(x: 0.80, y: 0.18)])
+                               lights: [Light(x: 0.80, y: 0.18)],
+                               gSize: SceneState.newSceneCharacterSize)
         // A real light track from the start (the legacy `lights` sun stays as
         // the fallback beyond the cue, same position). Short cue: the timeline
         // duration follows contentEnd, so a long cue would bloat a new project

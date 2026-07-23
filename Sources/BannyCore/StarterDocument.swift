@@ -17,6 +17,7 @@ public extension ShowDocument {
             backgroundTracks: [
                 BackgroundTrack(id: "scenes", name: "Scenes"),
             ],
+            gSize: SceneState.newSceneCharacterSize,
             rowOrder: ["scenes"] + characters.indices.map { "c-\($0)" }))
     }
 }

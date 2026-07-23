@@ -128,7 +128,7 @@ struct KeyCaptureView: NSViewRepresentable {
 
             let down = event.type == .keyDown
             if down, event.modifierFlags.contains(.command) {
-                if event.keyCode == 8, model.hasTimelineSelection {        // ⌘C
+                if event.keyCode == 8, model.hasCopyableTimelineSelection { // ⌘C
                     model.copyTimelineSelection()
                     return true
                 }

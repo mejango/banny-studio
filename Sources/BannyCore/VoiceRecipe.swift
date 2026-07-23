@@ -318,8 +318,9 @@ public enum MouthShape: String, Codable, CaseIterable, Sendable {
     case open
 }
 
-/// One source-relative mouth pose baked alongside a generated speech clip.
-/// Source-relative timing means moves, trims, splits, and copies stay in sync.
+/// One source-relative virtual M-key interval baked alongside a speech clip.
+/// `shape` remains Codable for older shows, but automatic playback treats every
+/// visible cue as the ordinary open-mouth M state.
 public struct SpeechMouthCue: Codable, Equatable, Sendable {
     public var start: Double
     public var dur: Double
@@ -356,9 +357,9 @@ public struct SpeechWordAnchor: Equatable, Sendable {
     }
 }
 
-/// Deterministic text-aware lip sync. Word starts come from the synthesizer's
-/// sample clock; the rendered waveform closes the mouth in real silences, and
-/// letter classes select closed/tight/open artwork within each spoken word.
+/// Deterministic binary mouth automation. Word starts come from the
+/// synthesizer's sample clock and the waveform closes the mouth in real
+/// silences; every visible interval is otherwise an ordinary M-key press.
 public enum SpeechMouthPlanner {
     /// Waveform-only fallback for microphone takes and imported dialogue.
     /// Unlike synthesized speech it cannot know phonemes, but its transitions
@@ -379,14 +380,7 @@ public enum SpeechMouthPlanner {
                 at: cursor + binDuration * 0.5,
                 energy: levels,
                 hop: energyHop)
-            let shape: MouthShape
-            if level <= 0.08 {
-                shape = .closed
-            } else if level > 0.38 {
-                shape = .open
-            } else {
-                shape = .tight
-            }
+            let shape: MouthShape = level <= 0.08 ? .closed : .open
             bins.append((cursor, binDuration, shape))
             cursor += binDuration
         }
@@ -437,15 +431,8 @@ public enum SpeechMouthPlanner {
             let wordEnd = max(wordStart + hop, min(duration, nextStart))
             let level = energyLevel(at: center, energy: levels, hop: energyHop)
             let isVoiced = levels.isEmpty || level > voicedThreshold
-            let shape: MouthShape
-            if center < wordStart || center >= wordEnd || !isVoiced {
-                shape = .closed
-            } else {
-                let word = source.substring(
-                    with: NSRange(location: anchor.location, length: anchor.length))
-                let progress = min(0.999, max(0, (center - wordStart) / (wordEnd - wordStart)))
-                shape = classifiedShape(in: word, progress: progress, energy: level)
-            }
+            let shape: MouthShape =
+                center < wordStart || center >= wordEnd || !isVoiced ? .closed : .open
             bins.append((cursor, binDuration, shape))
             cursor += binDuration
         }
@@ -493,23 +480,4 @@ public enum SpeechMouthPlanner {
         return energy[index]
     }
 
-    private static func classifiedShape(
-        in word: String,
-        progress: Double,
-        energy: Float
-    ) -> MouthShape {
-        let letters = word
-            .folding(options: [.diacriticInsensitive, .caseInsensitive], locale: .current)
-            .filter { $0.isLetter || $0.isNumber }
-        guard !letters.isEmpty else { return energy > 0.45 ? .open : .tight }
-        let index = min(letters.count - 1, max(0, Int(progress * Double(letters.count))))
-        let character = letters[letters.index(letters.startIndex, offsetBy: index)]
-        let value = String(character).lowercased()
-
-        if "bmp".contains(value) { return .closed }
-        if "aeiouy".contains(value) {
-            return energy > 0.20 ? .open : .tight
-        }
-        return .tight
-    }
 }

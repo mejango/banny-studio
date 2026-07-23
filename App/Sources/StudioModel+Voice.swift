@@ -268,6 +268,10 @@ extension StudioModel {
         where scene.characters[index].clips[clipIndex].id == clipID {
             scene.characters[index].clips[clipIndex].mouthCues = cues
         }
+        if selectedMouthCue?.character == index,
+           selectedMouthCue?.clipID == clipID {
+            selectedMouthCue = nil
+        }
         return cues.count
     }
 
@@ -282,5 +286,133 @@ extension StudioModel {
         where scene.characters[index].clips[clipIndex].id == clipID {
             scene.characters[index].clips[clipIndex].mouthCues = []
         }
+        if selectedMouthCue?.character == index,
+           selectedMouthCue?.clipID == clipID {
+            selectedMouthCue = nil
+        }
+    }
+
+    func mouthCueValue(_ selection: MouthCueSelection) -> SpeechMouthCue? {
+        guard scene.characters.indices.contains(selection.character),
+              let clip = scene.characters[selection.character].clips
+                .first(where: { $0.id == selection.clipID }),
+              clip.mouthCues.indices.contains(selection.cueIndex) else { return nil }
+        return clip.mouthCues[selection.cueIndex]
+    }
+
+    var selectedMouthCueValue: SpeechMouthCue? {
+        selectedMouthCue.flatMap(mouthCueValue)
+    }
+
+    var selectedMouthCueTimelineStart: Double? {
+        guard let selection = selectedMouthCue,
+              scene.characters.indices.contains(selection.character),
+              let clip = scene.characters[selection.character].clips
+                .first(where: { $0.id == selection.clipID }),
+              clip.mouthCues.indices.contains(selection.cueIndex) else { return nil }
+        return clip.start + clip.mouthCues[selection.cueIndex].start - clip.offset
+    }
+
+    func selectMouthCue(_ selection: MouthCueSelection) {
+        guard mouthCueValue(selection) != nil else {
+            selectedMouthCue = nil
+            return
+        }
+        selectedMouthCue = selection
+        selectedMarks = []
+        selectedClips = []
+        selectedImageCue = nil
+        selectedBackgroundCue = nil
+        selectedBackgroundCues = []
+        selectedLightCue = nil
+        selectedOutfitEvent = nil
+        selectedMotionEvent = nil
+        selectedReaction = nil
+        self.selection = [selection.character]
+        selectedTrackKey = "c-\(selection.character)"
+    }
+
+    /// Moves one virtual M-key interval without crossing its neighbours.
+    /// Source-relative edits continue to follow clip moves, trims, and splits.
+    func moveMouthCue(_ selection: MouthCueSelection, toStart requestedStart: Double,
+                      registerUndo: Bool = true) {
+        guard let path = mouthCuePath(selection) else { return }
+        let cues = scene.characters[path.character].clips[path.clip].mouthCues
+        let cue = cues[path.cue]
+        let sourceDuration = scene.characters[path.character].clips[path.clip].srcDur
+        let absoluteLower = 0.0
+        let absoluteUpper = max(0, sourceDuration - cue.dur)
+        let neighbourLower = path.cue > 0
+            ? cues[path.cue - 1].start + cues[path.cue - 1].dur : absoluteLower
+        let neighbourUpper = path.cue + 1 < cues.count
+            ? cues[path.cue + 1].start - cue.dur : absoluteUpper
+        let lower = max(absoluteLower, neighbourLower)
+        let upper = min(absoluteUpper, neighbourUpper)
+        let allowed = lower <= upper
+            ? min(upper, max(lower, requestedStart))
+            : min(absoluteUpper, max(absoluteLower, requestedStart))
+        let start = Self.millisecond(allowed)
+        guard abs(start - cue.start) > 0.000_5 else { return }
+        if registerUndo { registerUndoSnapshot(label: "Nudge Mouth Timing") }
+        scene.characters[path.character].clips[path.clip].mouthCues[path.cue].start = start
+    }
+
+    /// Trims an interval edge. A 10 ms minimum prevents accidental zero-width
+    /// presses while still allowing sample-level dialogue cleanup.
+    func resizeMouthCue(_ selection: MouthCueSelection, start requestedStart: Double,
+                        duration requestedDuration: Double,
+                        registerUndo: Bool = true) {
+        guard let path = mouthCuePath(selection) else { return }
+        let cues = scene.characters[path.character].clips[path.clip].mouthCues
+        let old = cues[path.cue]
+        let sourceDuration = scene.characters[path.character].clips[path.clip].srcDur
+        let minimumDuration = 0.01
+        let previousEnd = path.cue > 0
+            ? cues[path.cue - 1].start + cues[path.cue - 1].dur : 0
+        let nextStart = path.cue + 1 < cues.count
+            ? cues[path.cue + 1].start : sourceDuration
+        let maximumEnd = max(previousEnd + minimumDuration, min(sourceDuration, nextStart))
+        let start = min(maximumEnd - minimumDuration,
+                        max(previousEnd, requestedStart))
+        let duration = min(maximumEnd - start,
+                           max(minimumDuration, requestedDuration))
+        let edited = SpeechMouthCue(
+            start: Self.millisecond(start),
+            dur: Self.millisecond(duration),
+            shape: .open)
+        guard edited != old else { return }
+        if registerUndo { registerUndoSnapshot(label: "Fine-tune Mouth Timing") }
+        scene.characters[path.character].clips[path.clip].mouthCues[path.cue] = edited
+    }
+
+    func adjustSelectedMouthCueDuration(by delta: Double) {
+        guard let selection = selectedMouthCue,
+              let cue = mouthCueValue(selection) else { return }
+        resizeMouthCue(selection, start: cue.start, duration: cue.dur + delta)
+    }
+
+    func deleteMouthCue(_ selection: MouthCueSelection, registerUndo: Bool = true) {
+        guard let path = mouthCuePath(selection) else {
+            if selectedMouthCue == selection { selectedMouthCue = nil }
+            return
+        }
+        if registerUndo { registerUndoSnapshot(label: "Delete Mouth Interval") }
+        scene.characters[path.character].clips[path.clip].mouthCues.remove(at: path.cue)
+        if selectedMouthCue == selection { selectedMouthCue = nil }
+    }
+
+    private func mouthCuePath(_ selection: MouthCueSelection)
+        -> (character: Int, clip: Int, cue: Int)? {
+        guard scene.characters.indices.contains(selection.character),
+              !scene.characters[selection.character].locked,
+              let clip = scene.characters[selection.character].clips
+                .firstIndex(where: { $0.id == selection.clipID }),
+              scene.characters[selection.character].clips[clip].mouthCues.indices
+                .contains(selection.cueIndex) else { return nil }
+        return (selection.character, clip, selection.cueIndex)
+    }
+
+    private static func millisecond(_ value: Double) -> Double {
+        (max(0, value) * 1000).rounded() / 1000
     }
 }

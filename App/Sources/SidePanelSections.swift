@@ -102,6 +102,115 @@ struct AudioSection: View {
     }
 }
 
+/// Precision controls appear only after a baked virtual M press is selected,
+/// keeping the normal dialogue inspector quiet.
+private struct MouthCueFineTuneSection: View {
+    @Bindable var model: StudioModel
+    let characterIndex: Int
+    var clipID: String? = nil
+    @State private var step = 0.01
+
+    private var selection: MouthCueSelection? {
+        guard let selection = model.selectedMouthCue,
+              selection.character == characterIndex,
+              clipID == nil || selection.clipID == clipID,
+              model.mouthCueValue(selection) != nil else { return nil }
+        return selection
+    }
+
+    var body: some View {
+        if let selection, let cue = model.mouthCueValue(selection) {
+            VStack(alignment: .leading, spacing: 7) {
+                HStack {
+                    Label("MOUTH INTERVAL", systemImage: "mouth")
+                        .font(.caption2.bold())
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    Text("virtual M press")
+                        .font(.system(size: 8, weight: .semibold))
+                        .foregroundStyle(EventGroup.talk.color)
+                }
+                Text("Drag the bar or its edges in the Mouth lane. Use these controls for exact timing.")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+
+                HStack(spacing: 6) {
+                    Text("Start").font(.caption2).frame(width: 44, alignment: .leading)
+                    Button {
+                        model.moveMouthCue(
+                            selection, toStart: cue.start - step)
+                    } label: {
+                        Image(systemName: "chevron.left")
+                    }
+                    .help("Move earlier by \(stepLabel)")
+                    Text(String(format: "%.3fs", model.selectedMouthCueTimelineStart ?? 0))
+                        .font(.caption.monospacedDigit())
+                        .frame(maxWidth: .infinity)
+                    Button {
+                        model.moveMouthCue(
+                            selection, toStart: cue.start + step)
+                    } label: {
+                        Image(systemName: "chevron.right")
+                    }
+                    .help("Move later by \(stepLabel)")
+                }
+                .buttonStyle(.borderless)
+
+                HStack(spacing: 6) {
+                    Text("Length").font(.caption2).frame(width: 44, alignment: .leading)
+                    Button {
+                        model.adjustSelectedMouthCueDuration(by: -step)
+                    } label: {
+                        Image(systemName: "minus")
+                    }
+                    .help("Shorten by \(stepLabel)")
+                    Text(String(format: "%.0f ms", cue.dur * 1000))
+                        .font(.caption.monospacedDigit())
+                        .frame(maxWidth: .infinity)
+                    Button {
+                        model.adjustSelectedMouthCueDuration(by: step)
+                    } label: {
+                        Image(systemName: "plus")
+                    }
+                    .help("Lengthen by \(stepLabel)")
+                }
+                .buttonStyle(.borderless)
+
+                HStack(spacing: 6) {
+                    Text("Step").font(.caption2).frame(width: 44, alignment: .leading)
+                    Picker("Step", selection: $step) {
+                        Text("1 ms").tag(0.001)
+                        Text("10 ms").tag(0.01)
+                        Text("Frame").tag(1.0 / 30.0)
+                    }
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
+                }
+
+                HStack {
+                    Text("← / → nudges one frame from the timeline.")
+                        .font(.system(size: 8))
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    Button("Delete interval", role: .destructive) {
+                        model.deleteMouthCue(selection)
+                    }
+                    .font(.caption2)
+                }
+            }
+            .padding(8)
+            .background(EventGroup.talk.color.opacity(0.08),
+                        in: RoundedRectangle(cornerRadius: 7))
+            .overlay(RoundedRectangle(cornerRadius: 7)
+                .stroke(EventGroup.talk.color.opacity(0.35), lineWidth: 1))
+        }
+    }
+
+    private var stepLabel: String {
+        step == 1.0 / 30.0 ? "one frame" : String(format: "%.0f ms", step * 1000)
+    }
+}
+
 /// Appears only when a package references bytes it no longer contains. Relink
 /// preserves stable ids, so every cue/clip heals at once and undo/checkpoints
 /// continue to refer to the same media.
@@ -419,7 +528,7 @@ struct VoiceSection: View {
                             VStack(alignment: .leading, spacing: 1) {
                                 Text("Automatic mouth")
                                     .font(.caption.bold())
-                                Text("Sample-aligned closed, tight, and open poses")
+                                Text("Sample-aligned virtual M-key presses")
                                     .font(.caption2)
                                     .foregroundStyle(.secondary)
                             }
@@ -428,7 +537,13 @@ struct VoiceSection: View {
                     .toggleStyle(.checkbox)
                     #endif
                     .disabled(c.locked)
-                    .help("Uses the rendered waveform and the synthesizer's exact word sample positions. A held M key temporarily overrides it.")
+                    .help("Uses the rendered waveform and exact word sample positions to write ordinary M-key presses. A held M key temporarily overrides it.")
+
+                    if model.selectedMouthCue?.character == characterIndex {
+                        MouthCueFineTuneSection(
+                            model: model,
+                            characterIndex: characterIndex)
+                    }
 
                     HStack(spacing: 8) {
                         Button {
@@ -2073,14 +2188,14 @@ struct MixSection: View {
             Text("MOUTH TIMING").font(.caption2.bold()).foregroundStyle(.secondary)
             Spacer()
             if let count = clip?.mouthCues.count, count > 0 {
-                Text("\(count) poses")
+                Text("\(count) M presses")
                     .font(.system(size: 8, weight: .semibold))
                     .foregroundStyle(.secondary)
             }
         }
         Text(clip?.kind == .speech
-             ? "Text + waveform timing from the rendered voice."
-             : "Waveform timing for dialogue; visible in the Mouth lane.")
+             ? "Text + waveform timing, baked as ordinary M-key presses."
+             : "Waveform timing, baked as ordinary M-key presses in the Mouth lane.")
             .font(.caption2)
             .foregroundStyle(.secondary)
         HStack {
@@ -2101,6 +2216,13 @@ struct MixSection: View {
                 }
                 .font(.caption)
             }
+        }
+        if model.selectedMouthCue?.character == characterIndex,
+           model.selectedMouthCue?.clipID == clipID {
+            MouthCueFineTuneSection(
+                model: model,
+                characterIndex: characterIndex,
+                clipID: clipID)
         }
     }
 

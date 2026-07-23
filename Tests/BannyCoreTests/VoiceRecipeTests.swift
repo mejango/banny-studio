@@ -44,7 +44,7 @@ import Testing
     #expect(partial.speechVoice.automaticMouth)
 }
 
-@Test func mouthPlannerUsesSampleAnchorsTextShapesAndSilence() {
+@Test func mouthPlannerUsesSampleAnchorsAsBinaryMPressesAndSilence() {
     let cues = SpeechMouthPlanner.cues(
         text: "Bam fish",
         duration: 1.2,
@@ -60,7 +60,7 @@ import Testing
         energyHop: 0.01)
 
     #expect(cues.contains { $0.shape == .open })
-    #expect(cues.contains { $0.shape == .tight })
+    #expect(cues.allSatisfy { $0.shape == .open })
     #expect(!cues.contains { $0.start >= 0.45 && $0.start < 0.65 })
     #expect(cues.allSatisfy { $0.start >= 0 && $0.start + $0.dur <= 1.2 })
 }
@@ -73,8 +73,8 @@ import Testing
             + Array(repeating: 0.9, count: 20)
             + Array(repeating: 0, count: 35),
         energyHop: 0.01)
-    #expect(cues.contains { $0.shape == .tight })
     #expect(cues.contains { $0.shape == .open })
+    #expect(cues.allSatisfy { $0.shape == .open })
     #expect(!cues.contains { $0.start < 0.099 })
     #expect(!cues.contains { $0.start >= 0.451 })
 }
@@ -89,7 +89,8 @@ import Testing
         srcDur: 2,
         kind: .speech,
         mouthCues: [SpeechMouthCue(start: 0.6, dur: 0.2, shape: .tight)])
-    #expect(clip.mouthShape(at: 10.1) == .tight)
+    // Legacy tight poses are intentionally normalized to the ordinary M state.
+    #expect(clip.mouthShape(at: 10.1) == .open)
     #expect(clip.mouthShape(at: 10.31) == nil)
 
     let automatic = Character(
@@ -105,7 +106,7 @@ import Testing
     let automaticPose = SceneSimulator(
         state: SceneState(characters: [automatic]))
         .pose(characterIndex: 0, at: 1.3)
-    #expect(automaticPose.mouthShape == .tight)
+    #expect(automaticPose.mouthShape == .open)
 
     var manual = automatic
     manual.events = [
@@ -114,7 +115,7 @@ import Testing
     ]
     let simulator = SceneSimulator(state: SceneState(characters: [manual]))
     #expect(simulator.pose(characterIndex: 0, at: 1.3).mouthShape == .open)
-    #expect(simulator.pose(characterIndex: 0, at: 1.4).mouthShape == .tight)
+    #expect(simulator.pose(characterIndex: 0, at: 1.4).mouthShape == .open)
 
     manual.speechVoice.automaticMouth = false
     #expect(SceneSimulator(state: SceneState(characters: [manual]))

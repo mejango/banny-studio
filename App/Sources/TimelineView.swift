@@ -174,6 +174,8 @@ struct StudioTimelineView: View {
     @State private var draggingFade: (id: String, leading: Bool, start: Double, dur: Double)?
     @State private var draggingReaction: (char: Int, id: String, baseStart: Double,
                                           baseDur: Double, edge: Int, undoRegistered: Bool)?
+    @State private var draggingMouthCue: (selection: MouthCueSelection,
+                                          baseStart: Double, baseDur: Double, edge: Int)?
     @State private var draggingCue: (row: TrackRow, cueID: String, baseStart: Double, baseDur: Double, edge: Int)?
     @State private var draggingSub: (char: Int, index: Int, baseStart: Double, baseDur: Double, edge: Int)?
     @State private var subtitleStageBeforeDrag: SceneState?
@@ -1586,7 +1588,7 @@ struct StudioTimelineView: View {
                         reactionCaptureCharacter = character
                     }
                 }
-                if model.hasTimelineSelection {
+                if model.hasCopyableTimelineSelection {
                     Button("Copy") { model.copyTimelineSelection() }
                 }
                 Button(String(format: "Paste at %.1fs", (time(forX: p.x) * 10).rounded() / 10)) {
@@ -1628,6 +1630,17 @@ struct StudioTimelineView: View {
             }
             Button("Delete \(m.code.group.rawValue)", role: .destructive) {
                 model.selectedMarks = [m]; model.deleteTimelineSelection()
+            }
+            Divider()
+        } else if let hit = mouthCue(at: p) {
+            Button("Fine-tune mouth timing…") {
+                model.selectMouthCue(hit.selection)
+                model.inspectorRequest = TrackRow.character(hit.selection.character)
+                    .key(in: model.scene)
+            }
+            Button("Delete automatic M press", role: .destructive) {
+                model.selectMouthCue(hit.selection)
+                model.deleteTimelineSelection()
             }
             Divider()
         } else if let dot = outfitEvent(at: p) {
@@ -2101,22 +2114,35 @@ struct StudioTimelineView: View {
         for clip in character.clips where !clip.mouthCues.isEmpty {
             let visibleStart = clip.start
             let visibleEnd = clip.start + clip.dur
-            for cue in clip.mouthCues {
+            for (cueIndex, cue) in clip.mouthCues.enumerated() {
                 let cueStart = clip.start + cue.start - clip.offset
                 let cueEnd = cueStart + cue.dur
                 let start = max(visibleStart, cueStart)
                 let end = min(visibleEnd, cueEnd)
                 guard end > start else { continue }
-                let inset = cue.shape == .tight ? max(1, zones.subH * 0.24) : 0
                 let rect = CGRect(
                     x: x(forTime: start),
-                    y: mouthY + inset,
+                    y: mouthY,
                     width: max(1, xw(start, end - start)),
-                    height: max(1, zones.subH - 1 - inset * 2))
+                    height: max(1, zones.subH - 1))
                 let opacity = character.speechVoice.automaticMouth
-                    ? (cue.shape == .open ? 0.58 : 0.34) : 0.12
+                    ? 0.52 : 0.12
                 ctx.fill(Path(roundedRect: rect, cornerRadius: 1),
                          with: .color(EventGroup.talk.color(light: lightMode).opacity(opacity)))
+                let selection = MouthCueSelection(
+                    character: i, clipID: clip.id, cueIndex: cueIndex)
+                if model.selectedMouthCue == selection {
+                    ctx.stroke(Path(roundedRect: rect.insetBy(dx: -1, dy: -1),
+                                                cornerRadius: 2),
+                               with: .color(lightMode ? .black : .white),
+                               lineWidth: 1.5)
+                    for handleX in [rect.minX + 1, rect.maxX - 1] {
+                        ctx.stroke(Path { path in
+                            path.move(to: CGPoint(x: handleX, y: rect.minY + 1))
+                            path.addLine(to: CGPoint(x: handleX, y: rect.maxY - 1))
+                        }, with: .color(lightMode ? .black : .white), lineWidth: 1)
+                    }
+                }
             }
         }
         for mark in TimelineMath.marks(for: character.events, character: i, duration: model.duration) {
@@ -2501,6 +2527,7 @@ struct StudioTimelineView: View {
                 pressedClipID = nil
                 draggingFade = nil
                 draggingReaction = nil
+                draggingMouthCue = nil
                 draggingCue = nil
                 draggingSub = nil
                 draggingPresence = nil
@@ -2531,7 +2558,8 @@ struct StudioTimelineView: View {
     }
 
     private func handleLaneDrag(_ value: DragGesture.Value) {
-        let active = draggingFade != nil || draggingReaction != nil || draggingClip != nil
+        let active = draggingFade != nil || draggingReaction != nil
+            || draggingMouthCue != nil || draggingClip != nil
             || resizing != nil || marquee != nil || runDrag != nil || bgGroupDrag != nil
             || draggingOutfit != nil || draggingCue != nil || draggingSub != nil
             || draggingPresence != nil || dragStartMarks != nil || dragStartClips != nil
@@ -2572,6 +2600,31 @@ struct StudioTimelineView: View {
             default:
                 model.setReactionBlock(character: drag.char, id: drag.id,
                                        start: max(0, snapped(drag.baseStart + dt)), dur: drag.baseDur)
+            }
+            return
+        }
+        if let drag = draggingMouthCue {
+            let dt = Double(value.translation.width / pxPerSecond)
+            switch drag.edge {
+            case -1:
+                let end = drag.baseStart + drag.baseDur
+                let start = min(end - 0.01, drag.baseStart + dt)
+                model.resizeMouthCue(
+                    drag.selection,
+                    start: start,
+                    duration: end - start,
+                    registerUndo: false)
+            case 1:
+                model.resizeMouthCue(
+                    drag.selection,
+                    start: drag.baseStart,
+                    duration: drag.baseDur + dt,
+                    registerUndo: false)
+            default:
+                model.moveMouthCue(
+                    drag.selection,
+                    toStart: drag.baseStart + dt,
+                    registerUndo: false)
             }
             return
         }
@@ -2708,6 +2761,7 @@ struct StudioTimelineView: View {
                 return
             } else if let hit = mark(at: value.startLocation) {
                 model.selectedReaction = nil
+                model.selectedMouthCue = nil
                 let edge = 4.0
                 let startX = x(forTime: hit.start)
                 let endX = x(forTime: hit.end)
@@ -2728,10 +2782,22 @@ struct StudioTimelineView: View {
                     dragStartClips = Dictionary(uniqueKeysWithValues:
                         model.selectedClips.compactMap { id in clipStart(id: id).map { (id, $0) } })
                 }
+            } else if let hit = mouthCue(at: value.startLocation) {
+                let edge: CGFloat = 6
+                let e = abs(value.startLocation.x - hit.rect.minX) < edge ? -1
+                    : abs(value.startLocation.x - hit.rect.maxX) < edge ? 1 : 0
+                draggingMouthCue = (
+                    hit.selection,
+                    hit.cue.start,
+                    hit.cue.dur,
+                    e)
+                model.selectMouthCue(hit.selection)
+                return
             } else if let c = clip(at: value.startLocation)
                         ?? clip(at: CGPoint(x: value.startLocation.x - 6, y: value.startLocation.y))
                         ?? clip(at: CGPoint(x: value.startLocation.x + 6, y: value.startLocation.y)) {
                 model.selectedReaction = nil
+                model.selectedMouthCue = nil
                 let edge = 7.0
                 let e = abs(value.startLocation.x - x(forTime: c.start)) < edge ? -1
                     : abs(value.startLocation.x - x(forTime: c.start + c.dur)) < edge ? 1 : 0
@@ -2761,6 +2827,7 @@ struct StudioTimelineView: View {
                         ?? cue(at: CGPoint(x: value.startLocation.x - 6, y: value.startLocation.y))
                         ?? cue(at: CGPoint(x: value.startLocation.x + 6, y: value.startLocation.y)) {
                 model.selectedReaction = nil
+                model.selectedMouthCue = nil
                 let edge = 7.0
                 let startX = x(forTime: cue.start)
                 let endX = x(forTime: cue.start + cue.dur)
@@ -2831,6 +2898,7 @@ struct StudioTimelineView: View {
                       case .outfit(_, let slot, let name) =
                         model.scene.characters[dot.char].events[dot.index] {
                 model.selectedReaction = nil
+                model.selectedMouthCue = nil
                 // Grab an outfit-change dot and slide it in time.
                 var base = model.scene.characters[dot.char].events
                 base.remove(at: dot.index)
@@ -2905,6 +2973,10 @@ struct StudioTimelineView: View {
     private func resizeEdgeHit(at p: CGPoint) -> Bool {
         let edge: CGFloat = 7
         if fadeHandle(at: p) != nil { return true }
+        if let hit = mouthCue(at: p),
+           abs(p.x - hit.rect.minX) < edge || abs(p.x - hit.rect.maxX) < edge {
+            return true
+        }
         if let hit = reaction(at: p)
             ?? reaction(at: CGPoint(x: p.x - 6, y: p.y))
             ?? reaction(at: CGPoint(x: p.x + 6, y: p.y)),
@@ -3004,6 +3076,7 @@ struct StudioTimelineView: View {
         model.selectedMarks = marks
         model.selectedClips = clips
         model.selectedReaction = nil
+        model.selectedMouthCue = nil
         model.selectedBackgroundCues = bgCues
         // Keep the inspector focus on one of the marquee'd scenes.
         if !bgCues.isEmpty { model.selectedBackgroundCue = bgCues.first }
@@ -3106,6 +3179,7 @@ struct StudioTimelineView: View {
 
     private func selectCue(row: TrackRow, id: String) {
         model.selectedTrackKey = row.key(in: model.scene)
+        model.selectedMouthCue = nil
         switch row {
         case .image, .audio: model.selectedImageCue = id
         case .light: model.selectedLightCue = id
@@ -3181,6 +3255,16 @@ struct StudioTimelineView: View {
             if isDoubleClick { model.inspectorRequest = key }
             return
         }
+        // A baked interval is selected and edited like a performance mark.
+        // Double-click also reveals its precision controls in the inspector.
+        if mark(at: point) == nil, let hit = mouthCue(at: point) {
+            model.selectMouthCue(hit.selection)
+            if isDoubleClick {
+                model.inspectorRequest = TrackRow.character(hit.selection.character)
+                    .key(in: model.scene)
+            }
+            return
+        }
         // Double-clicking a visual cue opens its complete parameter inspector,
         // including clicks on the label strip (whose first click starts rename).
         if isDoubleClick, let (row, cueHit) = cue(at: point) {
@@ -3211,6 +3295,7 @@ struct StudioTimelineView: View {
         // Motion keyframes (pink diamonds): click selects (Delete removes).
         if let dot = motionEvent(at: point) {
             model.selectedReaction = nil
+            model.selectedMouthCue = nil
             model.selectedOutfitEvent = nil
             if isCommandDown() {
                 model.selectedMotionEvent = dot
@@ -3230,6 +3315,7 @@ struct StudioTimelineView: View {
         // Outfit-change dots: click selects (Delete removes); ⌘-click removes.
         if let dot = outfitEvent(at: point) {
             model.selectedReaction = nil
+            model.selectedMouthCue = nil
             model.selectedMotionEvent = nil
             if isCommandDown() {
                 model.selectedOutfitEvent = dot
@@ -3259,6 +3345,7 @@ struct StudioTimelineView: View {
         // still opens the clip mix inspector.
         if let pressedClipID {
             model.selectedReaction = nil
+            model.selectedMouthCue = nil
             model.selectedClips = [pressedClipID]
             if isDoubleClick, let row = row(at: point.y) {
                 clipMix = (kind(of: row), pressedClipID, point.x, point.y)
@@ -3268,6 +3355,7 @@ struct StudioTimelineView: View {
         let splitting = isCommandDown()
         if let hit = mark(at: point) {
             model.selectedReaction = nil
+            model.selectedMouthCue = nil
             if splitting {
                 splitMark(hit, at: time(forX: point.x))
             } else if model.selectedMarks.contains(hit) {
@@ -3277,6 +3365,7 @@ struct StudioTimelineView: View {
             }
         } else if let c = clip(at: point) {
             model.selectedReaction = nil
+            model.selectedMouthCue = nil
             if isDoubleClick, let row = row(at: point.y) {
                 clipMix = (kind(of: row), c.id, point.x, point.y)
                 return
@@ -3290,6 +3379,7 @@ struct StudioTimelineView: View {
             }
         } else if let (row, cue) = cue(at: point) {
             model.selectedReaction = nil
+            model.selectedMouthCue = nil
             if splitting {
                 switch row {
                 case .background: model.splitBackgroundCue(id: cue.id, at: time(forX: point.x))
@@ -3312,6 +3402,7 @@ struct StudioTimelineView: View {
             model.selectedBackgroundCues = []
             model.selectedLightCue = nil
             model.selectedReaction = nil
+            model.selectedMouthCue = nil
             if case .character(let i) = row(at: y) {
                 model.selection = [i]
             }
@@ -3417,6 +3508,53 @@ struct StudioTimelineView: View {
                               width: max(6, CGFloat(m.end - m.start) * pxPerSecond),
                               height: max(4, zones.subH - 1))
             if rect.insetBy(dx: -2, dy: -2).contains(point) { return m }
+        }
+        return nil
+    }
+
+    private struct MouthCueHit {
+        var selection: MouthCueSelection
+        var cue: SpeechMouthCue
+        var rect: CGRect
+    }
+
+    /// Automatic mouth intervals share the Mouth lane with manual M marks.
+    /// Manual marks are hit-tested first because they draw on top.
+    private func mouthCue(at point: CGPoint) -> MouthCueHit? {
+        guard case .character(let characterIndex) = row(at: point.y),
+              model.scene.characters.indices.contains(characterIndex) else { return nil }
+        let row = TrackRow.character(characterIndex)
+        let rowY = laneTop(of: row)
+        let zones = characterLaneZones(h: height(of: row))
+        let laneY = rowY + zones.eventTop
+            + CGFloat(EventGroup.talk.laneIndex) * zones.subH + 1
+        let lane = CGRect(x: 0, y: laneY - 2,
+                          width: contentWidth + 40, height: max(5, zones.subH + 3))
+        guard lane.contains(point) else { return nil }
+        let character = model.scene.characters[characterIndex]
+        for clip in character.clips.reversed() where !clip.mouthCues.isEmpty {
+            for cueIndex in clip.mouthCues.indices.reversed() {
+                let cue = clip.mouthCues[cueIndex]
+                let cueStart = clip.start + cue.start - clip.offset
+                let cueEnd = cueStart + cue.dur
+                let start = max(clip.start, cueStart)
+                let end = min(clip.start + clip.dur, cueEnd)
+                guard end > start else { continue }
+                let rect = CGRect(
+                    x: x(forTime: start),
+                    y: laneY,
+                    width: max(6, xw(start, end - start)),
+                    height: max(4, zones.subH - 1))
+                if rect.insetBy(dx: -2, dy: -2).contains(point) {
+                    return MouthCueHit(
+                        selection: MouthCueSelection(
+                            character: characterIndex,
+                            clipID: clip.id,
+                            cueIndex: cueIndex),
+                        cue: cue,
+                        rect: rect)
+                }
+            }
         }
         return nil
     }

@@ -12,6 +12,7 @@ extension StudioModel {
         selectedLightCue = nil
         selectedOutfitEvent = nil
         selectedMotionEvent = nil
+        selectedMouthCue = nil
     }
 
     var selectedReactionValue: (definition: ReactionDefinition, instance: ReactionInstance)? {

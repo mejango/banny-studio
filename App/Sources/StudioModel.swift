@@ -9,6 +9,15 @@ struct ReactionSelection: Equatable {
     var id: String
 }
 
+/// One source-relative automatic mouth interval selected on the timeline.
+/// The index is stable while editing because mouth intervals are constrained
+/// between their neighbours instead of silently reordering beneath the user.
+struct MouthCueSelection: Equatable {
+    var character: Int
+    var clipID: String
+    var cueIndex: Int
+}
+
 /// Ephemeral lip sync for inspector voice previews. It deliberately lives
 /// outside the document: previewing never edits clips, moves the playhead, or
 /// creates undo history.
@@ -25,7 +34,8 @@ struct SpeechMouthPreview: Equatable {
     func shape(at clockTime: TimeInterval) -> MouthShape? {
         let elapsed = clockTime - startedAt
         guard elapsed >= 0, elapsed < duration else { return nil }
-        return SpeechMouthCue.shape(in: cues, at: elapsed) ?? .closed
+        // Automatic mouth is deliberately the same binary action as holding M.
+        return SpeechMouthCue.shape(in: cues, at: elapsed) == nil ? .closed : .open
     }
 }
 
@@ -84,6 +94,8 @@ final class StudioModel {
     var selectedMotionEvent: (char: Int, index: Int)?
     /// A reusable reaction block selected on a character lane.
     var selectedReaction: ReactionSelection?
+    /// A baked automatic-mouth interval selected in the Mouth lane.
+    var selectedMouthCue: MouthCueSelection?
     /// Track key whose gutter-card popover should open (double-click on the cell).
     var inspectorRequest: String?
     var selectedLightCue: String?
@@ -318,6 +330,13 @@ final class StudioModel {
             || selectedLightCue != nil || selectedBackgroundCue != nil
             || !selectedBackgroundCues.isEmpty || selectedOutfitEvent != nil
             || selectedMotionEvent != nil || selectedReaction != nil
+            || selectedMouthCue != nil
+    }
+
+    /// Mouth automation belongs to its source clip, so it is movable/deletable
+    /// but is not offered as a free-floating clipboard item.
+    var hasCopyableTimelineSelection: Bool {
+        hasTimelineSelection && selectedMouthCue == nil
     }
 
     /// True when ← / → should shift the timeline selection rather than drive a
@@ -327,6 +346,7 @@ final class StudioModel {
         !selectedMarks.isEmpty || !selectedClips.isEmpty
             || selectedOutfitEvent != nil || selectedMotionEvent != nil
             || !selectedBackgroundCues.isEmpty || selectedReaction != nil
+            || selectedMouthCue != nil
     }
 
     /// ← / → on the timeline: shift every arrow-movable selected element. dt sec.
@@ -346,9 +366,12 @@ final class StudioModel {
         let editableReaction = selectedReaction.map {
             scene.characters[safe: $0.character]?.locked == false
         } ?? false
+        let editableMouth = selectedMouthCue.map {
+            scene.characters[safe: $0.character]?.locked == false
+        } ?? false
         guard !editableMarks.isEmpty || !editableClips.isEmpty
                 || !editableBackgrounds.isEmpty || editableOutfit
-                || editableMotion || editableReaction else { return }
+                || editableMotion || editableReaction || editableMouth else { return }
         registerUndoSnapshot(label: "Nudge Selection")
         // Marks (per character).
         if !editableMarks.isEmpty {
@@ -402,6 +425,10 @@ final class StudioModel {
             .firstIndex(where: { $0.id == selection.id }) {
             scene.characters[selection.character].reactions[index].start = max(
                 0, scene.characters[selection.character].reactions[index].start + dt)
+        }
+        if editableMouth, let selection = selectedMouthCue,
+           let cue = mouthCueValue(selection) {
+            moveMouthCue(selection, toStart: cue.start + dt, registerUndo: false)
         }
     }
 
@@ -765,6 +792,9 @@ final class StudioModel {
                 scene.characters[selection.character].reactions.removeAll { $0.id == selection.id }
             }
             selectedReaction = nil
+        }
+        if let selection = selectedMouthCue {
+            deleteMouthCue(selection, registerUndo: true)
         }
         let bgKill = bgCueSelection().filter { !isBackgroundCueLocked($0) }
         if !bgKill.isEmpty {
@@ -1912,6 +1942,7 @@ final class StudioModel {
         registerUndoSnapshot(label: "Remove Character")
         scene.characters.remove(at: index)
         selectedReaction = nil
+        selectedMouthCue = nil
         // Character row keys are index-based; keep the display order aligned.
         scene.rowOrder = scene.rowOrder.compactMap { key in
             guard key.hasPrefix("c-"), let j = Int(key.dropFirst(2)) else { return key }
@@ -2146,6 +2177,7 @@ final class StudioModel {
             selection = scene.characters.isEmpty ? [] : [min(i, scene.characters.count - 1)]
             selectedMarks = []
             selectedReaction = nil
+            selectedMouthCue = nil
         case .audio(let i):
             guard scene.audioTracks.indices.contains(i) else { return }
             scene.audioTracks.remove(at: i)
@@ -2401,6 +2433,7 @@ final class StudioModel {
         selectedOutfitEvent = nil
         selectedMotionEvent = nil
         selectedReaction = nil
+        selectedMouthCue = nil
         selectedLightCue = nil
         clearFreeform()
         if scene.characters.isEmpty {

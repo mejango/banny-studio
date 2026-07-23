@@ -155,9 +155,10 @@ dream ghost alien double arcade custom
 `--flavor` blends dry voice at 0 to the recipe at 1. Recipes are portable,
 non-destructive, and use the same playback/export graph as Studio.
 
-TTS automatically derives source-aligned `closed`, `tight`, and `open` mouth
-poses from speech callbacks, text shape, and waveform energy. For an imported
-or microphone take:
+TTS automatically derives source-aligned virtual `KeyM` down/up intervals from
+speech callbacks and waveform energy. They behave exactly like ordinary mouth
+performance events and can be fine-tuned in Studio. For an imported or
+microphone take:
 
 ```sh
 banny lipsync show.bs --character 1 --clip <clip-id> --json

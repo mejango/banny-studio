@@ -733,6 +733,11 @@ public struct TimelineMarker: Codable, Equatable, Identifiable, Sendable {
 }
 
 public struct SceneState: Equatable, Sendable {
+    /// Comfortable on-stage scale for newly created Studio and CLI shows.
+    /// Decode defaults remain unchanged so opening an older show never
+    /// silently resizes its cast.
+    public static let newSceneCharacterSize = 1.2
+
     public var characters: [Character]
     /// Reusable performances referenced by character reaction blocks.
     public var reactionLibrary: [ReactionDefinition]
@@ -1333,7 +1338,10 @@ public struct AudioClip: Codable, Equatable, Sendable {
     public func mouthShape(at timelineTime: Double) -> MouthShape? {
         guard timelineTime >= start, timelineTime < start + dur else { return nil }
         let sourceTime = offset + timelineTime - start
-        return SpeechMouthCue.shape(in: mouthCues, at: sourceTime)
+        // Baked mouth timing is a source-relative virtual M-key performance.
+        // Old documents may contain tight/open classifications; both resolve
+        // to the one ordinary M-down state.
+        return SpeechMouthCue.shape(in: mouthCues, at: sourceTime) == nil ? nil : .open
     }
 
     private enum CodingKeys: String, CodingKey {
