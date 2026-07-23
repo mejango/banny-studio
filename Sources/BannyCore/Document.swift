@@ -411,6 +411,9 @@ public struct MediaPivot: Equatable, Sendable {
     }
 
     public static let center = MediaPivot()
+    /// Natural character anchors in the 400×400 artwork canvas.
+    public static let characterHead = MediaPivot(x: 0.5, y: 0.3)
+    public static let characterFeet = MediaPivot(x: 0.5, y: 0.82)
     public static let topLeft = MediaPivot(x: 0, y: 0)
     public static let topRight = MediaPivot(x: 1, y: 0)
     public static let bottomLeft = MediaPivot(x: 0, y: 1)
@@ -890,6 +893,10 @@ public struct Character: Equatable, Sendable {
     public var speed: Double
     /// Degrees/second while rotate is held.
     public var rotationSpeed: Double
+    /// Explicit normalized artwork pivot for free rotation and flips.
+    /// Nil is the recommended automatic mode: feet for grounded rotation,
+    /// body center for flips.
+    public var rotationPivot: MediaPivot?
     /// Gait wobble amplitude (0..16). Not persisted in v1; default 7.
     public var wobble: Double
     /// Hidden tracks stay in the document but don't render, play, or ship.
@@ -909,6 +916,7 @@ public struct Character: Equatable, Sendable {
                 armedGroups: Set<EventGroup> = Set(EventGroup.allCases),
                 name: String = "", trackFx: Fx = .defaultCharacterTrack, recStart: StartPose? = nil,
                 speed: Double = 320, rotationSpeed: Double = 90,
+                rotationPivot: MediaPivot? = nil,
                 wobble: Double = 7, hidden: Bool = false, locked: Bool = false,
                 solo: Bool = false,
                 presence: [VisibilityEvent] = []) {
@@ -931,6 +939,7 @@ public struct Character: Equatable, Sendable {
         self.recStart = recStart
         self.speed = speed
         self.rotationSpeed = rotationSpeed
+        self.rotationPivot = rotationPivot
         self.wobble = wobble
         self.hidden = hidden
         self.locked = locked
@@ -943,7 +952,7 @@ extension Character: Codable {
     private enum CodingKeys: String, CodingKey {
         case body, x, depth, size, face, baseOutfit, subs, clips, events, reactions,
              armedGroups, name, trackFx, recStart, speed, rotationSpeed, wobble, hidden, locked, solo, presence,
-             voicePitch, voiceSpeed, speechVoice
+             voicePitch, voiceSpeed, speechVoice, rotationPivot
     }
 
     public init(from decoder: Decoder) throws {
@@ -969,6 +978,7 @@ extension Character: Codable {
         recStart = try c.decodeIfPresent(StartPose.self, forKey: .recStart)
         speed = try c.decodeIfPresent(Double.self, forKey: .speed) ?? 320
         rotationSpeed = try c.decodeIfPresent(Double.self, forKey: .rotationSpeed) ?? 90
+        rotationPivot = try c.decodeIfPresent(MediaPivot.self, forKey: .rotationPivot)
         wobble = try c.decodeIfPresent(Double.self, forKey: .wobble) ?? 7
         hidden = try c.decodeIfPresent(Bool.self, forKey: .hidden) ?? false
         locked = try c.decodeIfPresent(Bool.self, forKey: .locked) ?? false

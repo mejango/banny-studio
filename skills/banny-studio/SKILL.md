@@ -76,6 +76,7 @@ All times are seconds. The timeline ends at the last event/clip/cue/section.
         "voiceIdentifier": null, "automaticMouth": true,
         "recipe": {"preset": "natural", "flavor": 1}
       },
+      "rotationPivot": null,
       "locked": false, "solo": false
     }
 
@@ -102,8 +103,13 @@ Held keys need a down event AND an up event: `{"t": 1.0, "code": "KeyM",
 | `ArrowLeft` / `ArrowRight` | walk |
 | `ArrowUp` / `ArrowDown` | move deeper / closer |
 | `KeyJ` | jump (tap: down then up ~0.1s later) |
+| `KeyF` | front flip (tap; compact jump + forward 360° turn) |
+| `KeyD` | back flip (tap; compact jump + backward 360° turn) |
 | `RotateLeft` / `RotateRight` | spin |
 | `ZoomIn` / `ZoomOut` | animated scale on this character |
+
+`rotationPivot` is either `null` for Auto (feet for grounded spin, body center
+for flips) or a normalized `{"x": 0.5, "y": 0.5}` artwork point used by both.
 
 Other event forms, same array:
 

@@ -27,6 +27,12 @@ struct PerformanceDeck: View {
                 HoldButton(model: model, code: .keyB, label: "← tilt", color: EventGroup.tilt.color)
                 HoldButton(model: model, code: .keyJ, label: "jump", color: EventGroup.jump.color, tapOnly: true)
             }
+            HStack(spacing: 8) {
+                HoldButton(model: model, code: .keyF, label: "front flip",
+                           color: EventGroup.jump.color, tapOnly: true)
+                HoldButton(model: model, code: .keyD, label: "back flip",
+                           color: EventGroup.jump.color, tapOnly: true)
+            }
             HoldButton(model: model, code: .keyM, label: "TALK", color: EventGroup.talk.color, big: true)
         }
     }

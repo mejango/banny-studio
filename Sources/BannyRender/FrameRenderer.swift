@@ -330,11 +330,21 @@ public struct FrameRenderer: Sendable {
             ctx.scaleBy(x: -1, y: 1)
             ctx.translateBy(x: CGFloat(-pivot.x), y: 0)
         }
-        // .gait: translateY(bob) rotate(deg) about the foot pivot
+        // Vertical motion is shared, but rotational layers keep independent
+        // pivots: gait/lean stays grounded; free rotation honors the chosen
+        // pivot; Auto flips around the body center for a clean somersault.
         ctx.translateBy(x: 0, y: CGFloat(p.bobY))
-        ctx.translateBy(x: CGFloat(pivot.x), y: CGFloat(pivot.y))
-        ctx.rotate(by: CGFloat(p.rotation * .pi / 180))
-        ctx.translateBy(x: CGFloat(-pivot.x), y: CGFloat(-pivot.y))
+        func rotate(_ degrees: Double, around point: (x: Double, y: Double)) {
+            guard abs(degrees) > 0.000_001 else { return }
+            ctx.translateBy(x: CGFloat(point.x), y: CGFloat(point.y))
+            ctx.rotate(by: CGFloat(degrees * .pi / 180))
+            ctx.translateBy(x: CGFloat(-point.x), y: CGFloat(-point.y))
+        }
+        rotate(p.gaitRotation, around: pivot)
+        let explicitPivot = StageLayout.explicitRotationPivot(for: character)
+        rotate(p.spinRotation, around: explicitPivot ?? StageLayout.footPivot)
+        rotate(p.flipRotation, around: explicitPivot
+               ?? (x: StageLayout.box / 2, y: StageLayout.box / 2))
 
         let box = CGRect(x: 0, y: 0, width: StageLayout.box, height: StageLayout.box)
         let outfit = pose.outfit

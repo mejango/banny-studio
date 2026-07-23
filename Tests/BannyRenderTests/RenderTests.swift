@@ -62,7 +62,109 @@ private func writePNG(_ image: CGImage, to url: URL) throws {
     #expect(abs(zoomed.scale - base.scale * 2) < 1e-9) // zoom multiplies scale
     let spun = place(spin: 30, zoom: 1)
     #expect(abs((spun.rotation - base.rotation) - 30) < 1e-9) // spin adds to rotation
+    #expect(spun.spinRotation == 30)
+    #expect(spun.gaitRotation == 0)
+    #expect(spun.flipRotation == 0)
     #expect(spun.scale == base.scale) // spin doesn't touch scale
+}
+
+@Test func flipPlacementUsesACompactLiftAndSeparateFullRotation() {
+    let character = Character(body: .orange)
+    let pose = CharacterPose(
+        x: 0.5, depth: 0, phase: 0, tilt: 0, face: 1, eye: .open,
+        talking: false, jump: nil, outfit: [:], activeSubtitle: nil,
+        moving: false,
+        flip: .init(progress: 0.5, rotation: 180, height: 26))
+    let placement = StageLayout.place(
+        pose: pose,
+        character: character,
+        scene: SceneState(),
+        stageWidth: 1_600,
+        virtualHeight: 900)
+
+    let expectedLift = StageLayout.flipLiftFactor(progress: 0.5) * 26
+    #expect(abs(placement.bobY + expectedLift) < 1e-9)
+    #expect(placement.gaitRotation == 0)
+    #expect(placement.spinRotation == 0)
+    #expect(placement.flipRotation == 180)
+    #expect(placement.rotation == 180)
+    #expect(abs(placement.flipCenterOffsetX) < 1e-9)
+    #expect(abs(placement.flipCenterOffsetY) < 1e-9)
+}
+
+@Test func flipLiftLaunchesQuicklyAndAcceleratesIntoLanding() {
+    let lift = StageLayout.flipLiftFactor
+    #expect(lift(0) == 0)
+    #expect(lift(0.44) == 1)
+    #expect(lift(1) == 0)
+    #expect(lift(0.15) > sin(0.15 * .pi)) // crisper takeoff than the old sine arc
+    let earlyDescent = lift(0.7) - lift(0.85)
+    let landingDescent = lift(0.85) - lift(1)
+    #expect(landingDescent > earlyDescent)
+}
+
+@Test func flipShadowTracksTheLightArcAndBroadsideSilhouette() {
+    let character = Character(body: .orange)
+    let groundedPose = CharacterPose(
+        x: 0.5, depth: 0, phase: 0, tilt: 0, face: 1, eye: .open,
+        talking: false, jump: nil, outfit: [:], activeSubtitle: nil, moving: false)
+    let flipPose = CharacterPose(
+        x: 0.5, depth: 0, phase: 0, tilt: 0, face: 1, eye: .open,
+        talking: false, jump: nil, outfit: [:], activeSubtitle: nil, moving: false,
+        flip: .init(progress: 0.25, rotation: 90, height: 26))
+    let light = Light(x: 0.1, y: 0.1)
+    let groundedPlacement = StageLayout.place(
+        pose: groundedPose, character: character, scene: SceneState(),
+        stageWidth: 1_600, virtualHeight: 900)
+    let flipPlacement = StageLayout.place(
+        pose: flipPose, character: character, scene: SceneState(),
+        stageWidth: 1_600, virtualHeight: 900)
+    let grounded = StageLayout.shadow(
+        for: groundedPlacement, pose: groundedPose, light: light,
+        stageWidth: 1_600, virtualHeight: 900)
+    let airborne = StageLayout.shadow(
+        for: flipPlacement, pose: flipPose, light: light,
+        stageWidth: 1_600, virtualHeight: 900)
+
+    #expect(airborne.x > grounded.x) // lift projects farther away from the left-side light
+    #expect(airborne.scaleX > grounded.scaleX) // horizontal body widens the footprint
+    #expect(airborne.scaleY < grounded.scaleY)
+    #expect(airborne.opacity < grounded.opacity)
+
+    let landedPose = CharacterPose(
+        x: 0.5, depth: 0, phase: 0, tilt: 0, face: 1, eye: .open,
+        talking: false, jump: nil, outfit: [:], activeSubtitle: nil, moving: false,
+        flip: .init(progress: 1, rotation: 360, height: 26))
+    let landedPlacement = StageLayout.place(
+        pose: landedPose, character: character, scene: SceneState(),
+        stageWidth: 1_600, virtualHeight: 900)
+    let landed = StageLayout.shadow(
+        for: landedPlacement, pose: landedPose, light: light,
+        stageWidth: 1_600, virtualHeight: 900)
+    #expect(abs(landed.x - grounded.x) < 1e-9)
+    #expect(abs(landed.scaleX - grounded.scaleX) < 1e-9)
+    #expect(abs(landed.scaleY - grounded.scaleY) < 1e-9)
+    #expect(abs(landed.opacity - grounded.opacity) < 1e-9)
+}
+
+@Test func flipShadowFollowsCustomPivotDriftAndFacing() {
+    let character = Character(body: .orange, rotationPivot: .characterHead)
+    func placement(rotation: Double, face: Int) -> StageLayout.Placement {
+        let pose = CharacterPose(
+            x: 0.5, depth: 0, phase: 0, tilt: 0, face: face, eye: .open,
+            talking: false, jump: nil, outfit: [:], activeSubtitle: nil, moving: false,
+            flip: .init(progress: 0.25, rotation: rotation, height: 26))
+        return StageLayout.place(
+            pose: pose, character: character, scene: SceneState(),
+            stageWidth: 1_600, virtualHeight: 900)
+    }
+
+    let front = placement(rotation: 90, face: 1)
+    let back = placement(rotation: -90, face: 1)
+    let mirrored = placement(rotation: 90, face: -1)
+    #expect(front.flipCenterOffsetX < 0)
+    #expect(back.flipCenterOffsetX > 0)
+    #expect(abs(mirrored.flipCenterOffsetX + front.flipCenterOffsetX) < 1e-9)
 }
 
 @Test func shadowOpacityFadesWithDepthAndAngle() {

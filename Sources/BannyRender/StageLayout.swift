@@ -26,8 +26,19 @@ public enum StageLayout {
         public var face: Int
         /// Gait offset (local 400-box units, applied inside the scaled box).
         public var bobY: Double
-        /// Gait rotation in degrees about the foot pivot (sway + tilt + jump wobble).
+        /// Total artwork rotation in degrees, retained for editor overlays and diagnostics.
         public var rotation: Double
+        /// Components are retained separately because grounded rotation and
+        /// flips may use different pivots even though `rotation` remains the
+        /// convenient total for editor overlays and diagnostics.
+        public var gaitRotation: Double
+        public var spinRotation: Double
+        public var flipRotation: Double
+        /// World-space displacement of the artwork center caused only by the
+        /// flip around its selected pivot. The light pass uses this to keep the
+        /// ground shadow attached when a custom pivot swings the body sideways.
+        public var flipCenterOffsetX: Double
+        public var flipCenterOffsetY: Double
         /// Painter's-order key: round((2 - depth) * 100).
         public var zIndex: Int
         /// Foot X in virtual-stage px (anchor for shadows/tags).
@@ -50,6 +61,30 @@ public enum StageLayout {
 
     public static func virtualHeight(outputHeight: Double) -> Double {
         outputHeight / (1 - trackStripFraction)
+    }
+
+    /// Compact ballistic flip arc. The early apex makes takeoff decisive while
+    /// the longer quadratic fall visibly accelerates into a firm landing.
+    /// This is shared by artwork and shadow layout so they cannot drift apart.
+    static func flipLiftFactor(progress: Double) -> Double {
+        let p = min(1, max(0, progress))
+        let apex = 0.44
+        if p <= apex {
+            let phase = p / apex
+            return 1 - (1 - phase) * (1 - phase)
+        }
+        let phase = (p - apex) / (1 - apex)
+        return 1 - phase * phase
+    }
+
+    /// Explicit pivot in 400×400 artwork coordinates. Keeping this conversion
+    /// beside the layout math prevents the character and shadow passes from
+    /// disagreeing about clamping or coordinate space.
+    static func explicitRotationPivot(for character: Character) -> (x: Double, y: Double)? {
+        character.rotationPivot.map {
+            (x: min(1, max(0, $0.x)) * box,
+             y: min(1, max(0, $0.y)) * box)
+        }
     }
 
     /// Port of the render section of web `step()` (verbatim constants).
@@ -76,15 +111,48 @@ public enum StageLayout {
 
         let bob = pose.moving ? -abs(sin(pose.phase)) * pose.wobble : 0
         let sway = pose.moving ? sin(pose.phase) * 2.5 : 0
-        var jumpY = 0.0
+        var jumpLift = 0.0
         var jumpWob = 0.0
         if let jump = pose.jump {
-            jumpY = -sin(jump.progress * .pi) * jump.height
+            jumpLift = sin(jump.progress * .pi) * jump.height
             jumpWob = sin(jump.progress * .pi * 3) * 2.5 * (1 - jump.progress)
         }
+        let flipLift = pose.flip.map {
+            flipLiftFactor(progress: $0.progress) * $0.height
+        } ?? 0
+        let airLift = max(jumpLift, flipLift)
+        let gaitRotation = sway + pose.leanTilt + jumpWob
+        let flipRotation = pose.flip?.rotation ?? 0
+        let flipPivot = explicitRotationPivot(for: character)
+            ?? (x: box / 2, y: box / 2)
+        let center = (x: box / 2, y: box / 2)
+        let flipRadians = flipRotation * .pi / 180
+        let localFlipOffset = (
+            x: (center.x - flipPivot.x) * cos(flipRadians)
+                - (center.y - flipPivot.y) * sin(flipRadians)
+                + flipPivot.x - center.x,
+            y: (center.x - flipPivot.x) * sin(flipRadians)
+                + (center.y - flipPivot.y) * cos(flipRadians)
+                + flipPivot.y - center.y
+        )
+        // Spin and gait are outside the flip transform in the renderer, so
+        // rotate the flip-only displacement through those layers as a vector.
+        let outerRadians = (pose.spin + gaitRotation) * .pi / 180
+        var flipCenterOffsetX = (localFlipOffset.x * cos(outerRadians)
+            - localFlipOffset.y * sin(outerRadians)) * scale
+        let flipCenterOffsetY = (localFlipOffset.x * sin(outerRadians)
+            + localFlipOffset.y * cos(outerRadians)) * scale
+        // Facing mirrors the already-rotated artwork around its vertical axis.
+        flipCenterOffsetX *= Double(pose.face)
 
         return Placement(tx: tx, ty: ty, scale: scale, face: pose.face,
-                         bobY: bob + jumpY, rotation: sway + pose.leanTilt + jumpWob + pose.spin,
+                         bobY: bob - airLift,
+                         rotation: gaitRotation + pose.spin + flipRotation,
+                         gaitRotation: gaitRotation,
+                         spinRotation: pose.spin,
+                         flipRotation: flipRotation,
+                         flipCenterOffsetX: flipCenterOffsetX,
+                         flipCenterOffsetY: flipCenterOffsetY,
                          zIndex: Int(((2 - pose.depth) * 100).rounded()),
                          footX: footX, footY: ty + footPivot.y * scale)
     }
@@ -100,12 +168,27 @@ public enum StageLayout {
         var cx = placement.footX + hx * (0.04 + ang * 0.12)
         let dFar = max(0, pose.depth)
         let zin = min(1, max(0, -pose.depth) / 6)
-        // Jump: as the character rises the shadow shrinks and fades a touch
-        // under it (it never slides sideways — it stays under the feet).
+        // Airborne motion shrinks and fades the shadow. During a flip, its
+        // center also projects away from the active light by the artwork's
+        // actual lift, and follows any drift caused by a custom rotation pivot.
         // 0 grounded → 1 at apex.
-        let lift = pose.jump.map { sin($0.progress * .pi) } ?? 0
-        let jumpShrink = 1 - 0.2 * lift
-        let jumpFade = 1 - 0.35 * lift
+        let jumpLift = pose.jump.map { sin($0.progress * .pi) } ?? 0
+        let flipLift = pose.flip.map { flipLiftFactor(progress: $0.progress) } ?? 0
+        let lift = max(jumpLift, flipLift)
+        let airShrink = 1 - 0.2 * lift
+        let airFade = 1 - 0.35 * lift
+        if let flip = pose.flip {
+            let liftPixels = flipLiftFactor(progress: flip.progress)
+                * flip.height * placement.scale
+            let casterLift = max(0, liftPixels - placement.flipCenterOffsetY)
+            cx += placement.flipCenterOffsetX + hx / vy * casterLift
+        }
+        // A 90°/270° pose presents the tall sprite broadside to the floor.
+        // Widen and flatten the footprint, returning continuously to the
+        // grounded proportions at 0°/360°.
+        let flipBroadside = abs(sin(placement.flipRotation * .pi / 180))
+        let flipWidth = 1 + 0.35 * flipBroadside
+        let flipDepth = 1 - 0.12 * flipBroadside
         // Wobble: the gait sway rocks the shadow side to side under the feet.
         let sway = pose.moving ? sin(pose.phase) * 6 * placement.scale : 0
         // Tilt: leaning forward/back nudges the shadow slightly with the lean.
@@ -114,9 +197,9 @@ public enum StageLayout {
         return ShadowPlacement(
             x: cx - 75,
             y: placement.footY - H * 0.019,
-            scaleX: placement.scale * (0.7 + ang * 0.8) * jumpShrink,
-            scaleY: placement.scale * 0.75 * jumpShrink,
-            opacity: max(0, (0.42 - ang * 0.30) * (1 - dFar * 0.7)) * (1 - zin) * jumpFade,
+            scaleX: placement.scale * (0.7 + ang * 0.8) * airShrink * flipWidth,
+            scaleY: placement.scale * 0.75 * airShrink * flipDepth,
+            opacity: max(0, (0.42 - ang * 0.30) * (1 - dFar * 0.7)) * (1 - zin) * airFade,
             zIndex: placement.zIndex - 1)
     }
 

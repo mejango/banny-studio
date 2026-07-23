@@ -432,6 +432,19 @@ final class StudioModel {
         scene.characters[i].events = events
     }
 
+    /// Character rotation pivot is a base transform rather than a timed motion
+    /// parameter. Nil restores Auto (feet for grounded spin, center for flips).
+    func setRotationPivot(characterIndex i: Int, pivot: MediaPivot?,
+                          registerUndo: Bool = true) {
+        guard scene.characters.indices.contains(i), !scene.characters[i].locked else { return }
+        let clamped = pivot.map {
+            MediaPivot(x: min(1, max(0, $0.x)), y: min(1, max(0, $0.y)))
+        }
+        guard scene.characters[i].rotationPivot != clamped else { return }
+        if registerUndo { registerUndoSnapshot(label: "Change Rotation Pivot") }
+        scene.characters[i].rotationPivot = clamped
+    }
+
     /// Moves a motion keyframe to time t (arrow-nudge / drag), keeping the
     /// selection on it.
     func moveMotionEvent(char: Int, index: Int, to t: Double) {

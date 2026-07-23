@@ -190,4 +190,19 @@ final class ShowLintTests: XCTestCase {
         XCTAssertTrue(messages.contains("not sorted"), messages)
         XCTAssertTrue(messages.contains("outside its source"), messages)
     }
+
+    func testCharacterRotationPivotIsLinted() {
+        let character = Character(
+            body: .orange,
+            rotationPivot: MediaPivot(x: -.infinity, y: 1.5))
+        let document = ShowDocument(stage: SceneState(characters: [character]))
+
+        let messages = ShowLint.check(
+            document: document,
+            audioIDs: [],
+            assetFileIDs: [],
+            catalog: nil).map(\.message).joined(separator: "\n")
+        XCTAssertTrue(messages.contains("rotation pivot"), messages)
+        XCTAssertTrue(messages.contains("0...1"), messages)
+    }
 }

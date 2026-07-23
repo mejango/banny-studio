@@ -16,13 +16,17 @@ import Testing
                     .key(t: 0.7, code: .keyM, down: false),
                     .outfit(t: 3, slot: 12, name: "proff-hair"),
                     .outfit(t: 5, slot: 12, name: nil),
+                    .key(t: 5.2, code: .keyF, down: true),
+                    .key(t: 5.3, code: .keyF, down: false),
                     .motion(t: 6, speed: 180, rotationSpeed: 135, wobble: 4, size: 0.8),
                 ],
                 reactions: [ReactionInstance(id: "ri", reactionID: "shock",
                                              start: 7, dur: 2.5, intensity: 1.4)],
                 name: "DARL",
                 recStart: StartPose(x: 0.3, depth: 0, face: 1, spin: 42, zoom: 1.35),
-                speed: 280, rotationSpeed: 72, locked: true, solo: true)],
+                speed: 280, rotationSpeed: 72,
+                rotationPivot: MediaPivot(x: 0.25, y: 0.6),
+                locked: true, solo: true)],
             reactionLibrary: [ReactionDefinition(id: "shock", name: "Shock", dur: 2,
                                                  events: [
                                                     .key(t: 0, code: .slash, down: true),
@@ -81,6 +85,7 @@ import Testing
         from: Data(#"{"body":"orange"}"#.utf8))
     #expect(character.speed == 320)
     #expect(character.rotationSpeed == 90)
+    #expect(character.rotationPivot == nil)
     #expect(character.reactions.isEmpty)
     #expect(!character.locked)
     #expect(!character.solo)
@@ -272,6 +277,7 @@ import Testing
         .keyM: .talk,
         .comma: .blink, .slash: .blink, .period: .blink,
         .keyJ: .jump,
+        .keyF: .jump, .keyD: .jump,
     ]
     for (code, group) in expected { #expect(code.group == group, "\(code)") }
     #expect(EventCode.comma.blinkExpression == .closed)

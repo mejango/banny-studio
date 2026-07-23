@@ -12,6 +12,8 @@ public enum EventCode: String, Codable, CaseIterable, Sendable {
     case keyT = "KeyT"
     case keyB = "KeyB"
     case keyJ = "KeyJ"
+    case keyF = "KeyF"
+    case keyD = "KeyD"
     // Not in the web v1 vocabulary — held like movement, integrated over time.
     case rotateLeft = "RotateLeft"
     case rotateRight = "RotateRight"
@@ -28,7 +30,7 @@ public enum EventCode: String, Codable, CaseIterable, Sendable {
         case .keyT, .keyB: return .tilt
         case .keyM: return .talk
         case .comma, .slash, .period: return .blink
-        case .keyJ: return .jump
+        case .keyJ, .keyF, .keyD: return .jump
         case .rotateLeft, .rotateRight, .spinReset: return .spin
         case .zoomIn, .zoomOut, .zoomReset: return .zoom
         }

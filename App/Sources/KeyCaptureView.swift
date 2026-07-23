@@ -110,7 +110,8 @@ struct KeyCaptureView: NSViewRepresentable {
         private static let codeMap: [UInt16: EventCode] = [
             123: .arrowLeft, 124: .arrowRight, 126: .arrowUp, 125: .arrowDown,
             43: .comma, 44: .slash, 47: .period,
-            46: .keyM, 45: .keyT, 11: .keyB, 38: .keyJ, // 45 = physical N (tilt fwd)
+            46: .keyM, 45: .keyT, 11: .keyB, 38: .keyJ,
+            3: .keyF, 2: .keyD, // F = front flip, D = back flip; 45 = physical N
         ]
 
         /// Digit keys 1..9,0 for character selection.

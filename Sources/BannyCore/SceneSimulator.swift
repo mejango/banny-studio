@@ -19,6 +19,9 @@ public struct CharacterPose: Equatable, Sendable {
     }
     /// Mid-jump: progress 0..1 and height (30/gravity). Nil when grounded.
     public var jump: JumpState?
+    /// A momentary somersault. Rotation reaches exactly ±360° while the
+    /// character follows a compact jump arc, then returns to its landed pose.
+    public var flip: FlipState?
     /// Resolved outfit at t: baseOutfit overlaid with timed changes.
     public var outfit: [Int: String]
     /// Per-slot dissolve state during the 0.8s after an outfit change: the
@@ -46,6 +49,18 @@ public struct CharacterPose: Equatable, Sendable {
         }
     }
 
+    public struct FlipState: Equatable, Sendable {
+        public var progress: Double
+        public var rotation: Double
+        public var height: Double
+
+        public init(progress: Double, rotation: Double, height: Double) {
+            self.progress = progress
+            self.rotation = rotation
+            self.height = height
+        }
+    }
+
     /// One slot's outfit dissolve: `prev` is the outgoing item (nil when the
     /// slot was empty), `progress` runs 0→1 over the transition.
     public struct OutfitAnim: Equatable, Sendable {
@@ -62,7 +77,8 @@ public struct CharacterPose: Equatable, Sendable {
                 eye: EyeExpression, talking: Bool, jump: JumpState?, outfit: [Int: String],
                 activeSubtitle: String?, moving: Bool, spin: Double = 0, zoom: Double = 1,
                 wobble: Double = 7, size: Double = 1, outfitAnim: [Int: OutfitAnim] = [:],
-                leanTilt: Double? = nil, mouthShape: MouthShape? = nil) {
+                leanTilt: Double? = nil, mouthShape: MouthShape? = nil,
+                flip: FlipState? = nil) {
         self.x = x
         self.depth = depth
         self.phase = phase
@@ -72,6 +88,7 @@ public struct CharacterPose: Equatable, Sendable {
         self.eye = eye
         self.mouthShape = mouthShape ?? (talking ? .open : .closed)
         self.jump = jump
+        self.flip = flip
         self.outfit = outfit
         self.outfitAnim = outfitAnim
         self.activeSubtitle = activeSubtitle
@@ -154,6 +171,7 @@ public struct SceneSimulator: Sendable {
         var size = c.size
         var lastOutfitChange: [Int: (t: Double, prev: String?)] = [:]
         var lastJumpDown: Double?
+        var lastFlipDown: (time: Double, direction: Double)?
         var heldLeft = false, heldRight = false, heldUp = false, heldDown = false
 
         for ev in c.events {
@@ -174,6 +192,8 @@ public struct SceneSimulator: Sendable {
                     case .keyT: tiltPrev = tilt; tilt = down ? 9 : 0; tiltChangeT = te
                     case .keyB: tiltPrev = tilt; tilt = down ? -9 : 0; tiltChangeT = te
                     case .keyJ: if down { lastJumpDown = te }
+                    case .keyF: if down { lastFlipDown = (te, 1) }
+                    case .keyD: if down { lastFlipDown = (te, -1) }
                     case .arrowLeft: heldLeft = down
                     case .arrowRight: heldRight = down
                     case .arrowUp: heldUp = down
@@ -191,6 +211,23 @@ public struct SceneSimulator: Sendable {
             let progress = (t - tj) / dur
             if progress >= 0, progress < 1 {
                 jump = .init(progress: progress, height: 30 / state.gravity)
+            }
+        }
+
+        var flip: CharacterPose.FlipState?
+        if let action = lastFlipDown {
+            let safeGravity = max(0.1, state.gravity)
+            let dur = (620.0 / safeGravity).rounded() / 1000.0
+            let progress = (t - action.time) / dur
+            if progress >= 0, progress < 1 {
+                // Smoothstep gives the turn zero angular velocity at takeoff
+                // and landing, an exact half-turn at the timeline midpoint,
+                // and a complete 360° action.
+                let eased = progress * progress * (3 - 2 * progress)
+                flip = .init(
+                    progress: progress,
+                    rotation: action.direction * 360 * eased,
+                    height: 26 / safeGravity)
             }
         }
 
@@ -242,7 +279,7 @@ public struct SceneSimulator: Sendable {
                              moving: heldLeft || heldRight || heldUp || heldDown,
                              spin: sim.spin, zoom: sim.zoom, wobble: wobble, size: size,
                              outfitAnim: outfitAnim, leanTilt: leanTilt,
-                             mouthShape: mouthShape)
+                             mouthShape: mouthShape, flip: flip)
     }
 
     private static func overlay(_ reaction: CharacterPose,
@@ -273,6 +310,12 @@ public struct SceneSimulator: Sendable {
         if groups.contains(.jump) {
             result.jump = reaction.jump.map {
                 CharacterPose.JumpState(progress: $0.progress, height: $0.height * intensity)
+            }
+            result.flip = reaction.flip.map {
+                CharacterPose.FlipState(
+                    progress: $0.progress,
+                    rotation: $0.rotation * intensity,
+                    height: $0.height * intensity)
             }
         }
         if groups.contains(.spin) {

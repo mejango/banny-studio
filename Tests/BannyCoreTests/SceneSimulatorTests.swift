@@ -84,6 +84,29 @@ private func makeScene(_ character: Character, gravity: Double = 1) -> SceneStat
     #expect(fastMid?.height == 15)
 }
 
+@Test func frontAndBackFlipsCompleteACompactDeterministicArc() {
+    let character = Character(body: .orange, events: [
+        .key(t: 1, code: .keyF, down: true),
+        .key(t: 1.08, code: .keyF, down: false),
+        .key(t: 2, code: .keyD, down: true),
+        .key(t: 2.08, code: .keyD, down: false),
+    ])
+    let scene = makeScene(character)
+    let simulator = SceneSimulator(state: scene)
+
+    #expect(simulator.pose(characterIndex: 0, at: 0.9).flip == nil)
+    let front = try! #require(simulator.pose(characterIndex: 0, at: 1.31).flip)
+    #expect(abs(front.progress - 0.5) < 1e-9)
+    #expect(abs(front.rotation - 180) < 1e-9)
+    #expect(front.height == 26)
+    #expect(simulator.pose(characterIndex: 0, at: 1.621).flip == nil)
+
+    let back = try! #require(simulator.pose(characterIndex: 0, at: 2.31).flip)
+    #expect(abs(back.progress - 0.5) < 1e-9)
+    #expect(abs(back.rotation + 180) < 1e-9)
+
+}
+
 @Test func outfitResolvesTimedChanges() {
     let c = Character(body: .orange,
                       baseOutfit: [12: "proff-hair", 6: "nerd"],

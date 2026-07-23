@@ -108,6 +108,13 @@ public enum ShowLint {
                     out.append(.init(.error, "\(who): reaction block \(block.id) has intensity outside 0...4"))
                 }
             }
+            if let pivot = ch.rotationPivot,
+               !pivot.x.isFinite || !pivot.y.isFinite
+                || !(0...1).contains(pivot.x) || !(0...1).contains(pivot.y) {
+                out.append(.init(
+                    .error,
+                    "\(who): rotation pivot must contain finite x/y values inside 0...1"))
+            }
             checkVoiceRecipe(ch.speechVoice.recipe, owner: who, into: &out)
             checkClips(ch.clips, owner: who, audioIDs: audioIDs, into: &out)
             checkCues(ch.subs.map { ("subtitle \"\($0.text)\"", $0.start, $0.dur) }, owner: who, into: &out)

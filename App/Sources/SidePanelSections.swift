@@ -1619,6 +1619,7 @@ struct ScriptSection: View {
 struct MotionSection: View {
     @Bindable var model: StudioModel
     let characterIndex: Int
+    @State private var pivotExpanded = false
 
     /// Motion params resolved at the playhead: editing writes the base value
     /// at t≈0, otherwise a timed keyframe (like outfits/visibility).
@@ -1663,6 +1664,7 @@ struct MotionSection: View {
                     .font(.system(size: 9, design: .monospaced)).foregroundStyle(.secondary)
                     .frame(width: 38, alignment: .trailing)
             }
+            rotationPivotControls
             HStack {
                 Text("wobble").font(.caption2).frame(width: 80, alignment: .leading)
                 Slider(value: Binding(
@@ -1696,6 +1698,104 @@ struct MotionSection: View {
 
     private func registerMotionUndo(_ editing: Bool) {
         if editing { model.registerUndoSnapshot(label: "Adjust Motion") }
+    }
+
+    @ViewBuilder
+    private var rotationPivotControls: some View {
+        let pivot = model.scene.characters[safe: characterIndex]?.rotationPivot
+        HStack(spacing: 6) {
+            Text("rotation pivot").font(.caption2)
+                .frame(width: 80, alignment: .leading)
+            Menu {
+                Button("Auto") {
+                    model.setRotationPivot(characterIndex: characterIndex, pivot: nil)
+                }
+                Divider()
+                Button("Feet") {
+                    model.setRotationPivot(
+                        characterIndex: characterIndex, pivot: .characterFeet)
+                }
+                Button("Center") {
+                    model.setRotationPivot(
+                        characterIndex: characterIndex, pivot: .center)
+                }
+                Button("Head") {
+                    model.setRotationPivot(
+                        characterIndex: characterIndex, pivot: .characterHead)
+                }
+            } label: {
+                Text(pivotName(pivot))
+                    .font(.caption2.bold())
+                    .frame(minWidth: 48)
+            }
+            Spacer()
+            Button {
+                pivotExpanded.toggle()
+            } label: {
+                Image(systemName: "scope")
+                    .font(.caption2.bold())
+                    .frame(width: 24, height: 20)
+            }
+            .buttonStyle(.bordered)
+            .help(pivotExpanded ? "Hide precise pivot controls"
+                  : "Fine-tune the pivot point")
+        }
+
+        if pivotExpanded {
+            Text(pivot == nil
+                 ? "Auto keeps ordinary rotation at the feet and flips around the center."
+                 : "Normalized position inside the character artwork.")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+            pivotSlider("x", keyPath: \.x)
+            pivotSlider("y", keyPath: \.y)
+        }
+    }
+
+    private func pivotSlider(
+        _ label: String,
+        keyPath: WritableKeyPath<MediaPivot, Double>
+    ) -> some View {
+        let value = (model.scene.characters[safe: characterIndex]?.rotationPivot
+                     ?? .center)[keyPath: keyPath]
+        return HStack(spacing: 7) {
+            Text(label).font(.caption2).frame(width: 18, alignment: .leading)
+            Slider(value: Binding(
+                get: {
+                    (model.scene.characters[safe: characterIndex]?.rotationPivot
+                     ?? .center)[keyPath: keyPath]
+                },
+                set: { newValue in
+                    var pivot = model.scene.characters[safe: characterIndex]?
+                        .rotationPivot ?? .center
+                    pivot[keyPath: keyPath] = newValue
+                    model.setRotationPivot(
+                        characterIndex: characterIndex,
+                        pivot: pivot,
+                        registerUndo: false)
+                }), in: 0...1) { editing in
+                    if editing {
+                        model.registerUndoSnapshot(label: "Adjust Rotation Pivot")
+                    }
+                }
+            Text(String(format: "%.2f", value))
+                .font(.system(size: 8, design: .monospaced))
+                .foregroundStyle(.secondary)
+                .frame(width: 30, alignment: .trailing)
+        }
+        .padding(.leading, 80)
+    }
+
+    private func pivotName(_ pivot: MediaPivot?) -> String {
+        guard let pivot else { return "Auto" }
+        if close(pivot, .characterFeet) { return "Feet" }
+        if close(pivot, .center) { return "Center" }
+        if close(pivot, .characterHead) { return "Head" }
+        return "Custom"
+    }
+
+    private func close(_ lhs: MediaPivot, _ rhs: MediaPivot) -> Bool {
+        abs(lhs.x - rhs.x) < 0.001 && abs(lhs.y - rhs.y) < 0.001
     }
 }
 

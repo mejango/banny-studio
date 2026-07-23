@@ -29,6 +29,7 @@ extension EventGroup {
         case .move: return "Move left / right"
         case .depth: return "Move forward / back"
         case .talk: return "Mouth"
+        case .jump: return "Jump · front · back"
         case .spin: return "Rotate"
         case .zoom: return "Scale"
         default: return rawValue.capitalized
@@ -42,7 +43,7 @@ extension EventGroup {
         case .tilt: return ["N", "B"]
         case .talk: return ["M"]
         case .blink: return [",", "/", "."]
-        case .jump: return ["J"]
+        case .jump: return ["J", "F", "D"]
         case .spin: return ["⇧", "sep:+", "←", "→"]
         case .zoom: return ["−", "+"]
         }
@@ -3588,7 +3589,7 @@ struct TransportBar: View {
         switch group {
         case .talk: return pose.talking
         case .blink: return pose.eye != .open
-        case .jump: return pose.jump != nil
+        case .jump: return pose.jump != nil || pose.flip != nil
         case .tilt: return abs(pose.tilt) > 0.5
         case .move, .depth: return pose.moving
         // No steady-state playback glow (they hold a value, not a "doing" state).
