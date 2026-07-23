@@ -330,6 +330,16 @@ public struct SpeechMouthCue: Codable, Equatable, Sendable {
         self.dur = max(0, dur)
         self.shape = shape
     }
+
+    /// Resolves one source-relative cue schedule. Timeline clips and live
+    /// previews share this boundary rule so their poses cannot drift apart.
+    public static func shape(in cues: [SpeechMouthCue],
+                             at sourceTime: Double) -> MouthShape? {
+        cues.last {
+            sourceTime + 1e-9 >= $0.start
+                && sourceTime < $0.start + $0.dur - 1e-9
+        }?.shape
+    }
 }
 
 /// A real timing callback emitted by the speech synthesizer. `location` and

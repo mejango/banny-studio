@@ -6,6 +6,12 @@ import BannyMedia
 /// sample-clock speech/lip-sync implementation.
 typealias StudioSpeechVoice = SpeechVoiceDescriptor
 
+struct VoiceRecipePreviewPlayback: Sendable {
+    let startedAt: TimeInterval
+    let duration: Double
+    let mouthCues: [SpeechMouthCue]
+}
+
 /// Retains the exact same graph used by timeline playback/export while a
 /// recipe preview is sounding.
 @MainActor
@@ -13,6 +19,7 @@ final class VoiceRecipePreviewPlayer {
     private var graph: AudioGraph?
     private var sourceURL: URL?
     private var cleanupTask: Task<Void, Never>?
+    private var requestID: UUID?
 
     deinit {
         cleanupTask?.cancel()
@@ -21,6 +28,7 @@ final class VoiceRecipePreviewPlayer {
     }
 
     func stop() {
+        requestID = nil
         cleanupTask?.cancel()
         cleanupTask = nil
         graph?.stopAll()
@@ -31,46 +39,105 @@ final class VoiceRecipePreviewPlayer {
     }
 
     func preview(text: String, voiceIdentifier: String,
-                 recipe: VoiceRecipe) async throws {
-        let speech = try await SpeechProduction.render(
-            text: text,
-            voiceIdentifier: voiceIdentifier)
-
+                 recipe: VoiceRecipe) async throws -> VoiceRecipePreviewPlayback {
         stop()
+        let requestID = UUID()
+        self.requestID = requestID
+        let speech: RenderedSpeech
+        do {
+            speech = try await SpeechProduction.render(
+                text: text,
+                voiceIdentifier: voiceIdentifier)
+        } catch {
+            if self.requestID == requestID { self.requestID = nil }
+            throw error
+        }
+        if Task.isCancelled {
+            if self.requestID == requestID { self.requestID = nil }
+            throw CancellationError()
+        }
+        guard self.requestID == requestID else { throw CancellationError() }
+        let mouthCues = SpeechProduction.mouthCues(text: text, speech: speech)
+
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent("banny-recipe-preview-\(UUID().uuidString).caf")
-        try speech.data.write(to: url, options: .atomic)
-        let clipID = "preview-speech"
-        let clip = AudioClip(id: clipID, name: "Recipe preview", start: 0,
-                             dur: speech.duration, srcDur: speech.duration,
-                             kind: .speech)
-        let character = Character(
-            body: .original,
-            clips: [clip],
-            speechVoice: SpeechVoiceProfile(
-                voiceIdentifier: voiceIdentifier,
-                recipe: recipe))
-        let graph = AudioGraph()
-        try graph.build(scene: SceneState(characters: [character])) { id in
-            id == clipID ? url : nil
-        }
-        try graph.engine.start()
-        graph.schedule(from: 0)
-        graph.updateLevels(timelineTime: 0)
-        graph.playAll()
-        self.sourceURL = url
-        self.graph = graph
+        do {
+            try speech.data.write(to: url, options: .atomic)
+            let clipID = "preview-speech"
+            let clip = AudioClip(id: clipID, name: "Recipe preview", start: 0,
+                                 dur: speech.duration, srcDur: speech.duration,
+                                 kind: .speech)
+            let character = Character(
+                body: .original,
+                clips: [clip],
+                speechVoice: SpeechVoiceProfile(
+                    voiceIdentifier: voiceIdentifier,
+                    recipe: recipe))
+            let graph = AudioGraph()
+            try graph.build(scene: SceneState(characters: [character])) { id in
+                id == clipID ? url : nil
+            }
+            try graph.engine.start()
+            graph.schedule(from: 0)
+            graph.updateLevels(timelineTime: 0)
+            let startedAt = ProcessInfo.processInfo.systemUptime
+            graph.playAll()
+            self.sourceURL = url
+            self.graph = graph
 
-        let lifetime = UInt64(max(1, speech.duration + 2.5) * 1_000_000_000)
-        cleanupTask = Task { [weak self] in
-            try? await Task.sleep(nanoseconds: lifetime)
-            guard !Task.isCancelled else { return }
-            self?.stop()
+            let lifetime = UInt64(max(1, speech.duration + 2.5) * 1_000_000_000)
+            cleanupTask = Task { [weak self] in
+                try? await Task.sleep(nanoseconds: lifetime)
+                guard !Task.isCancelled, self?.requestID == requestID else { return }
+                self?.stop()
+            }
+            return VoiceRecipePreviewPlayback(
+                startedAt: startedAt,
+                duration: speech.duration,
+                mouthCues: mouthCues)
+        } catch {
+            try? FileManager.default.removeItem(at: url)
+            if self.requestID == requestID { self.requestID = nil }
+            throw error
         }
     }
 }
 
 extension StudioModel {
+    func startSpeechMouthPreview(characterIndex: Int,
+                                 playback: VoiceRecipePreviewPlayback) {
+        stopSpeechMouthPreview()
+        guard scene.characters.indices.contains(characterIndex),
+              scene.characters[characterIndex].speechVoice.automaticMouth,
+              playback.duration > 0 else { return }
+        let token = UUID()
+        speechMouthPreview = SpeechMouthPreview(
+            token: token,
+            characterIndex: characterIndex,
+            startedAt: playback.startedAt,
+            duration: playback.duration,
+            cues: playback.mouthCues)
+        let lifetime = UInt64(playback.duration * 1_000_000_000)
+        speechMouthPreviewCleanupTask = Task { [weak self] in
+            do {
+                try await Task.sleep(nanoseconds: lifetime)
+            } catch {
+                return
+            }
+            guard let self, self.speechMouthPreview?.token == token else { return }
+            self.speechMouthPreview = nil
+            self.speechMouthPreviewCleanupTask = nil
+        }
+    }
+
+    func stopSpeechMouthPreview(characterIndex: Int? = nil) {
+        if let characterIndex,
+           speechMouthPreview?.characterIndex != characterIndex { return }
+        speechMouthPreviewCleanupTask?.cancel()
+        speechMouthPreviewCleanupTask = nil
+        speechMouthPreview = nil
+    }
+
     /// Renders every nonempty caption using a natural installed voice, then
     /// atomically replaces only previously generated caption speech. Imported
     /// files and microphone takes remain untouched.
@@ -173,6 +240,7 @@ extension StudioModel {
               scene.characters[index].speechVoice.automaticMouth != enabled else { return }
         registerUndoSnapshot(label: enabled ? "Enable Automatic Mouth" : "Disable Automatic Mouth")
         scene.characters[index].speechVoice.automaticMouth = enabled
+        if !enabled { stopSpeechMouthPreview(characterIndex: index) }
     }
 
     /// Sample-aligned waveform lip sync for microphone takes and imported

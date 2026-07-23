@@ -9,6 +9,26 @@ struct ReactionSelection: Equatable {
     var id: String
 }
 
+/// Ephemeral lip sync for inspector voice previews. It deliberately lives
+/// outside the document: previewing never edits clips, moves the playhead, or
+/// creates undo history.
+struct SpeechMouthPreview: Equatable {
+    let token: UUID
+    let characterIndex: Int
+    let startedAt: TimeInterval
+    let duration: Double
+    let cues: [SpeechMouthCue]
+
+    /// Resolves against the same monotonic clock that starts preview audio.
+    /// Waveform gaps deliberately close the mouth rather than removing the
+    /// preview override.
+    func shape(at clockTime: TimeInterval) -> MouthShape? {
+        let elapsed = clockTime - startedAt
+        guard elapsed >= 0, elapsed < duration else { return nil }
+        return SpeechMouthCue.shape(in: cues, at: elapsed) ?? .closed
+    }
+}
+
 /// Per-document editor state: transport, recording, selection, scene switching.
 /// Stage state is always derived via SceneSimulator — this model only owns the
 /// document and the clock.
@@ -42,6 +62,9 @@ final class StudioModel {
     var activeSceneIndex: Int
     /// Held live keys → the codes currently down, per character (drives live sim while recording).
     private(set) var heldCodes: Set<EventCode> = []
+    /// Live-only mouth poses while the character inspector previews a voice.
+    var speechMouthPreview: SpeechMouthPreview?
+    @ObservationIgnored var speechMouthPreviewCleanupTask: Task<Void, Never>?
     /// Bumped whenever background media changes so caches invalidate.
     var backgroundRevision = 0
     @ObservationIgnored private var visualDurationCache: [String: Double] = [:]

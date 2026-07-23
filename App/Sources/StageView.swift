@@ -44,7 +44,7 @@ struct StageView: View {
     /// for ambient GIFs — idle must cost nothing; GIFs animate in playback.)
     private var renderLoopPaused: Bool {
         !model.playing && model.heldCodes.isEmpty && !model.freeformSettling
-            && model.heldLightKeys.isEmpty
+            && model.heldLightKeys.isEmpty && model.speechMouthPreview == nil
     }
 
     /// The canvas only spans the full stage box while the overview needs the
@@ -121,9 +121,23 @@ struct StageView: View {
                                   y: size.height / 2 - frameSize.height * s / 2,
                                   width: frameSize.width * s,
                                   height: frameSize.height * s)
+                let hasFreeformPreview = !model.playing && model.freeformActive
+                let speechPreview = model.speechMouthPreview
+                let previewMouth = speechPreview?.shape(
+                    at: ProcessInfo.processInfo.systemUptime)
                 let poseOverride: ((Int, CharacterPose) -> CharacterPose)? =
-                    !model.playing && model.freeformActive
-                        ? { i, pose in model.freeformPose(characterIndex: i, basePose: pose) ?? pose }
+                    hasFreeformPreview || previewMouth != nil
+                        ? { i, pose in
+                            var livePose = hasFreeformPreview
+                                ? model.freeformPose(characterIndex: i, basePose: pose) ?? pose
+                                : pose
+                            if speechPreview?.characterIndex == i,
+                               let previewMouth,
+                               !model.heldCodes.contains(.keyM) {
+                                livePose.mouthShape = previewMouth
+                            }
+                            return livePose
+                        }
                         : nil
                 let render: (SceneState, CGContext) -> Void = { drawScene, cg in
                     cg.saveGState()

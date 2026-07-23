@@ -339,6 +339,7 @@ struct VoiceSection: View {
     @AppStorage("studioCustomVoiceRecipes") private var customRecipesJSON = ""
     @State private var voices = StudioSpeechVoice.installed()
     @State private var previewPlayer = VoiceRecipePreviewPlayer()
+    @State private var previewTask: Task<Void, Never>?
     @State private var pickerShown = false
     @State private var fineTuneExpanded = false
     @State private var isGenerating = false
@@ -496,7 +497,12 @@ struct VoiceSection: View {
                         characterIndex: characterIndex, identifier: identifier)
                 }))
         }
-        .onDisappear { previewPlayer.stop() }
+        .onDisappear {
+            previewTask?.cancel()
+            previewTask = nil
+            previewPlayer.stop()
+            model.stopSpeechMouthPreview(characterIndex: characterIndex)
+        }
         .alert("Save Voice Recipe", isPresented: $saveRecipePrompt) {
             TextField("Recipe name", text: $recipeName)
             Button("Cancel", role: .cancel) {}
@@ -696,15 +702,27 @@ struct VoiceSection: View {
         }
         let fallbackName = character.name.trimmingCharacters(in: .whitespacesAndNewlines)
         let text = caption ?? "This is how \(fallbackName.isEmpty ? "this character" : fallbackName) will sound."
+        previewTask?.cancel()
+        previewPlayer.stop()
+        model.stopSpeechMouthPreview(characterIndex: characterIndex)
         isPreviewing = true
         generationError = nil
-        Task { @MainActor in
-            defer { isPreviewing = false }
+        previewTask = Task { @MainActor in
+            defer {
+                isPreviewing = false
+                previewTask = nil
+            }
             do {
-                try await previewPlayer.preview(
+                let playback = try await previewPlayer.preview(
                     text: text,
                     voiceIdentifier: selectedVoice.id,
                     recipe: character.speechVoice.recipe)
+                try Task.checkCancellation()
+                model.startSpeechMouthPreview(
+                    characterIndex: characterIndex,
+                    playback: playback)
+            } catch is CancellationError {
+                // Closing the inspector or starting another preview is silent.
             } catch {
                 generationError = error.localizedDescription
             }

@@ -1333,9 +1333,7 @@ public struct AudioClip: Codable, Equatable, Sendable {
     public func mouthShape(at timelineTime: Double) -> MouthShape? {
         guard timelineTime >= start, timelineTime < start + dur else { return nil }
         let sourceTime = offset + timelineTime - start
-        return mouthCues.last {
-            sourceTime + 1e-9 >= $0.start && sourceTime < $0.start + $0.dur - 1e-9
-        }?.shape
+        return SpeechMouthCue.shape(in: mouthCues, at: sourceTime)
     }
 
     private enum CodingKeys: String, CodingKey {
