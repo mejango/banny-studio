@@ -39,6 +39,7 @@ struct ShipButton: View {
     @State private var cancellationToken: ExportCancellationToken?
     @State private var exportTask: Task<Void, Never>?
     @State private var retryRequest: ExportRequest?
+    @State private var showingYouTubePublisher = false
 
     var body: some View {
         HStack(spacing: 8) {
@@ -54,6 +55,10 @@ struct ShipButton: View {
                     askSaveURL(suggested: "SHOW.bs") { dest in
                         if let dest { exportProject(to: dest) }
                     }
+                }
+                Divider()
+                Button("Publish to YouTube…") {
+                    showingYouTubePublisher = true
                 }
             } label: {
                 Text(shipping ? "Exporting… \(Int(progress * 100))%" : "Export")
@@ -93,6 +98,12 @@ struct ShipButton: View {
             Button("OK") { exportError = nil }
         } message: {
             Text(exportError ?? "")
+        }
+        .sheet(isPresented: $showingYouTubePublisher) {
+            YouTubePublishView(
+                model: model,
+                file: file,
+                suggestedTitle: projectTitle)
         }
     }
 
@@ -170,6 +181,16 @@ struct ShipButton: View {
         model.exportRange.map { $0.to - $0.from } ?? max(1, model.scene.contentEnd + 0.5)
     }
 
+    private var projectTitle: String {
+        #if os(macOS)
+        if let name = NSDocumentController.shared.currentDocument?.displayName {
+            let value = (name as NSString).deletingPathExtension
+            if !value.isEmpty, value != "Untitled" { return value }
+        }
+        #endif
+        return "Banny show"
+    }
+
     /// Rough output size " · ~12 MB" for a tier at the export length.
     private func sizeHint(_ tier: ShowExporter.Options, _ seconds: Double) -> String {
         let bytes = Double(tier.videoBitrate + 128_000) * seconds / 8
@@ -178,31 +199,11 @@ struct ShipButton: View {
     }
 
     private func ship(to dest: URL, tier: ShowExporter.Options = .p1080) {
-        let missingAudio = model.scene.characters.flatMap(\.clips)
-            .map(\.id) + model.scene.audioTracks.flatMap(\.clips).map(\.id)
-        let unresolvedAudio = Set(missingAudio).filter { file.audio[$0] == nil }
-        let referencedAssets = Set(
-            model.scene.backgroundTracks.flatMap(\.cues).map(\.assetID)
-            + model.scene.imageTracks.flatMap(\.cues).map(\.assetID)
-            + model.scene.audioTracks.flatMap(\.cues).map(\.assetID))
-        let unresolvedAssets = referencedAssets.filter { file.assetsMedia[$0] == nil }
-        guard unresolvedAudio.isEmpty, unresolvedAssets.isEmpty else {
-            let count = unresolvedAudio.count + unresolvedAssets.count
-            exportError = "\(count) linked media \(count == 1 ? "file is" : "files are") missing. Open Browse → Media and relink before exporting."
-            retryRequest = nil
-            return
-        }
-
-        let blocking = ShowExportPreflight.errors(
+        if let preflight = ShippingSupport.preflight(
             document: model.document,
             availableAudioIDs: Set(file.audio.keys),
-            availableAssetIDs: Set(file.assetsMedia.keys),
-            catalog: SharedAssets.catalog)
-        guard blocking.isEmpty else {
-            let visible = blocking.prefix(4).map { "• \($0)" }
-            let remainder = blocking.count - visible.count
-            let suffix = remainder > 0 ? "\n…and \(remainder) more." : ""
-            exportError = "This show needs attention before export:\n\(visible.joined(separator: "\n"))\(suffix)"
+            availableAssetIDs: Set(file.assetsMedia.keys)) {
+            exportError = preflight
             retryRequest = nil
             return
         }
@@ -223,27 +224,16 @@ struct ShipButton: View {
             // Media to temp files for AVFoundation.
             let dir = FileManager.default.temporaryDirectory
                 .appendingPathComponent("banny-ship-\(UUID().uuidString)", isDirectory: true)
-            try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
             defer { try? FileManager.default.removeItem(at: dir) }
-            var audioURLs: [String: URL] = [:]
-            for (id, m) in audio {
-                let url = dir.appendingPathComponent("a-\(id).\(m.ext)")
-                try? m.data.write(to: url)
-                audioURLs[id] = url
-            }
-            var assetURLs: [String: URL] = [:]
-            for (id, m) in assetsMedia {
-                let url = dir.appendingPathComponent("asset-\(id).\(m.ext)")
-                try? m.data.write(to: url)
-                assetURLs[id] = url
-            }
             let out = dir.appendingPathComponent("banny-show.mp4")
             do {
+                let media = try ShippingSupport.materialize(
+                    audio: audio, assets: assetsMedia, in: dir)
                 try ShowExporter.export(
                     document: document,
                     assets: SharedAssets.catalog,
-                    audioURL: { audioURLs[$0] },
-                    assetURL: { assetURLs[$0] },
+                    audioURL: { media.audioURLs[$0] },
+                    assetURL: { media.assetURLs[$0] },
                     options: options,
                     to: out,
                     progress: { p in

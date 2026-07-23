@@ -30,4 +30,21 @@ final class ShowPreviewTests: XCTestCase {
         XCTAssertEqual(image?.width, 1920)
         XCTAssertEqual(image?.height, 1080)
     }
+
+    func testYouTubeThumbnailIsDecodableAndUnderUploadLimit() throws {
+        let assets = try AssetCatalog(assetsRoot: Self.assetsRoot)
+        let document = ShowDocument.starter(characterCount: 1)
+
+        let data = try ShowPreview.thumbnailJPEG(
+            document: document,
+            assets: assets,
+            assetURL: { _ in nil },
+            at: 0)
+
+        XCTAssertLessThanOrEqual(data.count, 2_000_000)
+        let source = CGImageSourceCreateWithData(data as CFData, nil)
+        let image = source.flatMap { CGImageSourceCreateImageAtIndex($0, 0, nil) }
+        XCTAssertEqual(image?.width, 1280)
+        XCTAssertEqual(image?.height, 720)
+    }
 }

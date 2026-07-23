@@ -12,7 +12,7 @@ Spec: `docs/superpowers/specs/2026-07-07-banny-studio-native-design.md`
 |------|------|
 | `Sources/BannyCore` | Strict document model (schema v4), event semantics, deterministic simulator, legacy v1 importer, and portable show package I/O. Platform-free. |
 | `Sources/BannyRender` | Baked-asset catalog + pure `draw(t)` CoreGraphics frame compositor. Same code path for editor and export. |
-| `Sources/BannyMedia` | Audio graph, TTS/lip-sync production, media probing, preview, and offline H.264/AAC export. |
+| `Sources/BannyMedia` | Audio graph, TTS/lip-sync production, media probing, preview, offline H.264/AAC export, and resumable YouTube publishing. |
 | `Sources/BannyCLI` | Testable production API for strict JSON Patch, speech, media, validation, previews, packaging, and shipping. |
 | `Sources/banny-tool` | Thin `banny` executable entry point around `BannyCLI`. |
 | `App/` | The universal SwiftUI app (XcodeGen project). Editor, timeline, wardrobe, performance deck, Ship. |
@@ -31,6 +31,10 @@ xcodebuild -project BannyStudio.xcodeproj -scheme BannyStudio \
 iOS: same scheme, destination `platform=iOS Simulator,name=iPhone 16 Pro`.
 UI smoke test: `xcodebuild … test` (on macOS it needs a one-time automation
 permission grant; on the iOS simulator it runs unattended).
+
+Ship can save an MP4/project or publish directly to YouTube with captions,
+named-section chapters, and a current-frame thumbnail. Distribution builds need
+the one-time [Google OAuth setup](docs/YOUTUBE_PUBLISHING.md).
 
 ## CLI
 
@@ -86,6 +90,8 @@ node tools/extract-assets.mjs [path/to/index.html]
    for macOS and iOS, upload, TestFlight.
 3. First local run: `open App/BannyStudio.xcodeproj`, select the BannyStudio
    scheme, Run. File → Import Web Studio JSON… converts old staging files.
+4. **YouTube**: configure and verify the publisher-owned Google OAuth client as
+   described in `docs/YOUTUBE_PUBLISHING.md`.
 
 ## Known gaps vs the webapp (tracked, not blockers)
 

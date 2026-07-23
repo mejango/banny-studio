@@ -19,6 +19,13 @@ settings:
     MARKETING_VERSION: 1.4.0
     DEVELOPMENT_TEAM: SY2W527QJA
     CODE_SIGN_STYLE: Automatic
+    # Public installed-app identifier, injected by the release configuration.
+    # Native apps use PKCE and must not embed a confidential client secret.
+    BANNY_YOUTUBE_OAUTH_CLIENT_ID: ""
+    # Google shows this as the "iOS URL scheme" for the native OAuth client.
+    # Release builds should override it with the reversed OAuth client ID.
+    BANNY_YOUTUBE_OAUTH_CALLBACK_SCHEME: com.banny.BannyStudio.youtube
+    BANNY_YOUTUBE_OAUTH_REDIRECT_URI: $(BANNY_YOUTUBE_OAUTH_CALLBACK_SCHEME):/oauth2redirect
 
 targets:
   BannyStudio:
@@ -63,6 +70,12 @@ targets:
           - UIInterfaceOrientationLandscapeLeft
           - UIInterfaceOrientationLandscapeRight
         NSMicrophoneUsageDescription: Record narration and voices directly onto a track.
+        BannyYouTubeOAuthClientID: $(BANNY_YOUTUBE_OAUTH_CLIENT_ID)
+        BannyYouTubeOAuthRedirectURI: $(BANNY_YOUTUBE_OAUTH_REDIRECT_URI)
+        CFBundleURLTypes:
+          - CFBundleURLName: Banny Studio YouTube OAuth
+            CFBundleURLSchemes:
+              - $(BANNY_YOUTUBE_OAUTH_CALLBACK_SCHEME)
         NSUbiquitousContainers:
           iCloud.com.banny.BannyStudio:
             NSUbiquitousContainerIsDocumentScopePublic: true
@@ -101,6 +114,7 @@ targets:
         com.apple.security.app-sandbox: true
         com.apple.security.files.user-selected.read-write: true
         com.apple.security.device.audio-input: true
+        com.apple.security.network.client: true
         # iCloud Documents sync — uncomment after accepting the latest Apple
         # Developer Program License Agreement at developer.apple.com (provisioning
         # fails with "PLA Update available" until then):

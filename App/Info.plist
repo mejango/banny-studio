@@ -39,6 +39,17 @@
 	<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>Banny Studio YouTube OAuth</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>$(BANNY_YOUTUBE_OAUTH_CALLBACK_SCHEME)</string>
+			</array>
+		</dict>
+	</array>
 	<key>CFBundleName</key>
 	<string>Banny Studio</string>
 	<key>CFBundlePackageType</key>
@@ -49,6 +60,10 @@
 	<string>$(CURRENT_PROJECT_VERSION)</string>
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
+	<key>BannyYouTubeOAuthClientID</key>
+	<string>$(BANNY_YOUTUBE_OAUTH_CLIENT_ID)</string>
+	<key>BannyYouTubeOAuthRedirectURI</key>
+	<string>$(BANNY_YOUTUBE_OAUTH_REDIRECT_URI)</string>
 	<key>LSApplicationCategoryType</key>
 	<string>public.app-category.graphics-design</string>
 	<key>LSMinimumSystemVersion</key>
