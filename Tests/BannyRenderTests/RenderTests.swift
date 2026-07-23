@@ -68,13 +68,13 @@ private func writePNG(_ image: CGImage, to url: URL) throws {
     #expect(spun.scale == base.scale) // spin doesn't touch scale
 }
 
-@Test func flipPlacementUsesACompactLiftAndSeparateFullRotation() {
+@Test func flipPlacementUsesBallisticLiftAndSeparateFullRotation() {
     let character = Character(body: .orange)
     let pose = CharacterPose(
         x: 0.5, depth: 0, phase: 0, tilt: 0, face: 1, eye: .open,
         talking: false, jump: nil, outfit: [:], activeSubtitle: nil,
         moving: false,
-        flip: .init(progress: 0.5, rotation: 180, height: 26))
+        flip: .init(progress: 0.5, rotation: 180, height: 38))
     let placement = StageLayout.place(
         pose: pose,
         character: character,
@@ -82,7 +82,7 @@ private func writePNG(_ image: CGImage, to url: URL) throws {
         stageWidth: 1_600,
         virtualHeight: 900)
 
-    let expectedLift = StageLayout.flipLiftFactor(progress: 0.5) * 26
+    let expectedLift = StageLayout.flipLiftFactor(progress: 0.5) * 38
     #expect(abs(placement.bobY + expectedLift) < 1e-9)
     #expect(placement.gaitRotation == 0)
     #expect(placement.spinRotation == 0)
@@ -92,12 +92,13 @@ private func writePNG(_ image: CGImage, to url: URL) throws {
     #expect(abs(placement.flipCenterOffsetY) < 1e-9)
 }
 
-@Test func flipLiftLaunchesQuicklyAndAcceleratesIntoLanding() {
+@Test func flipLiftUsesAnExaggeratedLaunchAndAcceleratingLanding() {
     let lift = StageLayout.flipLiftFactor
     #expect(lift(0) == 0)
-    #expect(lift(0.44) == 1)
+    #expect(lift(0.38) == 1)
     #expect(lift(1) == 0)
     #expect(lift(0.15) > sin(0.15 * .pi)) // crisper takeoff than the old sine arc
+    #expect(lift(0.25) > 0.9) // most clearance arrives early, before the apex
     let earlyDescent = lift(0.7) - lift(0.85)
     let landingDescent = lift(0.85) - lift(1)
     #expect(landingDescent > earlyDescent)
@@ -111,7 +112,7 @@ private func writePNG(_ image: CGImage, to url: URL) throws {
     let flipPose = CharacterPose(
         x: 0.5, depth: 0, phase: 0, tilt: 0, face: 1, eye: .open,
         talking: false, jump: nil, outfit: [:], activeSubtitle: nil, moving: false,
-        flip: .init(progress: 0.25, rotation: 90, height: 26))
+        flip: .init(progress: 0.25, rotation: 90, height: 38))
     let light = Light(x: 0.1, y: 0.1)
     let groundedPlacement = StageLayout.place(
         pose: groundedPose, character: character, scene: SceneState(),
@@ -134,7 +135,7 @@ private func writePNG(_ image: CGImage, to url: URL) throws {
     let landedPose = CharacterPose(
         x: 0.5, depth: 0, phase: 0, tilt: 0, face: 1, eye: .open,
         talking: false, jump: nil, outfit: [:], activeSubtitle: nil, moving: false,
-        flip: .init(progress: 1, rotation: 360, height: 26))
+        flip: .init(progress: 1, rotation: 360, height: 38))
     let landedPlacement = StageLayout.place(
         pose: landedPose, character: character, scene: SceneState(),
         stageWidth: 1_600, virtualHeight: 900)
@@ -153,7 +154,7 @@ private func writePNG(_ image: CGImage, to url: URL) throws {
         let pose = CharacterPose(
             x: 0.5, depth: 0, phase: 0, tilt: 0, face: face, eye: .open,
             talking: false, jump: nil, outfit: [:], activeSubtitle: nil, moving: false,
-            flip: .init(progress: 0.25, rotation: rotation, height: 26))
+            flip: .init(progress: 0.25, rotation: rotation, height: 38))
         return StageLayout.place(
             pose: pose, character: character, scene: SceneState(),
             stageWidth: 1_600, virtualHeight: 900)

@@ -20,7 +20,7 @@ public struct CharacterPose: Equatable, Sendable {
     /// Mid-jump: progress 0..1 and height (30/gravity). Nil when grounded.
     public var jump: JumpState?
     /// A momentary somersault. Rotation reaches exactly ±360° while the
-    /// character follows a compact jump arc, then returns to its landed pose.
+    /// character follows an exaggerated ballistic arc into its landed pose.
     public var flip: FlipState?
     /// Resolved outfit at t: baseOutfit overlaid with timed changes.
     public var outfit: [Int: String]
@@ -227,7 +227,7 @@ public struct SceneSimulator: Sendable {
                 flip = .init(
                     progress: progress,
                     rotation: action.direction * 360 * eased,
-                    height: 26 / safeGravity)
+                    height: 38 / safeGravity)
             }
         }
 

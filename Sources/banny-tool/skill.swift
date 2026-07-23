@@ -108,8 +108,8 @@ Held keys need a down event AND an up event: `{"t": 1.0, "code": "KeyM",
 | `ArrowLeft` / `ArrowRight` | walk |
 | `ArrowUp` / `ArrowDown` | move deeper / closer |
 | `KeyJ` | jump (tap: down then up ~0.1s later) |
-| `KeyF` | front flip (tap; compact jump + forward 360° turn) |
-| `KeyD` | back flip (tap; compact jump + backward 360° turn) |
+| `KeyF` | front flip (tap; exaggerated ballistic arc + forward 360° turn) |
+| `KeyD` | back flip (tap; exaggerated ballistic arc + backward 360° turn) |
 | `RotateLeft` / `RotateRight` | spin |
 | `ZoomIn` / `ZoomOut` | animated scale on this character |
 

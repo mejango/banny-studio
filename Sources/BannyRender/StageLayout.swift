@@ -63,18 +63,20 @@ public enum StageLayout {
         outputHeight / (1 - trackStripFraction)
     }
 
-    /// Compact ballistic flip arc. The early apex makes takeoff decisive while
-    /// the longer quadratic fall visibly accelerates into a firm landing.
+    /// Exaggerated cartoon-ballistic flip arc. The fast launch reaches an early
+    /// apex, hangs high while the turn continues, then accelerates visibly into
+    /// a firm landing.
     /// This is shared by artwork and shadow layout so they cannot drift apart.
     static func flipLiftFactor(progress: Double) -> Double {
         let p = min(1, max(0, progress))
-        let apex = 0.44
+        let apex = 0.38
+        let curve = 2.4
         if p <= apex {
             let phase = p / apex
-            return 1 - (1 - phase) * (1 - phase)
+            return 1 - pow(1 - phase, curve)
         }
         let phase = (p - apex) / (1 - apex)
-        return 1 - phase * phase
+        return 1 - pow(phase, curve)
     }
 
     /// Explicit pivot in 400×400 artwork coordinates. Keeping this conversion

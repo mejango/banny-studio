@@ -84,7 +84,7 @@ private func makeScene(_ character: Character, gravity: Double = 1) -> SceneStat
     #expect(fastMid?.height == 15)
 }
 
-@Test func frontAndBackFlipsCompleteACompactDeterministicArc() {
+@Test func frontAndBackFlipsCompleteAStylizedDeterministicArc() {
     let character = Character(body: .orange, events: [
         .key(t: 1, code: .keyF, down: true),
         .key(t: 1.08, code: .keyF, down: false),
@@ -98,7 +98,7 @@ private func makeScene(_ character: Character, gravity: Double = 1) -> SceneStat
     let front = try! #require(simulator.pose(characterIndex: 0, at: 1.31).flip)
     #expect(abs(front.progress - 0.5) < 1e-9)
     #expect(abs(front.rotation - 180) < 1e-9)
-    #expect(front.height == 26)
+    #expect(front.height == 38)
     #expect(simulator.pose(characterIndex: 0, at: 1.621).flip == nil)
 
     let back = try! #require(simulator.pose(characterIndex: 0, at: 2.31).flip)
