@@ -108,6 +108,7 @@ public enum ShowLint {
                     out.append(.init(.error, "\(who): reaction block \(block.id) has intensity outside 0...4"))
                 }
             }
+            checkVoiceRecipe(ch.speechVoice.recipe, owner: who, into: &out)
             checkClips(ch.clips, owner: who, audioIDs: audioIDs, into: &out)
             checkCues(ch.subs.map { ("subtitle \"\($0.text)\"", $0.start, $0.dur) }, owner: who, into: &out)
         }
@@ -220,11 +221,16 @@ public enum ShowLint {
             if !audioIDs.contains(clip.id) {
                 out.append(.init(.error, "\(owner): audio clip \"\(clip.name)\" (\(clip.id)) has no file in audio/"))
             }
-            if clip.dur <= 0 {
+            if !clip.dur.isFinite || clip.dur <= 0 {
                 out.append(.init(.error, "\(owner): audio clip \"\(clip.name)\" has non-positive duration \(clean(clip.dur))"))
             }
-            if clip.start < 0 {
+            if !clip.start.isFinite || clip.start < 0 {
                 out.append(.init(.error, "\(owner): audio clip \"\(clip.name)\" starts before 0 (start=\(clean(clip.start)))"))
+            }
+            if !clip.offset.isFinite || clip.offset < 0
+                || !clip.srcDur.isFinite || clip.srcDur <= 0
+                || clip.offset + clip.dur > clip.srcDur + 0.001 {
+                out.append(.init(.error, "\(owner): audio clip \"\(clip.name)\" has invalid source range offset=\(clean(clip.offset)) dur=\(clean(clip.dur)) source=\(clean(clip.srcDur))"))
             }
             if !clip.fadeIn.isFinite || clip.fadeIn < 0 || clip.fadeIn > max(0, clip.dur) {
                 out.append(.init(.error, "\(owner): audio clip \"\(clip.name)\" has invalid fade-in \(clean(clip.fadeIn))"))
@@ -232,6 +238,46 @@ public enum ShowLint {
             if !clip.fadeOut.isFinite || clip.fadeOut < 0 || clip.fadeOut > max(0, clip.dur) {
                 out.append(.init(.error, "\(owner): audio clip \"\(clip.name)\" has invalid fade-out \(clean(clip.fadeOut))"))
             }
+            if zip(clip.mouthCues, clip.mouthCues.dropFirst())
+                .contains(where: { $0.start > $1.start }) {
+                out.append(.init(.error, "\(owner): speech clip \"\(clip.name)\" mouth timing is not sorted"))
+            }
+            for cue in clip.mouthCues {
+                if !cue.start.isFinite || !cue.dur.isFinite
+                    || cue.start < 0 || cue.dur <= 0
+                    || cue.start + cue.dur > clip.srcDur + 0.001 {
+                    out.append(.init(.error, "\(owner): speech clip \"\(clip.name)\" has mouth cue outside its source at \(clean(cue.start))"))
+                }
+            }
+        }
+    }
+
+    private static func checkVoiceRecipe(_ recipe: VoiceRecipe, owner: String,
+                                         into out: inout [Diagnostic]) {
+        let values = [
+            recipe.flavor, recipe.pitchCents, recipe.low, recipe.mid, recipe.high,
+            recipe.compression, recipe.distortionMix, recipe.delayTime,
+            recipe.delayFeedback, recipe.delayMix, recipe.reverbMix,
+            recipe.doubling, recipe.outputGainDB,
+        ]
+        if values.contains(where: { !$0.isFinite }) {
+            out.append(.init(.error, "\(owner): voice recipe contains a non-finite value"))
+            return
+        }
+        if !(0...1).contains(recipe.flavor)
+            || !(-2_400...2_400).contains(recipe.pitchCents)
+            || !(-24...24).contains(recipe.low)
+            || !(-24...24).contains(recipe.mid)
+            || !(-24...24).contains(recipe.high)
+            || !(0...1).contains(recipe.compression)
+            || !(0...1).contains(recipe.distortionMix)
+            || !(0.001...0.5).contains(recipe.delayTime)
+            || !(0...0.8).contains(recipe.delayFeedback)
+            || !(0...1).contains(recipe.delayMix)
+            || !(0...1).contains(recipe.reverbMix)
+            || !(0...1).contains(recipe.doubling)
+            || !(-24...12).contains(recipe.outputGainDB) {
+            out.append(.init(.error, "\(owner): voice recipe contains a value outside its supported range"))
         }
     }
 

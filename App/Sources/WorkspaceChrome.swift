@@ -707,50 +707,54 @@ struct WorkspaceDrawer: View {
     @AppStorage("studioLightMode") private var lightMode = false
 
     var body: some View {
-        VStack(spacing: 0) {
-            HStack(spacing: 8) {
-                Picker("Workspace panel", selection: activeMode) {
-                    ForEach(WorkspaceDrawerMode.allCases) { item in
-                        Label(item.rawValue, systemImage: item.symbol).tag(item)
+        ZStack {
+            // A dedicated backing plane is more reliable than a background
+            // modifier around AppKit-backed scrolling/text views: nothing
+            // from the stage, splitter, or timeline can show through it.
+            drawerSurface
+
+            VStack(spacing: 0) {
+                HStack(spacing: 8) {
+                    Picker("Workspace panel", selection: activeMode) {
+                        ForEach(WorkspaceDrawerMode.allCases) { item in
+                            Label(item.rawValue, systemImage: item.symbol).tag(item)
+                        }
                     }
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
+                    Button { close() } label: {
+                        Image(systemName: "xmark")
+                            .font(.system(size: 10, weight: .bold))
+                            .frame(width: 24, height: 24)
+                    }
+                    .buttonStyle(.plain)
+                    .help("Close panel")
+                    .accessibilityLabel("Close panel")
                 }
-                .pickerStyle(.segmented)
-                .labelsHidden()
-                Button { close() } label: {
-                    Image(systemName: "xmark")
-                        .font(.system(size: 10, weight: .bold))
-                        .frame(width: 24, height: 24)
-                }
-                .buttonStyle(.plain)
-                .help("Close panel")
-                .accessibilityLabel("Close panel")
-            }
-            .padding(10)
-            .background(Color.primary.opacity(0.04))
+                .padding(10)
+                .background(Color.primary.opacity(0.04))
 
-            Divider()
+                Divider()
 
-            switch mode ?? .browse {
-            case .browse:
-                WorkspaceBrowser(model: model, file: file)
-            case .inspect:
-                ScrollView {
-                    if let kind = model.selectedTrackKind {
-                        TrackInspector(model: model, file: file, kind: kind)
-                            .padding(12)
-                    } else {
-                        ContentUnavailableView("Nothing selected",
-                                               systemImage: "slider.horizontal.3",
-                                               description: Text("Select a track or item to edit it."))
-                            .padding(.top, 60)
+                switch mode ?? .browse {
+                case .browse:
+                    WorkspaceBrowser(model: model, file: file)
+                case .inspect:
+                    ScrollView {
+                        if let kind = model.selectedTrackKind {
+                            TrackInspector(model: model, file: file, kind: kind)
+                                .padding(12)
+                        } else {
+                            ContentUnavailableView(
+                                "Nothing selected",
+                                systemImage: "slider.horizontal.3",
+                                description: Text("Select a track or item to edit it."))
+                                .padding(.top, 60)
+                        }
                     }
                 }
             }
         }
-        // Opaque by design: otherwise stationary stage/timeline guides show
-        // through while inspector content scrolls and look like stuck dividers.
-        .background(lightMode ? Color(red: 1, green: 0.99, blue: 0.96)
-                              : Color(red: 0.09, green: 0.09, blue: 0.125))
         .overlay(alignment: .leading) { Divider() }
         .shadow(color: .black.opacity(0.34), radius: 18, x: -5)
         .environment(\.colorScheme, lightMode ? .light : .dark)
@@ -758,6 +762,11 @@ struct WorkspaceDrawer: View {
         #if os(macOS)
         .onExitCommand(perform: close)
         #endif
+    }
+
+    private var drawerSurface: Color {
+        lightMode ? Color(red: 1, green: 0.99, blue: 0.96)
+                  : Color(red: 0.09, green: 0.09, blue: 0.125)
     }
 
     private var activeMode: Binding<WorkspaceDrawerMode> {

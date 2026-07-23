@@ -11,7 +11,12 @@ public struct CharacterPose: Equatable, Sendable {
     public var leanTilt: Double
     public var face: Int
     public var eye: EyeExpression
-    public var talking: Bool
+    public var mouthShape: MouthShape
+    /// Compatibility shorthand used by manual M-key performances.
+    public var talking: Bool {
+        get { mouthShape != .closed }
+        set { mouthShape = newValue ? .open : .closed }
+    }
     /// Mid-jump: progress 0..1 and height (30/gravity). Nil when grounded.
     public var jump: JumpState?
     /// Resolved outfit at t: baseOutfit overlaid with timed changes.
@@ -57,7 +62,7 @@ public struct CharacterPose: Equatable, Sendable {
                 eye: EyeExpression, talking: Bool, jump: JumpState?, outfit: [Int: String],
                 activeSubtitle: String?, moving: Bool, spin: Double = 0, zoom: Double = 1,
                 wobble: Double = 7, size: Double = 1, outfitAnim: [Int: OutfitAnim] = [:],
-                leanTilt: Double? = nil) {
+                leanTilt: Double? = nil, mouthShape: MouthShape? = nil) {
         self.x = x
         self.depth = depth
         self.phase = phase
@@ -65,7 +70,7 @@ public struct CharacterPose: Equatable, Sendable {
         self.leanTilt = leanTilt ?? tilt
         self.face = face
         self.eye = eye
-        self.talking = talking
+        self.mouthShape = mouthShape ?? (talking ? .open : .closed)
         self.jump = jump
         self.outfit = outfit
         self.outfitAnim = outfitAnim
@@ -143,7 +148,7 @@ public struct SceneSimulator: Sendable {
         var tilt = 0.0
         var tiltPrev = 0.0
         var tiltChangeT = -1000.0
-        var talking = false
+        var manualMouthOpen = false
         var outfit = c.baseOutfit
         var wobble = c.wobble
         var size = c.size
@@ -165,7 +170,7 @@ public struct SceneSimulator: Sendable {
                     eye = down ? blink : .open
                 } else {
                     switch code {
-                    case .keyM: talking = down
+                    case .keyM: manualMouthOpen = down
                     case .keyT: tiltPrev = tilt; tilt = down ? 9 : 0; tiltChangeT = te
                     case .keyB: tiltPrev = tilt; tilt = down ? -9 : 0; tiltChangeT = te
                     case .keyJ: if down { lastJumpDown = te }
@@ -212,12 +217,32 @@ public struct SceneSimulator: Sendable {
             if p >= 0, p < 1 { outfitAnim[slot] = .init(prev: change.prev, progress: p) }
         }
 
+        var mouthShape: MouthShape = .closed
+        if c.speechVoice.automaticMouth {
+            var activeClip: AudioClip?
+            for clip in c.clips
+            where !clip.mouthCues.isEmpty && t >= clip.start && t < clip.start + clip.dur {
+                if let current = activeClip {
+                    if clip.start >= current.start { activeClip = clip }
+                } else {
+                    activeClip = clip
+                }
+            }
+            if let activeClip {
+                mouthShape = activeClip.mouthShape(at: t) ?? .closed
+            }
+        }
+        // A held M key is an explicit live/manual performance and wins over
+        // generated lip sync. Releasing it hands control back to automation.
+        if manualMouthOpen { mouthShape = .open }
+
         return CharacterPose(x: sim.x, depth: sim.depth, phase: sim.phase, tilt: tilt,
-                             face: sim.face, eye: eye, talking: talking, jump: jump,
+                             face: sim.face, eye: eye, talking: mouthShape != .closed, jump: jump,
                              outfit: outfit, activeSubtitle: sub?.text,
                              moving: heldLeft || heldRight || heldUp || heldDown,
                              spin: sim.spin, zoom: sim.zoom, wobble: wobble, size: size,
-                             outfitAnim: outfitAnim, leanTilt: leanTilt)
+                             outfitAnim: outfitAnim, leanTilt: leanTilt,
+                             mouthShape: mouthShape)
     }
 
     private static func overlay(_ reaction: CharacterPose,

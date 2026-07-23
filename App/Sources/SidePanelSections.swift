@@ -75,7 +75,9 @@ struct AudioSection: View {
                 Text("Unlock this track to add or record audio.")
                     .font(.caption2).foregroundStyle(.orange)
             } else if !recorder.isRecording {
-                Text("Mic recording rolls the timeline so you can perform against the show.")
+                Text(target == nil
+                     ? "Mic recording rolls the timeline so you can perform against the show."
+                     : "Mic recording rolls the timeline and adds sample-aligned mouth timing automatically.")
                     .font(.caption2).foregroundStyle(.secondary)
             }
         }
@@ -333,16 +335,38 @@ struct AssetBankSection: View {
 struct VoiceSection: View {
     @Bindable var model: StudioModel
     let characterIndex: Int
-    @AppStorage("studioTTSVoiceIdentifier") private var selectedVoiceID = ""
+    @AppStorage("studioTTSVoiceIdentifier") private var legacyVoiceID = ""
+    @AppStorage("studioCustomVoiceRecipes") private var customRecipesJSON = ""
     @State private var voices = StudioSpeechVoice.installed()
-    @State private var previewSynthesizer = AVSpeechSynthesizer()
+    @State private var previewPlayer = VoiceRecipePreviewPlayer()
     @State private var pickerShown = false
+    @State private var fineTuneExpanded = false
     @State private var isGenerating = false
+    @State private var isPreviewing = false
     @State private var lastCount: Int?
     @State private var generationError: String?
+    @State private var saveRecipePrompt = false
+    @State private var recipeName = ""
 
     private var selectedVoice: StudioSpeechVoice? {
         voices.first { $0.id == selectedVoiceID }
+    }
+
+    private var selectedVoiceID: String {
+        let stored = model.scene.characters[safe: characterIndex]?
+            .speechVoice.voiceIdentifier
+        if let stored, voices.contains(where: { $0.id == stored }) { return stored }
+        if voices.contains(where: { $0.id == legacyVoiceID }) { return legacyVoiceID }
+        return StudioSpeechVoice.recommendedIdentifier(in: voices) ?? ""
+    }
+
+    private var customRecipes: [VoiceRecipe] {
+        guard let data = customRecipesJSON.data(using: .utf8),
+              let recipes = try? JSONDecoder().decode([VoiceRecipe].self, from: data)
+        else { return [] }
+        return recipes.sorted {
+            $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending
+        }
     }
 
     var body: some View {
@@ -382,14 +406,43 @@ struct VoiceSection: View {
                     .buttonStyle(.plain)
                     .accessibilityIdentifier("choose-speech-voice")
 
+                    recipeControls(c)
+
+                    Toggle(isOn: Binding(
+                        get: { model.scene.characters[safe: characterIndex]?
+                            .speechVoice.automaticMouth ?? true },
+                        set: {
+                            model.setAutomaticSpeechMouth(
+                                characterIndex: characterIndex, enabled: $0)
+                        })) {
+                            VStack(alignment: .leading, spacing: 1) {
+                                Text("Automatic mouth")
+                                    .font(.caption.bold())
+                                Text("Sample-aligned closed, tight, and open poses")
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                    #if os(macOS)
+                    .toggleStyle(.checkbox)
+                    #endif
+                    .disabled(c.locked)
+                    .help("Uses the rendered waveform and the synthesizer's exact word sample positions. A held M key temporarily overrides it.")
+
                     HStack(spacing: 8) {
                         Button {
-                            preview(characterName: c.name, captions: c.subs.map(\.text))
+                            preview(character: c)
                         } label: {
-                            Label("Preview", systemImage: "play.fill")
+                            HStack(spacing: 5) {
+                                if isPreviewing {
+                                    ProgressView().controlSize(.small)
+                                }
+                                Label(isPreviewing ? "Preparing…" : "Preview recipe",
+                                      systemImage: "play.fill")
+                            }
                         }
                         .font(.caption)
-                        .disabled(selectedVoice == nil)
+                        .disabled(selectedVoice == nil || isPreviewing)
 
                         Spacer()
 
@@ -400,7 +453,7 @@ struct VoiceSection: View {
                                 if isGenerating {
                                     ProgressView().controlSize(.small)
                                 }
-                                Text(isGenerating ? "Generating…" : "Speak all captions")
+                                Text(isGenerating ? "Rendering…" : "Render captions")
                             }
                         }
                         .font(.caption.bold())
@@ -410,20 +463,20 @@ struct VoiceSection: View {
                                       !$0.text.trimmingCharacters(
                                           in: .whitespacesAndNewlines).isEmpty
                                   })
-                        .help("Creates a natural speech clip at every caption. Re-running replaces only generated speech; imported files and mic takes stay untouched.")
+                        .help("Bakes each caption, its voice recipe, and precise mouth timing. Re-running replaces only generated speech; imported files and mic takes stay untouched.")
                     }
 
                     if c.locked {
                         Text("Unlock this character track to generate speech.")
                             .font(.caption2).foregroundStyle(.orange)
                     } else if let lastCount {
-                        Text("Created \(lastCount) speech clip\(lastCount == 1 ? "" : "s").")
+                        Text("Created \(lastCount) speech clip\(lastCount == 1 ? "" : "s") with synchronized mouth timing.")
                             .font(.caption2).foregroundStyle(.secondary)
                     } else if c.subs.isEmpty {
                         Text("Add captions first — each caption becomes a spoken clip.")
                             .font(.caption2).foregroundStyle(.secondary)
                     } else {
-                        Text("Uses voices installed on this device. Provider voices appear here too; audio from other voice tools can be imported below.")
+                        Text("The dry voice is baked into the show; its recipe stays editable and sounds identical live and on export.")
                             .font(.caption2).foregroundStyle(.secondary)
                     }
                 }
@@ -435,7 +488,23 @@ struct VoiceSection: View {
                 refreshVoices()
             }
         .sheet(isPresented: $pickerShown) {
-            StudioVoicePicker(voices: voices, selectedVoiceID: $selectedVoiceID)
+            StudioVoicePicker(voices: voices, selectedVoiceID: Binding(
+                get: { selectedVoiceID },
+                set: { identifier in
+                    legacyVoiceID = identifier
+                    model.setSpeechVoiceIdentifier(
+                        characterIndex: characterIndex, identifier: identifier)
+                }))
+        }
+        .onDisappear { previewPlayer.stop() }
+        .alert("Save Voice Recipe", isPresented: $saveRecipePrompt) {
+            TextField("Recipe name", text: $recipeName)
+            Button("Cancel", role: .cancel) {}
+            Button("Save") { saveCurrentRecipe() }
+                .disabled(recipeName.trimmingCharacters(
+                    in: .whitespacesAndNewlines).isEmpty)
+        } message: {
+            Text("Saved recipes are available to every character.")
         }
         .alert("Speech generation failed", isPresented: Binding(
             get: { generationError != nil },
@@ -448,24 +517,198 @@ struct VoiceSection: View {
 
     private func refreshVoices() {
         voices = StudioSpeechVoice.installed()
-        if !voices.contains(where: { $0.id == selectedVoiceID }) {
-            selectedVoiceID = StudioSpeechVoice.recommendedIdentifier(in: voices) ?? ""
+        if !voices.contains(where: { $0.id == legacyVoiceID }) {
+            legacyVoiceID = StudioSpeechVoice.recommendedIdentifier(in: voices) ?? ""
         }
     }
 
-    private func preview(characterName: String, captions: [String]) {
-        guard let selectedVoice,
-              let voice = AVSpeechSynthesisVoice(identifier: selectedVoice.id) else { return }
-        let caption = captions.first {
+    @ViewBuilder
+    private func recipeControls(_ character: Character) -> some View {
+        let recipe = character.speechVoice.recipe
+        Menu {
+            Section("Studio recipes") {
+                ForEach(VoiceRecipe.Preset.allCases.filter { $0 != .custom }) { preset in
+                    Button {
+                        model.setVoiceRecipe(
+                            characterIndex: characterIndex,
+                            recipe: VoiceRecipe.preset(preset, flavor: recipe.flavor),
+                            undoLabel: "Choose Voice Recipe")
+                    } label: {
+                        Label(preset.displayName, systemImage: preset.symbol)
+                    }
+                }
+            }
+            if !customRecipes.isEmpty {
+                Section("My recipes") {
+                    ForEach(customRecipes, id: \.name) { custom in
+                        Button(custom.name) {
+                            model.setVoiceRecipe(
+                                characterIndex: characterIndex,
+                                recipe: custom,
+                                undoLabel: "Choose Voice Recipe")
+                        }
+                    }
+                }
+                Menu("Delete a saved recipe") {
+                    ForEach(customRecipes, id: \.name) { custom in
+                        Button(custom.name, role: .destructive) {
+                            deleteCustomRecipe(named: custom.name)
+                        }
+                    }
+                }
+            }
+            Divider()
+            Button("Save current as…") {
+                recipeName = recipe.preset == .custom ? recipe.name : recipe.preset.displayName
+                saveRecipePrompt = true
+            }
+        } label: {
+            HStack(spacing: 8) {
+                Image(systemName: recipe.preset.symbol)
+                    .foregroundStyle(Color.accentColor)
+                    .frame(width: 18)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(recipe.name.isEmpty ? recipe.preset.displayName : recipe.name)
+                        .font(.caption.bold())
+                        .foregroundStyle(.primary)
+                    Text("Voice recipe")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                Image(systemName: "chevron.up.chevron.down")
+                    .font(.caption2.bold())
+                    .foregroundStyle(.tertiary)
+            }
+            .padding(8)
+            .background(Color.primary.opacity(0.06),
+                        in: RoundedRectangle(cornerRadius: 8))
+        }
+        .buttonStyle(.plain)
+        .disabled(character.locked)
+
+        HStack(spacing: 7) {
+            Text("Flavor").font(.caption.bold())
+            Slider(value: Binding(
+                get: { model.scene.characters[safe: characterIndex]?
+                    .speechVoice.recipe.flavor ?? 1 },
+                set: { value in
+                    model.updateVoiceRecipeDuringAdjustment(
+                        characterIndex: characterIndex) { $0.flavor = value }
+                }), in: 0...1, onEditingChanged: recipeEditingChanged)
+            Text("\(Int((recipe.flavor * 100).rounded()))%")
+                .font(.caption2.monospacedDigit())
+                .foregroundStyle(.secondary)
+                .frame(width: 34, alignment: .trailing)
+        }
+        .disabled(character.locked)
+
+        DisclosureGroup(isExpanded: $fineTuneExpanded) {
+            VStack(alignment: .leading, spacing: 6) {
+                recipeSlider("Pitch", keyPath: \.pitchCents, range: -1_200...1_200) {
+                    String(format: "%+.0f¢", $0)
+                }
+                recipeSlider("Warmth", keyPath: \.low, range: -12...12) {
+                    String(format: "%+.1fdB", $0)
+                }
+                recipeSlider("Presence", keyPath: \.mid, range: -12...12) {
+                    String(format: "%+.1fdB", $0)
+                }
+                recipeSlider("Air", keyPath: \.high, range: -12...12) {
+                    String(format: "%+.1fdB", $0)
+                }
+                recipeSlider("Compression", keyPath: \.compression, range: 0...1) {
+                    "\(Int(($0 * 100).rounded()))%"
+                }
+
+                HStack {
+                    Text("Character").font(.caption)
+                    Spacer()
+                    Picker("", selection: recipeBinding(\.distortion)) {
+                        ForEach(VoiceRecipe.Distortion.allCases, id: \.self) {
+                            Text(distortionName($0)).tag($0)
+                        }
+                    }
+                    .labelsHidden()
+                    .frame(maxWidth: 150)
+                }
+                recipeSlider("Character mix", keyPath: \.distortionMix, range: 0...0.75) {
+                    "\(Int(($0 * 100).rounded()))%"
+                }
+                recipeSlider("Echo", keyPath: \.delayMix, range: 0...0.6) {
+                    "\(Int(($0 * 100).rounded()))%"
+                }
+                recipeSlider("Echo time", keyPath: \.delayTime, range: 0.01...0.5) {
+                    "\(Int(($0 * 1_000).rounded()))ms"
+                }
+                recipeSlider("Feedback", keyPath: \.delayFeedback, range: 0...0.8) {
+                    "\(Int(($0 * 100).rounded()))%"
+                }
+                recipeSlider("Double", keyPath: \.doubling, range: 0...1) {
+                    "\(Int(($0 * 100).rounded()))%"
+                }
+                HStack {
+                    Text("Space").font(.caption)
+                    Spacer()
+                    Picker("", selection: recipeBinding(\.reverbSpace)) {
+                        ForEach(VoiceRecipe.Space.allCases, id: \.self) {
+                            Text(spaceName($0)).tag($0)
+                        }
+                    }
+                    .labelsHidden()
+                    .frame(maxWidth: 150)
+                }
+                recipeSlider("Space mix", keyPath: \.reverbMix, range: 0...0.65) {
+                    "\(Int(($0 * 100).rounded()))%"
+                }
+                recipeSlider("Output", keyPath: \.outputGainDB, range: -12...6) {
+                    String(format: "%+.1fdB", $0)
+                }
+
+                HStack {
+                    Button("Save as Custom…") {
+                        recipeName = recipe.preset == .custom
+                            ? recipe.name : "\(recipe.preset.displayName) Custom"
+                        saveRecipePrompt = true
+                    }
+                    Spacer()
+                    Button("Reset") {
+                        model.setVoiceRecipe(
+                            characterIndex: characterIndex,
+                            recipe: VoiceRecipe.preset(recipe.preset == .custom
+                                ? .natural : recipe.preset),
+                            undoLabel: "Reset Voice Recipe")
+                    }
+                }
+                .font(.caption)
+            }
+            .padding(.top, 5)
+        } label: {
+            Text("Fine tune").font(.caption.bold()).foregroundStyle(.secondary)
+        }
+        .disabled(character.locked)
+    }
+
+    private func preview(character: Character) {
+        guard let selectedVoice else { return }
+        let caption = character.subs.map(\.text).first {
             !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         }
-        let fallbackName = characterName.trimmingCharacters(in: .whitespacesAndNewlines)
+        let fallbackName = character.name.trimmingCharacters(in: .whitespacesAndNewlines)
         let text = caption ?? "This is how \(fallbackName.isEmpty ? "this character" : fallbackName) will sound."
-        previewSynthesizer.stopSpeaking(at: .immediate)
-        let utterance = AVSpeechUtterance(string: text)
-        utterance.voice = voice
-        utterance.rate = AVSpeechUtteranceDefaultSpeechRate
-        previewSynthesizer.speak(utterance)
+        isPreviewing = true
+        generationError = nil
+        Task { @MainActor in
+            defer { isPreviewing = false }
+            do {
+                try await previewPlayer.preview(
+                    text: text,
+                    voiceIdentifier: selectedVoice.id,
+                    recipe: character.speechVoice.recipe)
+            } catch {
+                generationError = error.localizedDescription
+            }
+        }
     }
 
     private func generateSpeech() {
@@ -484,6 +727,114 @@ struct VoiceSection: View {
             } catch {
                 generationError = error.localizedDescription
             }
+        }
+    }
+
+    private func recipeEditingChanged(_ editing: Bool) {
+        if editing {
+            model.beginVoiceRecipeAdjustment(characterIndex: characterIndex)
+        } else {
+            model.finishVoiceRecipeAdjustment()
+        }
+    }
+
+    private func recipeSlider(
+        _ label: String,
+        keyPath: WritableKeyPath<VoiceRecipe, Double>,
+        range: ClosedRange<Double>,
+        display: @escaping (Double) -> String
+    ) -> some View {
+        let value = model.scene.characters[safe: characterIndex]?
+            .speechVoice.recipe[keyPath: keyPath] ?? 0
+        return HStack(spacing: 7) {
+            Text(label).font(.caption).frame(width: 86, alignment: .leading)
+            Slider(value: Binding(
+                get: {
+                    model.scene.characters[safe: characterIndex]?
+                        .speechVoice.recipe[keyPath: keyPath] ?? 0
+                },
+                set: { newValue in
+                    model.updateVoiceRecipeDuringAdjustment(
+                        characterIndex: characterIndex) {
+                            $0[keyPath: keyPath] = newValue
+                            $0.preset = .custom
+                            $0.name = VoiceRecipe.Preset.custom.displayName
+                        }
+                }), in: range, onEditingChanged: recipeEditingChanged)
+            Text(display(value))
+                .font(.caption2.monospacedDigit())
+                .foregroundStyle(.secondary)
+                .frame(width: 54, alignment: .trailing)
+        }
+    }
+
+    private func recipeBinding<Value>(
+        _ keyPath: WritableKeyPath<VoiceRecipe, Value>
+    ) -> Binding<Value> {
+        Binding(
+            get: {
+                model.scene.characters[characterIndex]
+                    .speechVoice.recipe[keyPath: keyPath]
+            },
+            set: { value in
+                var recipe = model.scene.characters[characterIndex].speechVoice.recipe
+                recipe[keyPath: keyPath] = value
+                recipe.preset = .custom
+                recipe.name = VoiceRecipe.Preset.custom.displayName
+                model.setVoiceRecipe(characterIndex: characterIndex, recipe: recipe)
+            })
+    }
+
+    private func saveCurrentRecipe() {
+        let name = recipeName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty,
+              var recipe = model.scene.characters[safe: characterIndex]?
+                .speechVoice.recipe else { return }
+        recipe.preset = .custom
+        recipe.name = name
+        var recipes = customRecipes
+        recipes.removeAll {
+            $0.name.compare(name, options: .caseInsensitive) == .orderedSame
+        }
+        recipes.append(recipe)
+        persistCustomRecipes(recipes)
+        model.setVoiceRecipe(
+            characterIndex: characterIndex,
+            recipe: recipe,
+            undoLabel: "Save Voice Recipe")
+    }
+
+    private func deleteCustomRecipe(named name: String) {
+        persistCustomRecipes(customRecipes.filter { $0.name != name })
+    }
+
+    private func persistCustomRecipes(_ recipes: [VoiceRecipe]) {
+        guard let data = try? JSONEncoder().encode(recipes),
+              let value = String(data: data, encoding: .utf8) else { return }
+        customRecipesJSON = value
+    }
+
+    private func distortionName(_ distortion: VoiceRecipe.Distortion) -> String {
+        switch distortion {
+        case .none: "None"
+        case .alienChatter: "Alien"
+        case .cosmicInterference: "Cosmic"
+        case .goldenPi: "Golden"
+        case .radioTower: "Radio"
+        case .speechWaves: "Waves"
+        }
+    }
+
+    private func spaceName(_ space: VoiceRecipe.Space) -> String {
+        switch space {
+        case .smallRoom: "Small Room"
+        case .mediumRoom: "Medium Room"
+        case .largeRoom: "Large Room"
+        case .mediumHall: "Medium Hall"
+        case .largeHall: "Large Hall"
+        case .plate: "Plate"
+        case .chamber: "Chamber"
+        case .cathedral: "Cathedral"
         }
     }
 
@@ -1529,6 +1880,8 @@ struct MixSection: View {
     let kind: TrackRowKind
     /// When set, edits ONE clip as an override (track mix then leaves it alone).
     var clipID: String? = nil
+    @State private var analyzingMouth = false
+    @State private var mouthError: String?
 
     private enum PanChoice: String, CaseIterable {
         case centered = "Centered"
@@ -1574,11 +1927,75 @@ struct MixSection: View {
                     .font(.caption)
                     .help("Sets the outgoing and incoming fades to the overlap of the two selected clips.")
                 }
+                if case .character(let characterIndex) = kind {
+                    lipSyncControls(clipID: clipID, characterIndex: characterIndex)
+                }
                 Button("Reset to track mix") { resetClipOverride() }
                     .font(.caption)
             }
             Text("Changes apply from the next play.")
                 .font(.caption2).foregroundStyle(.secondary)
+        }
+        .alert("Mouth analysis failed", isPresented: Binding(
+            get: { mouthError != nil },
+            set: { if !$0 { mouthError = nil } })) {
+                Button("OK") { mouthError = nil }
+            } message: {
+                Text(mouthError ?? "")
+            }
+    }
+
+    @ViewBuilder
+    private func lipSyncControls(clipID: String, characterIndex: Int) -> some View {
+        let clip = model.scene.characters[safe: characterIndex]?
+            .clips.first { $0.id == clipID }
+        Divider()
+        HStack {
+            Text("MOUTH TIMING").font(.caption2.bold()).foregroundStyle(.secondary)
+            Spacer()
+            if let count = clip?.mouthCues.count, count > 0 {
+                Text("\(count) poses")
+                    .font(.system(size: 8, weight: .semibold))
+                    .foregroundStyle(.secondary)
+            }
+        }
+        Text(clip?.kind == .speech
+             ? "Text + waveform timing from the rendered voice."
+             : "Waveform timing for dialogue; visible in the Mouth lane.")
+            .font(.caption2)
+            .foregroundStyle(.secondary)
+        HStack {
+            Button {
+                analyzeMouth(clipID: clipID, characterIndex: characterIndex)
+            } label: {
+                HStack(spacing: 5) {
+                    if analyzingMouth { ProgressView().controlSize(.small) }
+                    Text((clip?.mouthCues.isEmpty ?? true) ? "Analyze dialogue" : "Re-analyze")
+                }
+            }
+            .font(.caption)
+            .disabled(analyzingMouth)
+            if clip?.mouthCues.isEmpty == false {
+                Button("Clear") {
+                    model.clearClipMouth(
+                        characterIndex: characterIndex, clipID: clipID)
+                }
+                .font(.caption)
+            }
+        }
+    }
+
+    private func analyzeMouth(clipID: String, characterIndex: Int) {
+        analyzingMouth = true
+        mouthError = nil
+        Task { @MainActor in
+            defer { analyzingMouth = false }
+            do {
+                _ = try await model.analyzeClipMouth(
+                    characterIndex: characterIndex, clipID: clipID)
+            } catch {
+                mouthError = error.localizedDescription
+            }
         }
     }
 

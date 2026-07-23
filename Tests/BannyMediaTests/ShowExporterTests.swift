@@ -1,4 +1,5 @@
 import XCTest
+import AVFoundation
 import BannyCore
 import BannyRender
 @testable import BannyMedia
@@ -45,6 +46,56 @@ final class ShowExporterTests: XCTestCase {
                 }
             }
         XCTAssertFalse(FileManager.default.fileExists(atPath: out.path))
+    }
+
+    func testSpeechRecipeRendersThroughOfflineExportGraph() throws {
+        let assets = try AssetCatalog(assetsRoot: Self.assetsRoot)
+        let audioURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("recipe-audio-\(UUID().uuidString).caf")
+        let out = FileManager.default.temporaryDirectory
+            .appendingPathComponent("recipe-export-\(UUID().uuidString).mp4")
+        defer {
+            try? FileManager.default.removeItem(at: audioURL)
+            try? FileManager.default.removeItem(at: out)
+        }
+
+        let format = AVAudioFormat(standardFormatWithSampleRate: 44_100, channels: 1)!
+        do {
+            let file = try AVAudioFile(forWriting: audioURL, settings: format.settings)
+            let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 11_025)!
+            buffer.frameLength = 11_025
+            if let samples = buffer.floatChannelData?[0] {
+                for frame in 0..<Int(buffer.frameLength) {
+                    samples[frame] = sin(Float(frame) * 0.04) * 0.1
+                }
+            }
+            try file.write(from: buffer)
+        }
+
+        let clip = AudioClip(id: "speech", name: "Speech", start: 0,
+                             dur: 0.25, srcDur: 0.25, kind: .speech)
+        let character = Character(
+            body: .orange,
+            clips: [clip],
+            speechVoice: SpeechVoiceProfile(recipe: .preset(.robot)))
+        let document = ShowDocument(
+            stage: SceneState(characters: [character]),
+            show: [ShowSegment(sceneID: "", name: "Line", from: 0, to: 0.25)])
+
+        try ShowExporter.export(
+            document: document,
+            assets: assets,
+            audioURL: { $0 == clip.id ? audioURL : nil },
+            assetURL: { _ in nil },
+            options: ShowExporter.Options(
+                size: CGSize(width: 320, height: 180),
+                fps: 10,
+                videoBitrate: 500_000),
+            to: out)
+
+        let size = try FileManager.default.attributesOfItem(
+            atPath: out.path)[.size] as? Int ?? 0
+        XCTAssertGreaterThan(size, 1_000)
     }
 
     func testExportPreflightIgnoresUnusedMissingLibraryAssets() {

@@ -2048,6 +2048,32 @@ struct StudioTimelineView: View {
                              at: CGPoint(x: rect.minX + 5, y: rect.midY), anchor: .leading)
             }
         }
+        // Generated speech carries source-relative lip sync. Show it in the
+        // Mouth lane beneath manual M-key marks so timing is inspectable, while
+        // leaving the ordinary event editor and manual override semantics clear.
+        let mouthY = y + zones.eventTop
+            + CGFloat(EventGroup.talk.laneIndex) * zones.subH + 1
+        for clip in character.clips where !clip.mouthCues.isEmpty {
+            let visibleStart = clip.start
+            let visibleEnd = clip.start + clip.dur
+            for cue in clip.mouthCues {
+                let cueStart = clip.start + cue.start - clip.offset
+                let cueEnd = cueStart + cue.dur
+                let start = max(visibleStart, cueStart)
+                let end = min(visibleEnd, cueEnd)
+                guard end > start else { continue }
+                let inset = cue.shape == .tight ? max(1, zones.subH * 0.24) : 0
+                let rect = CGRect(
+                    x: x(forTime: start),
+                    y: mouthY + inset,
+                    width: max(1, xw(start, end - start)),
+                    height: max(1, zones.subH - 1 - inset * 2))
+                let opacity = character.speechVoice.automaticMouth
+                    ? (cue.shape == .open ? 0.58 : 0.34) : 0.12
+                ctx.fill(Path(roundedRect: rect, cornerRadius: 1),
+                         with: .color(EventGroup.talk.color(light: lightMode).opacity(opacity)))
+            }
+        }
         for mark in TimelineMath.marks(for: character.events, character: i, duration: model.duration) {
             let my = y + zones.eventTop + CGFloat(mark.code.group.laneIndex) * zones.subH + 1
             let rect = CGRect(x: x(forTime: mark.start), y: my,

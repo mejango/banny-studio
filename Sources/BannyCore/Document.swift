@@ -876,6 +876,8 @@ public struct Character: Equatable, Sendable {
     /// Animalese voice profile: base pitch in semitones, speaking rate.
     public var voicePitch: Double
     public var voiceSpeed: Double
+    /// Natural speech voice, non-destructive recipe, and lip-sync preference.
+    public var speechVoice: SpeechVoiceProfile
     public var clips: [AudioClip]
     public var events: [PerfEvent]
     /// Reusable reaction blocks placed on this character's timeline.
@@ -902,6 +904,7 @@ public struct Character: Equatable, Sendable {
     public init(body: Body, x: Double = 0.5, depth: Double = 0, size: Double = 1, face: Int = 1,
                 baseOutfit: [Int: String] = [:], subs: [Subtitle] = [], clips: [AudioClip] = [],
                 voicePitch: Double = 0, voiceSpeed: Double = 1,
+                speechVoice: SpeechVoiceProfile = SpeechVoiceProfile(),
                 events: [PerfEvent] = [], reactions: [ReactionInstance] = [],
                 armedGroups: Set<EventGroup> = Set(EventGroup.allCases),
                 name: String = "", trackFx: Fx = .defaultCharacterTrack, recStart: StartPose? = nil,
@@ -918,6 +921,7 @@ public struct Character: Equatable, Sendable {
         self.subs = subs
         self.voicePitch = voicePitch
         self.voiceSpeed = voiceSpeed
+        self.speechVoice = speechVoice
         self.clips = clips
         self.events = events
         self.reactions = reactions
@@ -939,7 +943,7 @@ extension Character: Codable {
     private enum CodingKeys: String, CodingKey {
         case body, x, depth, size, face, baseOutfit, subs, clips, events, reactions,
              armedGroups, name, trackFx, recStart, speed, rotationSpeed, wobble, hidden, locked, solo, presence,
-             voicePitch, voiceSpeed
+             voicePitch, voiceSpeed, speechVoice
     }
 
     public init(from decoder: Decoder) throws {
@@ -953,6 +957,8 @@ extension Character: Codable {
         subs = try c.decodeIfPresent([Subtitle].self, forKey: .subs) ?? []
         voicePitch = try c.decodeIfPresent(Double.self, forKey: .voicePitch) ?? 0
         voiceSpeed = try c.decodeIfPresent(Double.self, forKey: .voiceSpeed) ?? 1
+        speechVoice = try c.decodeIfPresent(SpeechVoiceProfile.self, forKey: .speechVoice)
+            ?? SpeechVoiceProfile()
         clips = try c.decodeIfPresent([AudioClip].self, forKey: .clips) ?? []
         events = try c.decodeIfPresent([PerfEvent].self, forKey: .events) ?? []
         reactions = try c.decodeIfPresent([ReactionInstance].self, forKey: .reactions) ?? []
@@ -1223,8 +1229,16 @@ public struct AudioTrack: Codable, Equatable, Sendable {
 }
 
 public struct AudioClip: Codable, Equatable, Sendable {
+    public enum Kind: String, Codable, Sendable {
+        case imported
+        case microphone
+        case speech
+    }
+
     public var id: String
     public var name: String
+    /// Provenance controls specialized non-destructive processing.
+    public var kind: Kind
     /// Timeline start (sec).
     public var start: Double
     /// Clip duration on the timeline (sec).
@@ -1240,12 +1254,16 @@ public struct AudioClip: Codable, Equatable, Sendable {
     /// Non-destructive edge fades, in seconds, clamped to the visible clip.
     public var fadeIn: Double
     public var fadeOut: Double
+    /// Source-relative, deterministic lip-sync generated with speech audio.
+    public var mouthCues: [SpeechMouthCue]
 
     public init(id: String, name: String, start: Double, dur: Double, offset: Double = 0,
                 srcDur: Double, fx: Fx = .defaultClip, fxOverride: Bool? = nil,
-                fadeIn: Double = 0, fadeOut: Double = 0) {
+                fadeIn: Double = 0, fadeOut: Double = 0,
+                kind: Kind = .imported, mouthCues: [SpeechMouthCue] = []) {
         self.id = id
         self.name = name
+        self.kind = kind
         self.start = start
         self.dur = dur
         self.offset = offset
@@ -1254,6 +1272,7 @@ public struct AudioClip: Codable, Equatable, Sendable {
         self.fxOverride = fxOverride
         self.fadeIn = min(max(0, fadeIn), max(0, dur))
         self.fadeOut = min(max(0, fadeOut), max(0, dur))
+        self.mouthCues = mouthCues
     }
 
     /// Linear edge-fade multiplier at an absolute timeline time.
@@ -1266,14 +1285,26 @@ public struct AudioClip: Codable, Equatable, Sendable {
         return min(into, out)
     }
 
+    /// Mouth pose at an absolute timeline time, respecting trims and splits.
+    public func mouthShape(at timelineTime: Double) -> MouthShape? {
+        guard timelineTime >= start, timelineTime < start + dur else { return nil }
+        let sourceTime = offset + timelineTime - start
+        return mouthCues.last {
+            sourceTime + 1e-9 >= $0.start && sourceTime < $0.start + $0.dur - 1e-9
+        }?.shape
+    }
+
     private enum CodingKeys: String, CodingKey {
-        case id, name, start, dur, offset, srcDur, fx, fxOverride, fadeIn, fadeOut
+        case id, name, kind, start, dur, offset, srcDur, fx, fxOverride, fadeIn, fadeOut,
+             mouthCues
     }
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         id = try c.decode(String.self, forKey: .id)
         name = try c.decodeIfPresent(String.self, forKey: .name) ?? "Audio"
+        kind = try c.decodeIfPresent(Kind.self, forKey: .kind)
+            ?? ((id.hasPrefix("tts-") || id.hasPrefix("ani-")) ? .speech : .imported)
         start = try c.decodeIfPresent(Double.self, forKey: .start) ?? 0
         dur = try c.decodeIfPresent(Double.self, forKey: .dur) ?? 0
         offset = try c.decodeIfPresent(Double.self, forKey: .offset) ?? 0
@@ -1284,6 +1315,7 @@ public struct AudioClip: Codable, Equatable, Sendable {
                      max(0, dur))
         fadeOut = min(max(0, try c.decodeIfPresent(Double.self, forKey: .fadeOut) ?? 0),
                       max(0, dur))
+        mouthCues = try c.decodeIfPresent([SpeechMouthCue].self, forKey: .mouthCues) ?? []
     }
 }
 

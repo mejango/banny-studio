@@ -358,8 +358,18 @@ public struct FrameRenderer: Sendable {
                 guard !headWorn else { continue }
                 let option = outfit[7] ?? "default"
                 let entry = assets.mouth(option: option)
-                let open = (entry?.inverted ?? false) ? !pose.talking : pose.talking
-                if let img = assets.mouthImage(option: option, state: open ? .open : .closed,
+                var shape = pose.mouthShape
+                if entry?.inverted == true {
+                    if shape == .open { shape = .closed }
+                    else if shape == .closed { shape = .open }
+                }
+                let state: AssetCatalog.MouthState
+                switch shape {
+                case .open: state = .open
+                case .tight: state = .tight
+                case .closed: state = .closed
+                }
+                if let img = assets.mouthImage(option: option, state: state,
                                                body: character.body) {
                     drawImage(img, in: box, ctx: ctx)
                 }

@@ -159,10 +159,21 @@ final class MicRecorder {
                 return
             }
         }
-        model.addRecordedClip(data: data, ext: "m4a", dur: dur,
-                              startTime: startTime,
-                              characterIndex: target.characterIndex,
-                              audioTrackIndex: target.audioTrackIndex)
+        let clipID = model.addRecordedClip(
+            data: data,
+            ext: "m4a",
+            dur: dur,
+            startTime: startTime,
+            characterIndex: target.characterIndex,
+            audioTrackIndex: target.audioTrackIndex)
+        if let clipID, let characterIndex = target.characterIndex {
+            Task { @MainActor in
+                // A microphone take on a character track is presumed dialogue.
+                // Failure leaves the audio intact and manual M performance available.
+                try? await model.analyzeClipMouth(
+                    characterIndex: characterIndex, clipID: clipID)
+            }
+        }
     }
 }
 

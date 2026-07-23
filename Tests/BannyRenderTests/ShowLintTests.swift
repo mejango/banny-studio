@@ -160,4 +160,34 @@ final class ShowLintTests: XCTestCase {
         XCTAssertTrue(messages.contains("invalid start"), messages)
         XCTAssertTrue(messages.contains("invalid duration"), messages)
     }
+
+    func testVoiceRecipeAndMouthTimingAreLinted() {
+        var recipe = VoiceRecipe.preset(.robot)
+        recipe.flavor = 2
+        let clip = AudioClip(
+            id: "speech",
+            name: "Speech",
+            start: 0,
+            dur: 1,
+            srcDur: 1,
+            kind: .speech,
+            mouthCues: [
+                SpeechMouthCue(start: 0.8, dur: 0.4, shape: .open),
+                SpeechMouthCue(start: 0.2, dur: 0.1, shape: .tight),
+            ])
+        let character = Character(
+            body: .orange,
+            clips: [clip],
+            speechVoice: SpeechVoiceProfile(recipe: recipe))
+        let document = ShowDocument(stage: SceneState(characters: [character]))
+
+        let messages = ShowLint.check(
+            document: document,
+            audioIDs: ["speech"],
+            assetFileIDs: [],
+            catalog: nil).map(\.message).joined(separator: "\n")
+        XCTAssertTrue(messages.contains("voice recipe"), messages)
+        XCTAssertTrue(messages.contains("not sorted"), messages)
+        XCTAssertTrue(messages.contains("outside its source"), messages)
+    }
 }

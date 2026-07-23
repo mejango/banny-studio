@@ -72,60 +72,66 @@ struct WideEditor: View {
             VStack(spacing: 0) {
                 header
                 ZStack(alignment: .trailing) {
-                    StageView(model: model, file: file)
-                        .frame(width: CGFloat(stageWidth), height: CGFloat(stageBoxH))
-                        .background(Color.black)
-                        .overlay(alignment: .bottom) {
-                            if showDeck {
-                                PerformanceDeck(model: model)
-                            } else if !model.recording {
-                                if contextSmartBarVisible {
-                                    ContextSmartBar(
-                                        model: model,
-                                        drawer: $drawer,
-                                        onDismiss: hideQuickControls)
+                    VStack(spacing: 0) {
+                        StageView(model: model, file: file)
+                            .frame(width: CGFloat(stageWidth), height: CGFloat(stageBoxH))
+                            .background(Color.black)
+                            .overlay(alignment: .bottom) {
+                                if showDeck {
+                                    PerformanceDeck(model: model)
+                                } else if !model.recording {
+                                    if contextSmartBarVisible {
+                                        ContextSmartBar(
+                                            model: model,
+                                            drawer: $drawer,
+                                            onDismiss: hideQuickControls)
+                                            .padding(.bottom, 12)
+                                            .transition(.move(edge: .bottom).combined(with: .opacity))
+                                    } else if model.selectedTrackKind != nil {
+                                        Button(action: showQuickControls) {
+                                            Image(systemName: "slider.horizontal.3")
+                                                .font(.system(size: 11, weight: .semibold))
+                                                .frame(width: 28, height: 26)
+                                                .background(.ultraThinMaterial, in: Capsule())
+                                        }
+                                        .buttonStyle(.plain)
+                                        .help("Show quick controls")
+                                        .accessibilityLabel("Show quick controls")
+                                        .accessibilityIdentifier("smart-bar-show")
+                                        .frame(maxWidth: .infinity, alignment: .trailing)
+                                        .padding(.trailing, 12)
                                         .padding(.bottom, 12)
-                                        .transition(.move(edge: .bottom).combined(with: .opacity))
-                                } else if model.selectedTrackKind != nil {
-                                    Button(action: showQuickControls) {
-                                        Image(systemName: "slider.horizontal.3")
-                                            .font(.system(size: 11, weight: .semibold))
-                                            .frame(width: 28, height: 26)
-                                            .background(.ultraThinMaterial, in: Capsule())
+                                        .transition(.opacity)
                                     }
-                                    .buttonStyle(.plain)
-                                    .help("Show quick controls")
-                                    .accessibilityLabel("Show quick controls")
-                                    .accessibilityIdentifier("smart-bar-show")
-                                    .frame(maxWidth: .infinity, alignment: .trailing)
-                                    .padding(.trailing, 12)
-                                    .padding(.bottom, 12)
-                                    .transition(.opacity)
                                 }
                             }
-                        }
-                        .overlay(alignment: .top) {
-                            if model.recording {
-                                RecordingHUD(model: model)
-                                    .padding(.top, 12)
+                            .overlay(alignment: .top) {
+                                if model.recording {
+                                    RecordingHUD(model: model)
+                                        .padding(.top, 12)
+                                }
                             }
-                        }
+
+                        divider(maxHeight: availH - 9)
+
+                        StudioTimelineView(model: model, file: file, showShip: false,
+                                           showTransport: false,
+                                           onInspectTrack: { row in openInspector(for: row) })
+                            .frame(height: CGFloat(tlH), alignment: .top)
+                            .clipped()
+                    }
+                    .frame(width: CGFloat(stageWidth), height: CGFloat(availH))
 
                     if drawer != nil {
                         WorkspaceDrawer(model: model, file: file, mode: $drawer)
                             .frame(width: min(350, max(300, geo.size.width * 0.32)),
-                                   height: CGFloat(stageBoxH))
+                                   height: CGFloat(availH))
+                            .zIndex(10)
                             .transition(.move(edge: .trailing).combined(with: .opacity))
                     }
                 }
-                .frame(width: CGFloat(stageWidth), height: CGFloat(stageBoxH))
+                .frame(width: CGFloat(stageWidth), height: CGFloat(availH))
                 .clipped()
-                divider(maxHeight: availH - 9)
-                StudioTimelineView(model: model, file: file, showShip: false,
-                                   showTransport: false,
-                                   onInspectTrack: { row in openInspector(for: row) })
-                    .frame(height: CGFloat(tlH), alignment: .top)
-                    .clipped()
             }
             .background(theme.surface)
             // Drive SwiftUI's semantic colors (.primary on buttons/menus) from the

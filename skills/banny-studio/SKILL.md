@@ -72,6 +72,10 @@ All times are seconds. The timeline ends at the last event/clip/cue/section.
       "clips": [...],              // this character's voice audio
       "subs": [{"text": "GOAL!", "start": 1.2, "dur": 2.0}],
       "voicePitch": 0, "voiceSpeed": 1,
+      "speechVoice": {
+        "voiceIdentifier": null, "automaticMouth": true,
+        "recipe": {"preset": "natural", "flavor": 1}
+      },
       "locked": false, "solo": false
     }
 
@@ -108,10 +112,13 @@ Other event forms, same array:
 - Motion params: `{"t": 5, "motion": {"speed": 400, "rotationSpeed": 180, "wobble": 10, "size": 0.62}}`
   (omit fields to leave unchanged; last-writer-wins).
 
-**Talking that reads as speech:** alternate KeyM down/up at syllable rate
-while the voice clip plays — down 60–120 ms, up 40–80 ms, roughly 4–7
-cycles/sec, pausing where the audio pauses. Sprinkle a 150 ms `Comma` blink
-every 2–5 s. Keep events sorted by `t`.
+**Talking that reads as speech:** Studio-generated speech and analyzed dialogue
+can carry source-relative `mouthCues` with `closed`, `tight`, and `open` poses.
+When `speechVoice.automaticMouth` is true they follow clip moves, trims, and
+splits. A held KeyM overrides automation; release resumes it. Without cues,
+alternate KeyM down/up at syllable rate — down 60–120 ms, up 40–80 ms,
+roughly 4–7 cycles/sec, pausing where the audio pauses. Sprinkle a 150 ms
+`Comma` blink every 2–5 s. Keep events sorted by `t`.
 
 ## Reaction blocks
 
@@ -145,7 +152,8 @@ the underlying items return when the block ends. Keep definition events sorted.
 Generate speech with any TTS, save as m4a/mp3/wav into `audio/<id>.<ext>`,
 and add a clip on the speaking character:
 
-    {"id": "line1", "name": "Coach: kickoff", "start": 1.0, "dur": 3.4,
+    {"id": "line1", "name": "Coach: kickoff", "kind": "speech",
+     "start": 1.0, "dur": 3.4,
      "offset": 0, "srcDur": 3.4, "fadeIn": 0.08, "fadeOut": 0.12,
      "fx": {"gain": 1, "low": 0, "mid": 0, "high": 0, "pan": 0, "reverb": 0}}
 
@@ -153,6 +161,13 @@ and add a clip on the speaking character:
 `stage.audioTracks[]` (same clip shape) at low gain (~0.15–0.3). Character
 and audio tracks accept `locked` and `solo`; visual, scene, and light tracks
 accept `locked`.
+
+`kind` is `imported`, `microphone`, or `speech`; character voice recipes apply
+only to `speech`. Built-ins are `natural`, `warmNarrator`, `tinyHero`,
+`deepVillain`, `radio`, `robot`, `dream`, `ghost`, `alien`, `double`, and
+`arcade`. `flavor` is 0...1. Studio writes complete custom recipe parameters.
+Optional source-relative mouth timing is
+`"mouthCues":[{"start":0.12,"dur":0.08,"shape":"tight"}, ...]`.
 
 ## Backgrounds and images
 
@@ -187,8 +202,8 @@ Tracks need `{"id", "name", "cues": [...]}`; ids are any unique strings.
 
 ## Reusing characters across episodes
 
-Keep a per-character JSON block (body, name, baseOutfit, voicePitch,
-voiceSpeed, x, face) in your own notes/repo and paste it into
+Keep a per-character JSON block (body, name, baseOutfit, speechVoice,
+voicePitch, voiceSpeed, x, face) in your own notes/repo and paste it into
 `stage.characters[]` each episode. Wardrobe names are stable across
 app versions; re-check `banny catalog` after app updates.
 

@@ -49,19 +49,20 @@ extension StudioModel {
     }
 
     /// Registers a finished mic recording as a clip at `startTime`.
+    @discardableResult
     func addRecordedClip(data: Data, ext: String, dur: Double, startTime: Double,
-                         characterIndex: Int?, audioTrackIndex: Int? = nil) {
+                         characterIndex: Int?, audioTrackIndex: Int? = nil) -> String? {
         if let i = characterIndex {
-            guard scene.characters[safe: i]?.locked == false else { return }
+            guard scene.characters[safe: i]?.locked == false else { return nil }
         }
         if let i = audioTrackIndex {
-            guard scene.audioTracks[safe: i]?.locked == false else { return }
+            guard scene.audioTracks[safe: i]?.locked == false else { return nil }
         }
         registerUndoSnapshot(label: "Record Audio")
         let id = ShowDocumentFile.newID()
         file?.audio[id] = (data, ext)
         let clip = AudioClip(id: id, name: "Take \(Date().formatted(date: .omitted, time: .shortened))",
-                             start: startTime, dur: dur, srcDur: dur)
+                             start: startTime, dur: dur, srcDur: dur, kind: .microphone)
         if let i = characterIndex, scene.characters.indices.contains(i) {
             scene.characters[i].clips.append(clip)
         } else if let i = audioTrackIndex, scene.audioTracks.indices.contains(i) {
@@ -74,6 +75,7 @@ extension StudioModel {
                 scene.audioTracks[scene.audioTracks.count - 1].clips.append(clip)
             }
         }
+        return id
     }
 
     /// Web splitClip: cut a clip in two at time t preserving source offset.
