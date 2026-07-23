@@ -109,6 +109,17 @@ public struct SceneSimulator: Sendable {
         self.state = state
     }
 
+    /// Front-loaded somersault timing with a continuous landing follow-through.
+    /// The extra bell-shaped term preserves the approved quick launch and
+    /// midair turn, while the base smoothstep keeps rotation moving throughout
+    /// the accelerating drop and resolves to exactly one turn at contact.
+    static func flipRotationFactor(progress: Double) -> Double {
+        let p = min(1, max(0, progress))
+        let smoothstep = p * p * (3 - 2 * p)
+        let frontLoad = 1.6 * p * p * (1 - p) * (1 - p)
+        return min(1, max(0, smoothstep + frontLoad))
+    }
+
     public func pose(characterIndex: Int, at t: Double) -> CharacterPose {
         let c = state.characters[characterIndex]
         let base = Self.basePose(for: c, in: state, at: t)
@@ -220,13 +231,10 @@ public struct SceneSimulator: Sendable {
             let dur = (720.0 / safeGravity).rounded() / 1000.0
             let progress = (t - action.time) / dur
             if progress >= 0, progress < 1 {
-                // Ease the turn in with the lift, then finish by 86% so the
-                // approved feet-down landing beat remains unchanged.
-                let turnProgress = min(1, max(0, progress / 0.86))
-                let eased = turnProgress * turnProgress * (3 - 2 * turnProgress)
                 flip = .init(
                     progress: progress,
-                    rotation: action.direction * 360 * eased,
+                    rotation: action.direction * 360
+                        * Self.flipRotationFactor(progress: progress),
                     height: 60 / safeGravity)
             }
         }

@@ -94,9 +94,7 @@ private func makeScene(_ character: Character, gravity: Double = 1) -> SceneStat
     let scene = makeScene(character)
     let simulator = SceneSimulator(state: scene)
     func expectedRotation(at progress: Double, direction: Double = 1) -> Double {
-        let turnProgress = min(1, max(0, progress / 0.86))
-        let eased = turnProgress * turnProgress * (3 - 2 * turnProgress)
-        return direction * 360 * eased
+        direction * 360 * SceneSimulator.flipRotationFactor(progress: progress)
     }
 
     #expect(simulator.pose(characterIndex: 0, at: 0.9).flip == nil)
@@ -112,7 +110,12 @@ private func makeScene(_ character: Character, gravity: Double = 1) -> SceneStat
 
     let landing = try! #require(simulator.pose(characterIndex: 0, at: 1.648).flip)
     #expect(abs(landing.progress - 0.9) < 1e-9)
-    #expect(abs(landing.rotation - 360) < 1e-9) // finish early, then drop feet-down
+    #expect(abs(landing.rotation - expectedRotation(at: 0.9)) < 1e-9)
+    #expect(landing.rotation > 350 && landing.rotation < 358)
+    let followThrough = try! #require(simulator.pose(characterIndex: 0, at: 1.684).flip)
+    #expect(abs(followThrough.progress - 0.95) < 1e-9)
+    #expect(followThrough.rotation > landing.rotation)
+    #expect(followThrough.rotation < 360) // keep turning through the steep drop
     #expect(simulator.pose(characterIndex: 0, at: 1.721).flip == nil)
 
     let back = try! #require(simulator.pose(characterIndex: 0, at: 2.36).flip)
