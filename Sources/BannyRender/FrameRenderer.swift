@@ -146,7 +146,7 @@ public struct FrameRenderer: Sendable {
                 captionLines.append((scene.characters[i], text))
             }
         }
-        drawCaptions(captionLines, W: W, outH: outH, H: H, in: ctx)
+        drawCaptions(captionLines, W: W, outH: outH, in: ctx)
 
         ctx.restoreGState()
     }
@@ -540,46 +540,57 @@ public struct FrameRenderer: Sendable {
 
     // MARK: - Captions
 
-    /// Fixed bottom-center subtitle stack (web capbar): black box, up to 2 lines,
-    /// colored speaker bar per line.
+    /// Bottom-center subtitle stack constrained to the output frame's title-safe
+    /// area. Captions wrap before shrinking and use the same normalized layout
+    /// in the editor, still previews, and video export.
     private func drawCaptions(_ lines: [(speaker: Character, text: String)],
-                              W: Double, outH: Double, H: Double, in ctx: CGContext) {
-        guard !lines.isEmpty else { return }
-        let fontSize = StageLayout.captionFontSize(virtualHeight: H)
-        let font = CTFontCreateWithName("Helvetica-Bold" as CFString, fontSize, nil)
-        let pad = fontSize * 0.45
-        let lineHeight = fontSize * 1.35
-        let shown = Array(lines.suffix(2))
-
-        // Measure widest line.
-        var ctLines: [(CTLine, Character)] = []
-        var maxWidth = 0.0
-        for line in shown {
-            let attr = NSAttributedString(string: line.text, attributes: [
-                NSAttributedString.Key(kCTFontAttributeName as String): font,
-                NSAttributedString.Key(kCTForegroundColorAttributeName as String): CGColor(gray: 1, alpha: 1),
-            ])
-            let ct = CTLineCreateWithAttributedString(attr)
-            maxWidth = max(maxWidth, CTLineGetTypographicBounds(ct, nil, nil, nil))
-            ctLines.append((ct, line.speaker))
+                              W: Double, outH: Double, in ctx: CGContext) {
+        let shown = Array(lines.suffix(2)).filter {
+            !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         }
-
-        let boxW = min(maxWidth + pad * 2, W * 0.9)
-        let boxH = Double(shown.count) * lineHeight + pad
-        let boxX = (W - boxW) / 2
-        let boxY = outH - boxH - outH * 0.02
+        guard let layout = CaptionLayoutEngine.layout(
+            texts: shown.map(\.text),
+            frameWidth: W,
+            outputHeight: outH)
+        else { return }
+        let font = CTFontCreateWithName(
+            "Helvetica-Bold" as CFString,
+            layout.fontSize,
+            nil)
 
         ctx.setFillColor(CGColor(gray: 0, alpha: 0.82))
-        ctx.fill(CGRect(x: boxX, y: boxY, width: boxW, height: boxH))
+        ctx.fill(CGRect(
+            x: layout.boxX,
+            y: layout.boxY,
+            width: layout.boxWidth,
+            height: layout.boxHeight))
 
-        for (i, (ct, _)) in ctLines.enumerated() {
-            let y = boxY + pad * 0.7 + Double(i) * lineHeight + fontSize
+        let ascent = Double(CTFontGetAscent(font))
+        let descent = Double(CTFontGetDescent(font))
+        var rowTop = layout.boxY + layout.verticalPadding
+        var previousCaption: Int?
+        for line in layout.lines {
+            if let previousCaption, previousCaption != line.captionIndex {
+                rowTop += layout.captionGap
+            }
+            let attributed = NSAttributedString(string: line.text, attributes: [
+                NSAttributedString.Key(kCTFontAttributeName as String): font,
+                NSAttributedString.Key(kCTForegroundColorAttributeName as String):
+                    CGColor(gray: 1, alpha: 1),
+            ])
+            let ctLine = CTLineCreateWithAttributedString(attributed)
+            let baseline = rowTop
+                + (layout.lineHeight - ascent - descent) / 2
+                + ascent
+            let x = layout.boxX + (layout.boxWidth - line.width) / 2
             ctx.saveGState()
             // CoreText draws in unflipped coords; flip locally around the baseline.
             ctx.textMatrix = CGAffineTransform(scaleX: 1, y: -1)
-            ctx.textPosition = CGPoint(x: boxX + pad, y: y)
-            CTLineDraw(ct, ctx)
+            ctx.textPosition = CGPoint(x: x, y: baseline)
+            CTLineDraw(ctLine, ctx)
             ctx.restoreGState()
+            rowTop += layout.lineHeight
+            previousCaption = line.captionIndex
         }
     }
 

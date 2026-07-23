@@ -48,6 +48,125 @@ private func writePNG(_ image: CGImage, to url: URL) throws {
     #expect(pf.ty < p.ty) // lifted toward the horizon
 }
 
+@Test func groundPlaneSpeedIsContinuousAsFeetEnterTheFrame() {
+    let character = Character(body: .orange)
+    let scene = SceneState(gScale: 0.35, gSize: 1.2)
+    func footY(_ depth: Double) -> Double {
+        let pose = CharacterPose(
+            x: 0.5, depth: depth, phase: 0, tilt: 0, face: 1, eye: .open,
+            talking: false, jump: nil, outfit: [:], activeSubtitle: nil, moving: false)
+        return StageLayout.place(
+            pose: pose,
+            character: character,
+            scene: scene,
+            stageWidth: 1_600,
+            virtualHeight: 900).footY
+    }
+
+    let epsilon = 0.001
+    let atPlane = footY(0)
+    let nearStep = footY(-epsilon) - atPlane
+    let farStep = atPlane - footY(epsilon)
+    #expect(abs(nearStep - farStep) < 0.002)
+    #expect(StageLayout.farGroundLiftFraction(depth: 0) == 0)
+    #expect(abs(StageLayout.farGroundLiftFraction(depth: 1) - 0.42) < 1e-12)
+}
+
+@Test func captionLayoutRespondsToFrameAspectAndStaysTitleSafe() throws {
+    let text = "Former Chelsea hero, newly promoted"
+    let landscape = try #require(CaptionLayoutEngine.layout(
+        texts: [text],
+        frameWidth: 1_512,
+        outputHeight: 850))
+    let portrait = try #require(CaptionLayoutEngine.layout(
+        texts: [text],
+        frameWidth: 478,
+        outputHeight: 850))
+
+    #expect(landscape.lines.map(\.text) == [text])
+    #expect(portrait.lines.count == 2)
+    #expect(portrait.lines.map(\.text).joined(separator: " ") == text)
+    #expect(portrait.boxX >= 478 * 0.069)
+    #expect(portrait.boxX + portrait.boxWidth <= 478 * 0.931)
+    #expect(portrait.boxY + portrait.boxHeight <= 850 * 0.951)
+
+    // Wrapping is preferred; only denser copy reduces the common type size.
+    let dense = Array(repeating: "precision production", count: 5).joined(separator: " ")
+    let reduced = try #require(CaptionLayoutEngine.layout(
+        texts: [dense],
+        frameWidth: 478,
+        outputHeight: 850))
+    let counts = Dictionary(grouping: reduced.lines, by: \.captionIndex).values.map(\.count)
+    #expect(reduced.fontSize < portrait.fontSize)
+    #expect(counts.allSatisfy { $0 <= 2 })
+}
+
+@Test func captionLayoutScalesIdenticallyBetweenPreviewAndExport() throws {
+    let text = "Former Chelsea hero, newly promoted"
+    let preview = try #require(CaptionLayoutEngine.layout(
+        texts: [text],
+        frameWidth: 540,
+        outputHeight: 960))
+    let export = try #require(CaptionLayoutEngine.layout(
+        texts: [text],
+        frameWidth: 1_080,
+        outputHeight: 1_920))
+
+    #expect(preview.lines.map(\.text) == export.lines.map(\.text))
+    #expect(abs(export.fontSize - preview.fontSize * 2) < 0.01)
+    #expect(abs(export.boxWidth - preview.boxWidth * 2) < 0.01)
+    #expect(abs(export.boxHeight - preview.boxHeight * 2) < 0.01)
+    #expect(abs(export.boxX - preview.boxX * 2) < 0.01)
+    #expect(abs(export.boxY - preview.boxY * 2) < 0.01)
+}
+
+@Test func captionRendererConfinesPortraitTextToSafeFrame() throws {
+    let catalog = try AssetCatalog(assetsRoot: assetsRoot)
+    let size = CGSize(width: 360, height: 640)
+    let scene = SceneState(characters: [
+        Character(
+            body: .orange,
+            subs: [Subtitle(
+                text: "Former Chelsea hero, newly promoted",
+                start: 0,
+                dur: 1)],
+            presence: [VisibilityEvent(t: 0, visible: false)]),
+    ])
+    let context = makeContext(size)
+    FrameRenderer(assets: catalog).draw(
+        scene: scene,
+        at: 0.25,
+        size: size,
+        flipped: true,
+        in: context)
+    let image = try #require(context.makeImage())
+    if let output = ProcessInfo.processInfo.environment["CAPTION_TEST_OUT"] {
+        try writePNG(image, to: URL(fileURLWithPath: output))
+    }
+    let bytes = try #require(image.dataProvider?.data as Data?)
+
+    var minDarkX = Int.max
+    var maxDarkX = Int.min
+    var darkPixels = 0
+    for y in 0..<image.height {
+        for x in 0..<image.width {
+            let index = y * image.bytesPerRow + x * 4
+            if bytes[index] < 80,
+               bytes[index + 1] < 80,
+               bytes[index + 2] < 80,
+               bytes[index + 3] > 100 {
+                minDarkX = min(minDarkX, x)
+                maxDarkX = max(maxDarkX, x)
+                darkPixels += 1
+            }
+        }
+    }
+
+    #expect(darkPixels > 0)
+    #expect(minDarkX >= Int((Double(image.width) * 0.069).rounded(.down)))
+    #expect(maxDarkX <= Int((Double(image.width) * 0.931).rounded(.up)))
+}
+
 @Test func zoomScalesAndSpinRotatesPlacement() {
     let c = Character(body: .orange)
     func place(spin: Double, zoom: Double) -> StageLayout.Placement {

@@ -138,6 +138,24 @@ let ep1Exists = FileManager.default.fileExists(atPath: "/Users/jango/Documents/b
     #expect(after.x > 0.5)
 }
 
+@Test func shallowSceneDepthDoesNotAmplifyForwardBackInput() {
+    let events: [PerfEvent] = [.key(t: 0, code: .arrowUp, down: true)]
+    func depth(gScale: Double) -> Double {
+        simulatePosition(
+            events: events,
+            recStart: StartPose(x: 0.5, depth: 0, face: 1),
+            speed: 320,
+            gScale: gScale,
+            at: 0.5).depth
+    }
+
+    // Reducing scene perspective must not silently make the same arrow hold
+    // travel faster. The default 0.6 behavior remains the calibration point.
+    #expect(abs(depth(gScale: 0) - depth(gScale: 0.6)) < 1e-9)
+    #expect(abs(depth(gScale: 0.35) - depth(gScale: 0.6)) < 1e-9)
+    #expect(depth(gScale: 1.2) < depth(gScale: 0.6))
+}
+
 /// The checkpointed timeline must be BIT-identical to the from-zero pure
 /// function — same float ops in the same order — across a fuzz of event
 /// streams and query times. This is the license for SceneSimulator to use it.

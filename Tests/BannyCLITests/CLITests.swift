@@ -326,11 +326,15 @@ final class CLITests: XCTestCase {
             "--voice", voice.id,
             "--preset", "robot",
             "--flavor", "0.4",
+            "--fade-in", "0.02",
+            "--fade-out", "0.03",
             "--json",
         ])
         var contents = try ShowPackage.read(from: project)
         let clip = try XCTUnwrap(contents.document.stage.characters[0].clips.first)
         XCTAssertEqual(clip.kind, .speech)
+        XCTAssertEqual(clip.fadeIn, 0.02, accuracy: 0.000_001)
+        XCTAssertEqual(clip.fadeOut, 0.03, accuracy: 0.000_001)
         XCTAssertFalse(clip.mouthCues.isEmpty)
         XCTAssertNotNil(contents.audioURLs[clip.id])
 

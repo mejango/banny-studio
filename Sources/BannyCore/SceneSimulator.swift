@@ -109,6 +109,16 @@ public struct SceneSimulator: Sendable {
         self.state = state
     }
 
+    /// One-shot action windows are shared with stopped-stage preview timing so
+    /// the editor cannot freeze a gravity-scaled action before it lands.
+    public static func jumpDuration(gravity: Double) -> Double {
+        (460.0 / max(0.1, gravity)).rounded() / 1000.0
+    }
+
+    public static func flipDuration(gravity: Double) -> Double {
+        (720.0 / max(0.1, gravity)).rounded() / 1000.0
+    }
+
     /// Front-loaded somersault timing with a continuous landing follow-through.
     /// The extra bell-shaped term preserves the approved quick launch and
     /// midair turn, while the base smoothstep keeps rotation moving throughout
@@ -218,17 +228,18 @@ public struct SceneSimulator: Sendable {
         var jump: CharacterPose.JumpState?
         if let tj = lastJumpDown {
             // Web: dur = round(460/gravity) ms, height 30/gravity.
-            let dur = (460.0 / state.gravity).rounded() / 1000.0
+            let safeGravity = max(0.1, state.gravity)
+            let dur = Self.jumpDuration(gravity: safeGravity)
             let progress = (t - tj) / dur
             if progress >= 0, progress < 1 {
-                jump = .init(progress: progress, height: 30 / state.gravity)
+                jump = .init(progress: progress, height: 30 / safeGravity)
             }
         }
 
         var flip: CharacterPose.FlipState?
         if let action = lastFlipDown {
             let safeGravity = max(0.1, state.gravity)
-            let dur = (720.0 / safeGravity).rounded() / 1000.0
+            let dur = Self.flipDuration(gravity: safeGravity)
             let progress = (t - action.time) / dur
             if progress >= 0, progress < 1 {
                 flip = .init(

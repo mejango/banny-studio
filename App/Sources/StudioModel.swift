@@ -66,7 +66,20 @@ final class StudioModel {
     private var startWall: TimeInterval = 0
 
     // Editor state.
-    var selection: Set<Int> = [0]
+    var selection: Set<Int> = [0] {
+        didSet {
+            // Track intent separately from the unordered multi-selection.
+            // Non-character tracks keep `selection` around, but Scenes needs
+            // one predictable performer for stopped-stage previews.
+            let added = selection.subtracting(oldValue)
+            if let index = added.max() {
+                lastSelectedCharacterIndex = index
+            } else if selection.count == 1 {
+                lastSelectedCharacterIndex = selection.first
+            }
+        }
+    }
+    private(set) var lastSelectedCharacterIndex: Int? = 0
     /// The track whose inspector the right panel shows (TrackRow key).
     var selectedTrackKey: String? = "c-0"
     var activeSceneIndex: Int
@@ -899,6 +912,31 @@ final class StudioModel {
     var selectedVisualCueOnSelectedTrack: Bool {
         guard let key = selectedTrackKey, let owner = selectedImageCueOwner else { return false }
         return owner.trackID == key
+    }
+
+    /// Scenes remains the editing/record target, but while transport is
+    /// stopped its performance keys preview the most recently selected
+    /// character. This makes perspective, gravity, and global-size changes
+    /// immediately testable without bouncing between inspectors.
+    var scenePreviewCharacterIndex: Int? {
+        if let index = lastSelectedCharacterIndex,
+           scene.characters.indices.contains(index) {
+            return index
+        }
+        return selection.sorted().last(where: scene.characters.indices.contains)
+            ?? scene.characters.indices.first
+    }
+
+    var scenesTrackSelected: Bool {
+        guard let key = selectedTrackKey else { return false }
+        return scene.backgroundTracks.contains(where: { $0.id == key })
+    }
+
+    /// Character rotate/zoom reset chords and the regular performance
+    /// vocabulary share this decision in the keyboard monitor.
+    var acceptsCharacterPerformanceKeys: Bool {
+        if selectedTrackKey == nil || selectedTrackKey?.hasPrefix("c-") == true { return true }
+        return scenesTrackSelected && !isCameraRecording && scenePreviewCharacterIndex != nil
     }
 
     func updateSelectedImageCue(_ body: (inout ImageCue) -> Void) {
@@ -1779,8 +1817,37 @@ final class StudioModel {
     private var freeformLastEvent: Double = 0
 
     var freeformActive: Bool { !freeformEvents.isEmpty }
-    /// Motion can still be decaying (turn grace, jump arc) after the keys lift.
-    var freeformSettling: Bool { freeformActive && freeformClock < freeformLastEvent + 1.5 }
+    /// Latest gravity-scaled landing among synthetic one-shot actions. Resolve
+    /// this from the events and current scene gravity so adjusting Gravity
+    /// during a preview cannot strand the character partway through a turn.
+    private var freeformActionSettleUntil: Double {
+        var end = 0.0
+        for events in freeformEvents.values {
+            for event in events {
+                guard case .key(let t, let code, true) = event else { continue }
+                let duration: Double?
+                switch code {
+                case .keyJ:
+                    duration = SceneSimulator.jumpDuration(gravity: scene.gravity)
+                case .keyF, .keyD:
+                    duration = SceneSimulator.flipDuration(gravity: scene.gravity)
+                default:
+                    duration = nil
+                }
+                if let duration { end = max(end, t + duration) }
+            }
+        }
+        // Cross the simulator's strict progress < 1 boundary by one frame.
+        return end + 1.0 / 60.0
+    }
+
+    /// Motion can still be decaying after the keys lift. The general grace
+    /// handles turns/resets; one-shot actions remain live through their exact
+    /// gravity-scaled landing and recovery.
+    var freeformSettling: Bool {
+        freeformActive
+            && freeformClock < max(freeformLastEvent + 1.5, freeformActionSettleUntil)
+    }
 
     func clearFreeform() {
         freeformEvents = [:]
@@ -1791,7 +1858,13 @@ final class StudioModel {
     }
 
     private func freeformKey(code: EventCode, down: Bool) {
-        for i in selection where scene.characters.indices.contains(i)
+        let targets: Set<Int>
+        if scenesTrackSelected, let index = scenePreviewCharacterIndex {
+            targets = [index]
+        } else {
+            targets = selection
+        }
+        for i in targets where scene.characters.indices.contains(i)
             && !scene.characters[i].locked {
             if freeformStarts[i] == nil {
                 let pose = simulator.pose(characterIndex: i, at: time)

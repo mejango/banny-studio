@@ -70,7 +70,7 @@ struct KeyCaptureView: NSViewRepresentable {
                 downKeys.remove(event.keyCode)
                 return Self.handle(event: event, model: model)
             }
-            let charCtx = model.selectedTrackKey?.hasPrefix("c-") ?? true
+            let charCtx = model.acceptsCharacterPerformanceKeys
             if !event.isARepeat, charCtx, !model.playing || model.recording {
                 // Rotation reset: both arrows held with shift.
                 if event.modifierFlags.contains(.shift),
@@ -179,12 +179,14 @@ struct KeyCaptureView: NSViewRepresentable {
                 // context; never leak them to a previously selected character.
                 if codeMap[event.keyCode] != nil { return true }
             }
-            // Light tracks, the Scenes track, and camera recording take the
-            // arrows plus their track-specific pen keys.
+            // Light tracks and an active camera take claim the arrows plus
+            // their track-specific pen keys. A stopped Scenes track instead
+            // falls through to character preview below.
             if model.isCameraRecording
                 || (model.selectedTrackKey.map { key in
                         model.scene.lightTracks.contains(where: { $0.id == key })
-                            || model.scene.backgroundTracks.contains(where: { $0.id == key })
+                            || (model.scene.backgroundTracks.contains(where: { $0.id == key })
+                                && model.scenePreviewCharacterIndex == nil)
                     } ?? false) {
                 let lightMap: [UInt16: StudioModel.LightKey] = [
                     123: .left, 124: .right, 126: .up, 125: .down,
@@ -199,7 +201,7 @@ struct KeyCaptureView: NSViewRepresentable {
             // Character rotate (shift+←/→) and scale (+/−): held keys integrated
             // like movement. Only in a character context (no light/scene/media
             // pen is claiming these — that was handled above).
-            if model.selectedTrackKey?.hasPrefix("c-") ?? true {
+            if model.acceptsCharacterPerformanceKeys {
                 var rz: EventCode?
                 if event.modifierFlags.contains(.shift), event.keyCode == 123 { rz = .rotateLeft }
                 else if event.modifierFlags.contains(.shift), event.keyCode == 124 { rz = .rotateRight }

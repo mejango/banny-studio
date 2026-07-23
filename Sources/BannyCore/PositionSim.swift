@@ -137,7 +137,12 @@ func initialSimState(recStart: StartPose?, speed: Double, rotationSpeed: Double)
 }
 
 func simDepthRate(speed: Double, gScale: Double) -> Double {
-    (speed / 320) * 0.36 / max(gScale, 0.1)
+    // `gScale` controls the strength of the scene's perspective. Compensating
+    // below the default 0.6 made shallow scenes accelerate the performer by as
+    // much as 6× even though the user had not changed character speed. Keep
+    // the legacy compensation for stronger perspective, but never amplify
+    // forward/back input merely because scene depth was reduced.
+    (speed / 320) * 0.36 / max(gScale, 0.6)
 }
 
 /// Deterministic walk/turn/depth simulation — a direct port of the webapp's

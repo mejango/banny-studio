@@ -117,7 +117,19 @@ public enum StageLayout {
         }
     }
 
-    /// Port of the render section of web `step()` (verbatim constants).
+    /// Ground-plane travel for the far half of the stage. The original linear
+    /// 0.42 slope met the near-stage 0.09 slope with a hard speed jump exactly
+    /// when the character's feet crossed into frame. This Hermite blend keeps
+    /// the same horizon and near-stage tangent while easing into the stronger
+    /// perspective through the body of the set.
+    static func farGroundLiftFraction(depth: Double) -> Double {
+        let d = min(1, max(0, depth))
+        let smooth = d * d * (3 - 2 * d)
+        return 0.09 * d + (0.42 - 0.09) * smooth
+    }
+
+    /// Port of the render section of web `step()`, with a continuous
+    /// near-to-far ground-plane transition.
     public static func place(pose: CharacterPose, character: Character, scene: SceneState,
                              stageWidth W: Double, virtualHeight H: Double) -> Placement {
         let dFar = max(0, pose.depth)
@@ -125,7 +137,7 @@ public enum StageLayout {
         // overridden by any timed .motion changes before t).
         let scale = pose.size * scene.gSize * (1 - pose.depth * scene.gScale) * (H / 900)
             * max(0.05, pose.zoom)
-        let lift = dFar * H * 0.42
+        let lift = farGroundLiftFraction(depth: dFar) * H
         let footX = pose.x * W
 
         let closer = max(0, -pose.depth)
@@ -244,5 +256,24 @@ public enum StageLayout {
     /// Caption font size: web `--capfs = max(12, round(h*0.033))`.
     public static func captionFontSize(virtualHeight H: Double) -> Double {
         max(12, (H * 0.033).rounded())
+    }
+
+    /// Responsive caption size for a concrete output frame. Height remains the
+    /// primary scale so landscape output keeps its established typography;
+    /// the width cap prevents very narrow custom frames from producing type
+    /// that cannot form useful words before wrapping.
+    public static func captionFontSize(frameWidth W: Double, outputHeight outH: Double) -> Double {
+        let heightBased = virtualHeight(outputHeight: outH) * 0.033
+        return max(1, min(heightBased, W * 0.064))
+    }
+
+    /// Captions stay inside a 7% title-safe margin on each horizontal edge.
+    public static func captionSafeWidth(frameWidth W: Double) -> Double {
+        max(1, W * 0.86)
+    }
+
+    /// Keep the caption box clear of the physical edge and common player UI.
+    public static func captionBottomMargin(outputHeight outH: Double) -> Double {
+        max(1, outH * 0.05)
     }
 }

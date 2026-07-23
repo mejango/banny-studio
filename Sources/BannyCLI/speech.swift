@@ -53,7 +53,8 @@ func ttsCommand(_ args: [String]) async throws {
     banny tts <folder.bs> --character N [--text TEXT|--text-file FILE|--captions] \
     [--at SECONDS] [--voice ID] [--preset NAME] [--flavor 0...1] \
     [--rate 0...1] [--pitch 0.5...2] [--name NAME] [--no-caption] \
-    [--no-lipsync] [--replace-generated] [--json]
+    [--fade-in SECONDS] [--fade-out SECONDS] [--no-lipsync] \
+    [--replace-generated] [--json]
     """
     guard let projectPath = args.first else { throw CLIError.usage(usage) }
     var options = CLIOptions(Array(args.dropFirst()))

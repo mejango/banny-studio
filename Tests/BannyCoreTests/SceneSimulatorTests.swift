@@ -84,6 +84,22 @@ private func makeScene(_ character: Character, gravity: Double = 1) -> SceneStat
     #expect(fastMid?.height == 15)
 }
 
+@Test func lowGravityActionsExposeTheirFullLandingWindow() {
+    let gravity = 0.3
+    #expect(SceneSimulator.jumpDuration(gravity: gravity) > 1.5)
+    #expect(SceneSimulator.flipDuration(gravity: gravity) == 2.4)
+
+    let character = Character(body: .orange, events: [
+        .key(t: 0, code: .keyF, down: true),
+        .key(t: 0.08, code: .keyF, down: false),
+    ])
+    let simulator = SceneSimulator(state: makeScene(character, gravity: gravity))
+    let nearLanding = try! #require(simulator.pose(characterIndex: 0, at: 2.39).flip)
+    #expect(nearLanding.progress > 0.99)
+    #expect(abs(nearLanding.rotation) > 359)
+    #expect(simulator.pose(characterIndex: 0, at: 2.4).flip == nil)
+}
+
 @Test func frontAndBackFlipsCompleteAStylizedDeterministicArc() {
     let character = Character(body: .orange, events: [
         .key(t: 1, code: .keyF, down: true),

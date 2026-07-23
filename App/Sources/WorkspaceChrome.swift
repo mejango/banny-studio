@@ -249,7 +249,7 @@ private struct PerformanceKeyGuide: View {
     @Bindable var model: StudioModel
 
     private enum Target {
-        case characters, visual, light, camera, unavailable
+        case characters, scenePreview, visual, light, camera, unavailable
     }
 
     var body: some View {
@@ -271,6 +271,14 @@ private struct PerformanceKeyGuide: View {
                     .foregroundStyle(.secondary)
                 ForEach(EventGroup.allCases, id: \.self) { group in
                     characterRow(group)
+                }
+            case .scenePreview:
+                Text("Stopped: keys preview \(scenePreviewCharacterName) with these scene settings. REC still captures the camera.")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                ForEach(EventGroup.allCases, id: \.self) { group in
+                    mappingRow(group.performanceTitle, keys: group.performanceKeys,
+                               tint: group.color)
                 }
             case .visual:
                 Text("You can also grab the visual directly on the stage during REC.")
@@ -317,9 +325,22 @@ private struct PerformanceKeyGuide: View {
         if let key = model.selectedTrackKey,
            model.scene.lightTracks.contains(where: { $0.id == key }) { return .light }
         if let key = model.selectedTrackKey,
-           model.scene.backgroundTracks.contains(where: { $0.id == key }) { return .camera }
+           model.scene.backgroundTracks.contains(where: { $0.id == key }) {
+            if model.isCameraRecording || model.scenePreviewCharacterIndex == nil {
+                return .camera
+            }
+            return .scenePreview
+        }
         if !characterIndices.isEmpty { return .characters }
         return .unavailable
+    }
+
+    private var scenePreviewCharacterName: String {
+        guard let index = model.scenePreviewCharacterIndex,
+              let character = model.scene.characters[safe: index] else {
+            return "the last character"
+        }
+        return character.name.isEmpty ? "Banny \((index + 1) % 10)" : character.name
     }
 
     private var characterIndices: [Int] {
