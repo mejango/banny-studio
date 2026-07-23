@@ -39,6 +39,11 @@ public enum StageLayout {
         /// ground shadow attached when a custom pivot swings the body sideways.
         public var flipCenterOffsetX: Double
         public var flipCenterOffsetY: Double
+        /// 0 grounded → 1 at the flip apex. Shared with the shadow pass.
+        public var flipLift: Double
+        /// Gravity-weighted landing compression. Zero while airborne and
+        /// after recovery; roughly 1 at a normal-gravity impact.
+        public var landingImpact: Double
         /// Painter's-order key: round((2 - depth) * 100).
         public var zIndex: Int
         /// Foot X in virtual-stage px (anchor for shadows/tags).
@@ -64,19 +69,42 @@ public enum StageLayout {
     }
 
     /// Exaggerated cartoon-ballistic flip arc. The fast launch reaches an early
-    /// apex, hangs high while the turn continues, then accelerates visibly into
-    /// a firm landing.
+    /// apex, hangs high while the turn continues, then gravity takes over and
+    /// brings the feet down before the final compression/recovery frames.
     /// This is shared by artwork and shadow layout so they cannot drift apart.
-    static func flipLiftFactor(progress: Double) -> Double {
+    static func flipLiftFactor(progress: Double, gravity: Double = 1) -> Double {
         let p = min(1, max(0, progress))
         let apex = 0.34
-        let curve = 3.2
+        let contact = 0.92
         if p <= apex {
             let phase = p / apex
-            return 1 - pow(1 - phase, curve)
+            return 1 - pow(1 - phase, 3.2)
         }
-        let phase = (p - apex) / (1 - apex)
+        guard p < contact else { return 0 }
+        let phase = (p - apex) / (contact - apex)
+        let safeGravity = min(4, max(0.25, gravity))
+        let curve = min(5.2, max(3.0, 3.9 + 0.55 * log2(safeGravity)))
         return 1 - pow(phase, curve)
+    }
+
+    /// Brief foot-anchored squash after contact. In real time the pulse is
+    /// already shorter at high gravity because flip duration is 1/gravity;
+    /// this weight also makes its amplitude read as a harder impact.
+    static func flipLandingImpact(progress: Double, gravity: Double = 1) -> Double {
+        let p = min(1, max(0, progress))
+        let contact = 0.92
+        guard p > contact, p < 1 else { return 0 }
+        let phase = (p - contact) / (1 - contact)
+        let pulse: Double
+        if phase < 0.28 {
+            let compression = phase / 0.28
+            pulse = 1 - pow(1 - compression, 2.2)
+        } else {
+            let recovery = (phase - 0.28) / 0.72
+            pulse = pow(1 - recovery, 1.4)
+        }
+        let weight = min(1.6, max(0.55, pow(max(0.1, gravity), 0.35)))
+        return pulse * weight
     }
 
     /// Explicit pivot in 400×400 artwork coordinates. Keeping this conversion
@@ -120,9 +148,13 @@ public enum StageLayout {
             jumpWob = sin(jump.progress * .pi * 3) * 2.5 * (1 - jump.progress)
         }
         let flipLift = pose.flip.map {
-            flipLiftFactor(progress: $0.progress) * $0.height
+            flipLiftFactor(progress: $0.progress, gravity: scene.gravity)
         } ?? 0
-        let airLift = max(jumpLift, flipLift)
+        let flipLiftAmount = pose.flip.map { flipLift * $0.height } ?? 0
+        let landingImpact = pose.flip.map {
+            flipLandingImpact(progress: $0.progress, gravity: scene.gravity)
+        } ?? 0
+        let airLift = max(jumpLift, flipLiftAmount)
         let gaitRotation = sway + pose.leanTilt + jumpWob
         let flipRotation = pose.flip?.rotation ?? 0
         let flipPivot = explicitRotationPivot(for: character)
@@ -155,6 +187,8 @@ public enum StageLayout {
                          flipRotation: flipRotation,
                          flipCenterOffsetX: flipCenterOffsetX,
                          flipCenterOffsetY: flipCenterOffsetY,
+                         flipLift: flipLift,
+                         landingImpact: landingImpact,
                          zIndex: Int(((2 - pose.depth) * 100).rounded()),
                          footX: footX, footY: ty + footPivot.y * scale)
     }
@@ -175,13 +209,11 @@ public enum StageLayout {
         // actual lift, and follows any drift caused by a custom rotation pivot.
         // 0 grounded → 1 at apex.
         let jumpLift = pose.jump.map { sin($0.progress * .pi) } ?? 0
-        let flipLift = pose.flip.map { flipLiftFactor(progress: $0.progress) } ?? 0
-        let lift = max(jumpLift, flipLift)
+        let lift = max(jumpLift, placement.flipLift)
         let airShrink = 1 - 0.2 * lift
         let airFade = 1 - 0.35 * lift
         if let flip = pose.flip {
-            let liftPixels = flipLiftFactor(progress: flip.progress)
-                * flip.height * placement.scale
+            let liftPixels = placement.flipLift * flip.height * placement.scale
             let casterLift = max(0, liftPixels - placement.flipCenterOffsetY)
             cx += placement.flipCenterOffsetX + hx / vy * casterLift
         }
@@ -196,12 +228,16 @@ public enum StageLayout {
         // Tilt: leaning forward/back nudges the shadow slightly with the lean.
         let tiltShift = pose.leanTilt * 1.1 * placement.scale
         cx += sway + tiltShift
+        let impact = placement.landingImpact
         return ShadowPlacement(
             x: cx - 75,
             y: placement.footY - H * 0.019,
-            scaleX: placement.scale * (0.7 + ang * 0.8) * airShrink * flipWidth,
-            scaleY: placement.scale * 0.75 * airShrink * flipDepth,
-            opacity: max(0, (0.42 - ang * 0.30) * (1 - dFar * 0.7)) * (1 - zin) * airFade,
+            scaleX: placement.scale * (0.7 + ang * 0.8) * airShrink
+                * flipWidth * (1 + 0.16 * impact),
+            scaleY: placement.scale * 0.75 * airShrink * flipDepth
+                * (1 + 0.07 * impact),
+            opacity: max(0, (0.42 - ang * 0.30) * (1 - dFar * 0.7))
+                * (1 - zin) * airFade * (1 + 0.28 * impact),
             zIndex: placement.zIndex - 1)
     }
 

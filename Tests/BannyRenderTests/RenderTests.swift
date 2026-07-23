@@ -90,19 +90,48 @@ private func writePNG(_ image: CGImage, to url: URL) throws {
     #expect(placement.rotation == 180)
     #expect(abs(placement.flipCenterOffsetX) < 1e-9)
     #expect(abs(placement.flipCenterOffsetY) < 1e-9)
+    #expect(placement.landingImpact == 0)
 }
 
 @Test func flipLiftUsesAnExaggeratedLaunchAndAcceleratingLanding() {
-    let lift = StageLayout.flipLiftFactor
+    let lift: (Double) -> Double = {
+        StageLayout.flipLiftFactor(progress: $0)
+    }
     #expect(lift(0) == 0)
     #expect(lift(0.34) == 1)
+    #expect(lift(0.9) > 0)
+    #expect(lift(0.92) == 0)
     #expect(lift(1) == 0)
     #expect(lift(0.15) > sin(0.15 * .pi)) // crisper takeoff than the old sine arc
     #expect(lift(0.1) > 0.65)
     #expect(lift(0.25) > 0.98) // most clearance arrives early, before the apex
-    let earlyDescent = lift(0.7) - lift(0.85)
-    let landingDescent = lift(0.85) - lift(1)
+    let earlyDescent = lift(0.78) - lift(0.85)
+    let landingDescent = lift(0.85) - lift(0.92)
     #expect(landingDescent > earlyDescent)
+
+    let impact: (Double) -> Double = {
+        StageLayout.flipLandingImpact(progress: $0)
+    }
+    #expect(impact(0.92) == 0)
+    #expect(impact(0.95) > 0.8)
+    #expect(impact(1) == 0)
+    #expect(StageLayout.flipLandingImpact(progress: 0.95, gravity: 2) > impact(0.95))
+    #expect(StageLayout.flipLandingImpact(progress: 0.95, gravity: 0.5) < impact(0.95))
+
+    let impactPose = CharacterPose(
+        x: 0.5, depth: 0, phase: 0, tilt: 0, face: 1, eye: .open,
+        talking: false, jump: nil, outfit: [:], activeSubtitle: nil, moving: false,
+        flip: .init(progress: 0.95, rotation: 359, height: 60))
+    let character = Character(body: .orange)
+    let soft = StageLayout.place(
+        pose: impactPose, character: character,
+        scene: SceneState(gravity: 0.5),
+        stageWidth: 1_600, virtualHeight: 900)
+    let hard = StageLayout.place(
+        pose: impactPose, character: character,
+        scene: SceneState(gravity: 2),
+        stageWidth: 1_600, virtualHeight: 900)
+    #expect(hard.landingImpact > soft.landingImpact)
 }
 
 @Test func flipShadowTracksTheLightArcAndBroadsideSilhouette() {
@@ -147,6 +176,21 @@ private func writePNG(_ image: CGImage, to url: URL) throws {
     #expect(abs(landed.scaleX - grounded.scaleX) < 1e-9)
     #expect(abs(landed.scaleY - grounded.scaleY) < 1e-9)
     #expect(abs(landed.opacity - grounded.opacity) < 1e-9)
+
+    let impactPose = CharacterPose(
+        x: 0.5, depth: 0, phase: 0, tilt: 0, face: 1, eye: .open,
+        talking: false, jump: nil, outfit: [:], activeSubtitle: nil, moving: false,
+        flip: .init(progress: 0.95, rotation: 359, height: 60))
+    let impactPlacement = StageLayout.place(
+        pose: impactPose, character: character, scene: SceneState(),
+        stageWidth: 1_600, virtualHeight: 900)
+    let impact = StageLayout.shadow(
+        for: impactPlacement, pose: impactPose, light: light,
+        stageWidth: 1_600, virtualHeight: 900)
+    #expect(impactPlacement.landingImpact > 0.8)
+    #expect(impact.scaleX > grounded.scaleX)
+    #expect(impact.scaleY > grounded.scaleY)
+    #expect(impact.opacity > grounded.opacity)
 }
 
 @Test func flipShadowFollowsCustomPivotDriftAndFacing() {

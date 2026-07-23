@@ -345,6 +345,16 @@ public struct FrameRenderer: Sendable {
         rotate(p.spinRotation, around: explicitPivot ?? StageLayout.footPivot)
         rotate(p.flipRotation, around: explicitPivot
                ?? (x: StageLayout.box / 2, y: StageLayout.box / 2))
+        // Contact lands at the feet, then briefly compresses the body instead
+        // of driving it through the floor. The matching shadow spread makes
+        // the same two or three frames read as a physical thump.
+        if p.landingImpact > 0.000_001 {
+            let squashX = 1 + 0.045 * p.landingImpact
+            let squashY = max(0.82, 1 - 0.09 * p.landingImpact)
+            ctx.translateBy(x: CGFloat(pivot.x), y: CGFloat(pivot.y))
+            ctx.scaleBy(x: CGFloat(squashX), y: CGFloat(squashY))
+            ctx.translateBy(x: CGFloat(-pivot.x), y: CGFloat(-pivot.y))
+        }
 
         let box = CGRect(x: 0, y: 0, width: StageLayout.box, height: StageLayout.box)
         let outfit = pose.outfit

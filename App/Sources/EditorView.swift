@@ -592,7 +592,7 @@ struct TrackInspector: View {
             valueSlider("Gravity", value: Binding(get: { model.scene.gravity },
                                                   set: { model.scene.gravity = $0 }),
                         range: 0.3...2.5)
-            Text("Gravity affects walking, wobbling, and jumping.")
+            Text("Gravity affects walking, wobbling, jumps, and flip landings.")
                 .font(.caption2).foregroundStyle(.secondary)
         }
     }
