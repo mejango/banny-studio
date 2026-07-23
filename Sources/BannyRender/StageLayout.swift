@@ -69,8 +69,8 @@ public enum StageLayout {
     /// This is shared by artwork and shadow layout so they cannot drift apart.
     static func flipLiftFactor(progress: Double) -> Double {
         let p = min(1, max(0, progress))
-        let apex = 0.38
-        let curve = 2.4
+        let apex = 0.34
+        let curve = 3.2
         if p <= apex {
             let phase = p / apex
             return 1 - pow(1 - phase, curve)

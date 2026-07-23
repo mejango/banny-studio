@@ -95,16 +95,23 @@ private func makeScene(_ character: Character, gravity: Double = 1) -> SceneStat
     let simulator = SceneSimulator(state: scene)
 
     #expect(simulator.pose(characterIndex: 0, at: 0.9).flip == nil)
-    let front = try! #require(simulator.pose(characterIndex: 0, at: 1.31).flip)
+    let launch = try! #require(simulator.pose(characterIndex: 0, at: 1.072).flip)
+    #expect(abs(launch.progress - 0.1) < 1e-9)
+    #expect(launch.rotation == 0) // visibly launch feet-down before the turn
+
+    let front = try! #require(simulator.pose(characterIndex: 0, at: 1.36).flip)
     #expect(abs(front.progress - 0.5) < 1e-9)
     #expect(abs(front.rotation - 180) < 1e-9)
-    #expect(front.height == 38)
-    #expect(simulator.pose(characterIndex: 0, at: 1.621).flip == nil)
+    #expect(front.height == 60)
 
-    let back = try! #require(simulator.pose(characterIndex: 0, at: 2.31).flip)
+    let landing = try! #require(simulator.pose(characterIndex: 0, at: 1.648).flip)
+    #expect(abs(landing.progress - 0.9) < 1e-9)
+    #expect(abs(landing.rotation - 360) < 1e-9) // finish early, then drop feet-down
+    #expect(simulator.pose(characterIndex: 0, at: 1.721).flip == nil)
+
+    let back = try! #require(simulator.pose(characterIndex: 0, at: 2.36).flip)
     #expect(abs(back.progress - 0.5) < 1e-9)
     #expect(abs(back.rotation + 180) < 1e-9)
-
 }
 
 @Test func outfitResolvesTimedChanges() {

@@ -217,17 +217,18 @@ public struct SceneSimulator: Sendable {
         var flip: CharacterPose.FlipState?
         if let action = lastFlipDown {
             let safeGravity = max(0.1, state.gravity)
-            let dur = (620.0 / safeGravity).rounded() / 1000.0
+            let dur = (720.0 / safeGravity).rounded() / 1000.0
             let progress = (t - action.time) / dur
             if progress >= 0, progress < 1 {
-                // Smoothstep gives the turn zero angular velocity at takeoff
-                // and landing, an exact half-turn at the timeline midpoint,
-                // and a complete 360° action.
-                let eased = progress * progress * (3 - 2 * progress)
+                // Reserve the first and last 14% for unmistakable feet-down
+                // launch and landing beats. The centered turn still reaches
+                // exactly 180° at the timeline midpoint.
+                let turnProgress = min(1, max(0, (progress - 0.14) / 0.72))
+                let eased = turnProgress * turnProgress * (3 - 2 * turnProgress)
                 flip = .init(
                     progress: progress,
                     rotation: action.direction * 360 * eased,
-                    height: 38 / safeGravity)
+                    height: 60 / safeGravity)
             }
         }
 
