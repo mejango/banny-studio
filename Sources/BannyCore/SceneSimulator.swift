@@ -220,10 +220,9 @@ public struct SceneSimulator: Sendable {
             let dur = (720.0 / safeGravity).rounded() / 1000.0
             let progress = (t - action.time) / dur
             if progress >= 0, progress < 1 {
-                // Reserve the first and last 14% for unmistakable feet-down
-                // launch and landing beats. The centered turn still reaches
-                // exactly 180° at the timeline midpoint.
-                let turnProgress = min(1, max(0, (progress - 0.14) / 0.72))
+                // Ease the turn in with the lift, then finish by 86% so the
+                // approved feet-down landing beat remains unchanged.
+                let turnProgress = min(1, max(0, progress / 0.86))
                 let eased = turnProgress * turnProgress * (3 - 2 * turnProgress)
                 flip = .init(
                     progress: progress,
