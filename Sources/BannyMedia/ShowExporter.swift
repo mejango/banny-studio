@@ -51,9 +51,18 @@ public enum ShowExporter {
         public let to: Double
     }
 
-    public enum ExportError: Error {
+    public enum ExportError: LocalizedError {
         case nothingToExport
         case writerFailed(String)
+        case cancelled
+
+        public var errorDescription: String? {
+            switch self {
+            case .nothingToExport: return "There is nothing to export."
+            case .writerFailed(let message): return "Export writer failed: \(message)"
+            case .cancelled: return "Export cancelled."
+            }
+        }
     }
 
     /// Whole-timeline duration when the show playlist is empty.
@@ -77,7 +86,9 @@ public enum ShowExporter {
                               assetURL: @escaping (String) -> URL?,
                               options: Options = .p1080,
                               to outputURL: URL,
-                              progress: ((Double) -> Void)? = nil) throws {
+                              progress: ((Double) -> Void)? = nil,
+                              shouldCancel: (() -> Bool)? = nil) throws {
+        if shouldCancel?() == true { throw ExportError.cancelled }
         let segments = resolveSegments(document: document)
         guard !segments.isEmpty else { throw ExportError.nothingToExport }
 
@@ -105,7 +116,12 @@ public enum ShowExporter {
         // Audio: bounce each segment offline up front so the writer interleaves cleanly.
         let audioFormat = AVAudioFormat(standardFormatWithSampleRate: 44100, channels: 2)!
         let audioBuffers = try bounceAudio(document: document, segments: segments,
-                                           format: audioFormat, audioURL: audioURL)
+                                           format: audioFormat, audioURL: audioURL,
+                                           shouldCancel: shouldCancel)
+        if shouldCancel?() == true {
+            writer.cancelWriting()
+            throw ExportError.cancelled
+        }
         var audioInput: AVAssetWriterInput?
         if !audioBuffers.isEmpty {
             let input = AVAssetWriterInput(mediaType: .audio, outputSettings: [
@@ -129,11 +145,12 @@ public enum ShowExporter {
         var audioQueue = audioBuffers
         var audioPos: AVAudioFramePosition = 0
         var audioFinished = false
-        func pumpAudio(upTo videoSeconds: Double) {
-            guard let audioInput, !audioFinished else { return }
+        func pumpAudio(upTo videoSeconds: Double) -> Bool {
+            guard let audioInput, !audioFinished else { return true }
             while let buffer = audioQueue.first,
                   Double(audioPos) / 44100.0 < videoSeconds + 1.0,
                   audioInput.isReadyForMoreMediaData {
+                if shouldCancel?() == true { return false }
                 if let sample = makeSampleBuffer(from: buffer, at: audioPos) {
                     audioInput.append(sample)
                 }
@@ -146,6 +163,7 @@ public enum ShowExporter {
                 audioInput.markAsFinished()
                 audioFinished = true
             }
+            return true
         }
 
         // Video frames.
@@ -158,8 +176,13 @@ public enum ShowExporter {
         for segment in segments {
             let segFrames = Int(((segment.to - segment.from) * Double(fps)).rounded(.up))
             for f in 0..<segFrames {
+                if shouldCancel?() == true {
+                    writer.cancelWriting()
+                    throw ExportError.cancelled
+                }
                 let t = segment.from + Double(f) / Double(fps)
                 guard t < segment.to + 1e-9 else { break }
+                var cancelled = false
                 autoreleasepool {
                     var pixelBuffer: CVPixelBuffer?
                     CVPixelBufferPoolCreatePixelBuffer(nil, adaptor.pixelBufferPool!, &pixelBuffer)
@@ -178,11 +201,24 @@ public enum ShowExporter {
                                   visualAsset: { media.visualFrame(cue: $0, at: $1) },
                                   flipped: true, in: ctx)
                     CVPixelBufferUnlockBaseAddress(pb, [])
-                    pumpAudio(upTo: Double(frameIndex) / Double(fps))
-                    while !videoInput.isReadyForMoreMediaData { Thread.sleep(forTimeInterval: 0.005) }
+                    guard pumpAudio(upTo: Double(frameIndex) / Double(fps)) else {
+                        cancelled = true
+                        return
+                    }
+                    while !videoInput.isReadyForMoreMediaData {
+                        if shouldCancel?() == true {
+                            cancelled = true
+                            return
+                        }
+                        Thread.sleep(forTimeInterval: 0.005)
+                    }
                     adaptor.append(pb, withPresentationTime: CMTime(value: CMTimeValue(frameIndex), timescale: CMTimeScale(fps)))
                     frameIndex += 1
                     progress?(Double(frameIndex) / Double(max(1, totalFrames)) * 0.9)
+                }
+                if cancelled {
+                    writer.cancelWriting()
+                    throw ExportError.cancelled
                 }
             }
         }
@@ -191,7 +227,17 @@ public enum ShowExporter {
         // Drain any remaining audio.
         if let audioInput, !audioFinished {
             while let buffer = audioQueue.first {
-                while !audioInput.isReadyForMoreMediaData { Thread.sleep(forTimeInterval: 0.005) }
+                if shouldCancel?() == true {
+                    writer.cancelWriting()
+                    throw ExportError.cancelled
+                }
+                while !audioInput.isReadyForMoreMediaData {
+                    if shouldCancel?() == true {
+                        writer.cancelWriting()
+                        throw ExportError.cancelled
+                    }
+                    Thread.sleep(forTimeInterval: 0.005)
+                }
                 if let sample = makeSampleBuffer(from: buffer, at: audioPos) {
                     audioInput.append(sample)
                 }
@@ -215,21 +261,31 @@ public enum ShowExporter {
     /// Renders each segment's audio offline into PCM buffers (concatenated in show order).
     private static func bounceAudio(document: ShowDocument, segments: [ResolvedSegment],
                                     format: AVAudioFormat,
-                                    audioURL: (String) -> URL?) throws -> [AVAudioPCMBuffer] {
+                                    audioURL: (String) -> URL?,
+                                    shouldCancel: (() -> Bool)?) throws -> [AVAudioPCMBuffer] {
         var out: [AVAudioPCMBuffer] = []
         let stage = document.stage
         // No clips anywhere → no audio track in the mp4. Starting an engine
         // with an empty node graph crashes offline rendering.
-        let hasClips = !stage.characters.filter({ !$0.hidden }).flatMap(\.clips).isEmpty
-            || !stage.audioTracks.filter({ !$0.hidden }).flatMap(\.clips).isEmpty
+        let hasSolo = stage.characters.contains { !$0.hidden && $0.solo }
+            || stage.audioTracks.contains { !$0.hidden && $0.solo }
+        let hasClips = !stage.characters
+            .filter { !$0.hidden && (!hasSolo || $0.solo) }.flatMap(\.clips).isEmpty
+            || !stage.audioTracks
+                .filter { !$0.hidden && (!hasSolo || $0.solo) }.flatMap(\.clips).isEmpty
         guard hasClips else { return [] }
         for segment in segments {
+            if shouldCancel?() == true { throw ExportError.cancelled }
             let graph = AudioGraph()
             let duration = segment.to - segment.from
             let frames = AVAudioFrameCount(duration * format.sampleRate)
             guard frames > 0 else { continue }
 
-            try graph.engine.enableManualRenderingMode(.offline, format: format, maximumFrameCount: 4096)
+            // Short chunks make edge-fade automation smooth while remaining
+            // comfortably faster than realtime.
+            let chunkFrames: AVAudioFrameCount = 1024
+            try graph.engine.enableManualRenderingMode(.offline, format: format,
+                                                       maximumFrameCount: chunkFrames)
             try graph.build(scene: stage) { audioURL($0) }
             try graph.engine.start()
             graph.schedule(from: segment.from)
@@ -239,13 +295,21 @@ public enum ShowExporter {
                 stage.characters.indices.contains(i)
                     ? sim.pose(characterIndex: i, at: segment.from).x : nil
             }
+            graph.updateLevels(timelineTime: segment.from)
             graph.playAll()
 
             let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frames)!
             var rendered: AVAudioFrameCount = 0
-            let chunk = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 4096)!
+            let chunk = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: chunkFrames)!
             while rendered < frames {
-                let toRender = min(4096, frames - rendered)
+                if shouldCancel?() == true {
+                    graph.engine.stop()
+                    graph.engine.disableManualRenderingMode()
+                    throw ExportError.cancelled
+                }
+                graph.updateLevels(timelineTime: segment.from
+                    + Double(rendered) / format.sampleRate)
+                let toRender = min(chunkFrames, frames - rendered)
                 let status = try graph.engine.renderOffline(toRender, to: chunk)
                 guard status == .success else { break }
                 // Append chunk into the big buffer.

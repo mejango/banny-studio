@@ -22,6 +22,32 @@ extension EventGroup {
 
     var laneIndex: Int { Self.allCases.firstIndex(of: self) ?? 0 }
 
+    /// Shared recording vocabulary for the compact timeline chips and the
+    /// on-demand keyboard guide in the quiet workspace.
+    var performanceTitle: String {
+        switch self {
+        case .move: return "Move left / right"
+        case .depth: return "Move forward / back"
+        case .talk: return "Mouth"
+        case .spin: return "Rotate"
+        case .zoom: return "Scale"
+        default: return rawValue.capitalized
+        }
+    }
+
+    var performanceKeys: [String] {
+        switch self {
+        case .move: return ["←", "→"]
+        case .depth: return ["↑", "↓"]
+        case .tilt: return ["N", "B"]
+        case .talk: return ["M"]
+        case .blink: return [",", "/", "."]
+        case .jump: return ["J"]
+        case .spin: return ["⇧", "sep:+", "←", "→"]
+        case .zoom: return ["−", "+"]
+        }
+    }
+
     /// Deeper variants that stay visible on the light theme's surfaces.
     func color(light: Bool) -> Color {
         guard light else { return color }
@@ -131,6 +157,8 @@ struct StudioTimelineView: View {
     @Bindable var model: StudioModel
     var file: ShowDocumentFile? = nil
     var showShip = true
+    var showTransport = true
+    var onInspectTrack: ((TrackRow) -> Void)?
     @AppStorage("studioLightMode") private var lightMode = false
     private var theme: Theme { lightMode ? .light : .dark }
     @State private var zoom: Double = 1
@@ -138,6 +166,7 @@ struct StudioTimelineView: View {
     @State private var resizing: (mark: PerfMark, leading: Bool, baseEvents: [PerfEvent])?
     @State private var draggingClip: (id: String, baseStart: Double, baseDur: Double,
                                       baseOffset: Double, srcDur: Double, edge: Int)?
+    @State private var draggingFade: (id: String, leading: Bool, start: Double, dur: Double)?
     @State private var draggingReaction: (char: Int, id: String, baseStart: Double,
                                           baseDur: Double, edge: Int, undoRegistered: Bool)?
     @State private var draggingCue: (row: TrackRow, cueID: String, baseStart: Double, baseDur: Double, edge: Int)?
@@ -199,6 +228,7 @@ struct StudioTimelineView: View {
     @State private var dragStartClips: [String: Double]?
     /// Pointer position over the lanes (content coords) for context menus.
     @State private var hoverLanePoint: CGPoint?
+    @State private var hoverHeaderPoint: CGPoint?
     /// Click/double-click on an empty audio-track spot → import a file there.
     /// Presentation flags are SEPARATE Bools: SwiftUI writes false to the
     /// fileImporter's isPresented binding on dismissal, and deriving it from
@@ -244,7 +274,9 @@ struct StudioTimelineView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            TransportBar(model: model, file: showShip ? file : nil)
+            if showTransport {
+                TransportBar(model: model, file: showShip ? file : nil)
+            }
             VStack(spacing: 0) {
             HStack(spacing: 0) {
                 cornerCell
@@ -332,7 +364,8 @@ struct StudioTimelineView: View {
                     let cardY = laneTop(of: row) + presenceStripH + 4 - scrollOffset.y
                     let onScreen = cardY > -4 && cardY < tlViewport.height
                     if onScreen, isCharacter ? available >= 26 : available >= 14 {
-                        TrackCardButton(model: model, file: file, row: row, cardHeight: cardH)
+                        TrackCardButton(model: model, file: file, row: row, cardHeight: cardH,
+                                        onInspect: onInspectTrack)
                             .offset(x: 10, y: cardY)
                     }
                     if onScreen, case .character(let ci) = row, mismatch,
@@ -786,7 +819,7 @@ struct StudioTimelineView: View {
         }
         .overlay(alignment: .topTrailing) {
             // The Export action lives on its row, sticky to the divider.
-            if let file {
+            if showShip, let file {
                 ShipButton(model: model, file: file, compact: true)
                     .padding(.trailing, 8)
                     .frame(height: exportRowH)
@@ -828,6 +861,24 @@ struct StudioTimelineView: View {
             }
         }
         .gesture(headerInteraction)
+        .contextMenu {
+            let point = hoverHeaderPoint ?? CGPoint(x: 0, y: rulerTop)
+            let markerTime = (time(forX: point.x + scrollOffset.x) * 10).rounded() / 10
+            Button(String(format: "Add marker at %.1fs", markerTime)) {
+                model.addTimelineMarker(kind: .marker, at: markerTime)
+            }
+            Button(String(format: "Add section at %.1fs", markerTime)) {
+                model.addTimelineMarker(kind: .section, at: markerTime)
+            }
+        }
+        #if os(macOS)
+        .onContinuousHover { phase in
+            switch phase {
+            case .active(let point): hoverHeaderPoint = point
+            case .ended: hoverHeaderPoint = nil
+            }
+        }
+        #endif
     }
 
     private var headerInteraction: some Gesture {
@@ -1069,6 +1120,17 @@ struct StudioTimelineView: View {
                                 .foregroundStyle(hidden ? Color.gray : theme.mutedText),
                              at: CGPoint(x: size.width - 18, y: y + presenceStripH / 2))
                 }
+                if model.isTrackLocked(kind(of: row)) {
+                    ctx.draw(Text(Image(systemName: "lock.fill"))
+                                .font(.system(size: 8, weight: .bold))
+                                .foregroundStyle(Color.orange),
+                             at: CGPoint(x: size.width - 34, y: y + presenceStripH / 2))
+                }
+                if model.isTrackSoloed(kind(of: row)) {
+                    ctx.draw(Text("S").font(.system(size: 8, weight: .heavy))
+                                .foregroundStyle(Color.yellow),
+                             at: CGPoint(x: size.width - 47, y: y + presenceStripH / 2))
+                }
                 if case .character = row {
                     ctx.draw(Text(Image(systemName: "tshirt"))
                                 .font(.system(size: 9))
@@ -1120,11 +1182,26 @@ struct StudioTimelineView: View {
         .gesture(gutterInteraction)
         .contextMenu {
             if let row = hoverGutterRow {
+                Button(model.isTrackLocked(kind(of: row)) ? "Unlock Track" : "Lock Track") {
+                    model.toggleTrackLock(kind(of: row))
+                }
+                if case .character = row {
+                    Button(model.isTrackSoloed(kind(of: row)) ? "Unsolo Track" : "Solo Track") {
+                        model.toggleTrackSolo(kind(of: row))
+                    }
+                } else if case .audio = row {
+                    Button(model.isTrackSoloed(kind(of: row)) ? "Unsolo Track" : "Solo Track") {
+                        model.toggleTrackSolo(kind(of: row))
+                    }
+                }
+                Divider()
                 Button("Duplicate \(label(for: row))") { model.duplicateTrack(kind(of: row)) }
+                    .disabled(model.isTrackLocked(kind(of: row)))
                 Button("Rename") {
                     renamingText = label(for: row)
                     renamingRow = row
                 }
+                .disabled(model.isTrackLocked(kind(of: row)))
                 Button("Settings…") { model.inspectorRequest = row.key(in: model.scene) }
             }
         }
@@ -1182,7 +1259,8 @@ struct StudioTimelineView: View {
                 }
                 // Vertical pull on a row label lifts the row for reordering.
                 if abs(value.translation.height) > 8,
-                   let row = row(at: value.startLocation.y + scrollOffset.y) {
+                   let row = row(at: value.startLocation.y + scrollOffset.y),
+                   !model.isTrackLocked(kind(of: row)) {
                     draggingRow = (row, value.location.y + scrollOffset.y)
                     dragPreviewIndex = baseRows.firstIndex(of: row)
                 }
@@ -1202,7 +1280,8 @@ struct StudioTimelineView: View {
                        !{ if case .background = row { return true }; return false }() {
                         toggleHidden(row)
                     } else if value.location.y + scrollOffset.y - laneTop(of: row) < presenceStripH,
-                              value.location.x < min(110, CGFloat(label(for: row).count) * 6.5 + 16) {
+                              value.location.x < min(110, CGFloat(label(for: row).count) * 6.5 + 16),
+                              !model.isTrackLocked(kind(of: row)) {
                         // Click on the name itself → rename in place.
                         renamingText = label(for: row)
                         renamingRow = row
@@ -1230,7 +1309,8 @@ struct StudioTimelineView: View {
     }
 
     private func commitRowMove(_ dragging: (row: TrackRow, currentY: CGFloat)) {
-        guard dragPreviewIndex != nil else { return }
+        guard dragPreviewIndex != nil,
+              !model.isTrackLocked(kind(of: dragging.row)) else { return }
         model.registerUndoSnapshot(label: "Reorder Tracks")
         // `rows` already shows the preview arrangement — persist it as the
         // display order. Storage arrays never move, so marks/selection and
@@ -1411,8 +1491,14 @@ struct StudioTimelineView: View {
         }
         #endif
         .contextMenu {
-            if let p = hoverLanePoint { eventContextItems(at: p) }
-            if let p = hoverLanePoint, case .background(let bi) = row(at: p.y) {
+            if let p = hoverLanePoint, let row = row(at: p.y),
+               model.isTrackLocked(kind(of: row)) {
+                Button("Unlock Track") { model.toggleTrackLock(kind(of: row)) }
+            } else if let p = hoverLanePoint {
+                eventContextItems(at: p)
+            }
+            if let p = hoverLanePoint, case .background(let bi) = row(at: p.y),
+               !model.isTrackLocked(.background(bi)) {
                 let t = (time(forX: p.x) * 10).rounded() / 10
                 let hitCue = model.scene.backgroundTracks[safe: bi]?.cues
                     .first { t >= $0.start && t <= $0.start + $0.dur }
@@ -1439,13 +1525,15 @@ struct StudioTimelineView: View {
                     }
                 }
             }
-            if let p = hoverLanePoint, case .light(let li) = row(at: p.y) {
+            if let p = hoverLanePoint, case .light(let li) = row(at: p.y),
+               !model.isTrackLocked(.light(li)) {
                 let t = (time(forX: p.x) * 10).rounded() / 10
                 Button(String(format: "Add light at %.1fs", t)) {
                     model.addLightCue(trackIndex: li, at: t)
                 }
             }
-            if let p = hoverLanePoint {
+            if let p = hoverLanePoint,
+               row(at: p.y).map({ !model.isTrackLocked(kind(of: $0)) }) ?? true {
                 Divider()
                 if let character = reactionCaptureCharacterIndex {
                     Button("Save selection as reaction…") {
@@ -1542,6 +1630,43 @@ struct StudioTimelineView: View {
         let top = rulerTop  // export + captions sit above the time row
         ctx.fill(Path(CGRect(x: 0, y: top, width: size.width, height: rulerHeight)),
                  with: .color(theme.ruler))
+        // Named production structure lives in the ruler instead of consuming a
+        // permanent lane. Sections tint their span; point markers get a flag.
+        for marker in model.scene.markers {
+            let color = timelineMarkerColor(marker.color)
+            let startX = x(forTime: marker.start)
+            if marker.kind == .section {
+                let endX = x(forTime: marker.end)
+                let rect = CGRect(x: startX, y: top + 1,
+                                  width: max(2, endX - startX), height: rulerHeight - 2)
+                ctx.fill(Path(rect), with: .color(color.opacity(0.14)))
+                ctx.stroke(Path { p in
+                    p.move(to: CGPoint(x: rect.minX, y: top + 1))
+                    p.addLine(to: CGPoint(x: rect.minX, y: top + rulerHeight - 1))
+                    p.move(to: CGPoint(x: rect.maxX, y: top + 1))
+                    p.addLine(to: CGPoint(x: rect.maxX, y: top + rulerHeight - 1))
+                }, with: .color(color.opacity(0.8)), lineWidth: 1)
+                if rect.width > 34 {
+                    ctx.draw(Text(marker.name).font(.system(size: 8, weight: .semibold))
+                                .foregroundStyle(color),
+                             at: CGPoint(x: rect.minX + 4, y: top + 3), anchor: .topLeading)
+                }
+            } else {
+                var flag = Path()
+                flag.move(to: CGPoint(x: startX, y: top + 1))
+                flag.addLine(to: CGPoint(x: startX + 8, y: top + 4))
+                flag.addLine(to: CGPoint(x: startX, y: top + 8))
+                flag.closeSubpath()
+                ctx.fill(flag, with: .color(color))
+                ctx.stroke(Path { p in
+                    p.move(to: CGPoint(x: startX, y: top + 1))
+                    p.addLine(to: CGPoint(x: startX, y: top + rulerHeight))
+                }, with: .color(color), lineWidth: 1)
+                ctx.draw(Text(marker.name).font(.system(size: 8, weight: .semibold))
+                            .foregroundStyle(color),
+                         at: CGPoint(x: startX + 10, y: top + 3), anchor: .topLeading)
+            }
+        }
         // Labeled ticks every ~60px at any zoom, minor ticks between.
         let step = [0.5, 1.0, 2.0, 5.0, 10.0, 15.0, 30.0, 60.0]
             .first { CGFloat($0) * pxPerSecond >= 55 } ?? 60
@@ -2025,6 +2150,29 @@ struct StudioTimelineView: View {
             }
             ctx.stroke(wave, with: .color(Color(red: 0.45, green: 0.9, blue: 0.75)), lineWidth: 1)
         }
+        if clip.fadeIn > 0 || clip.fadeOut > 0 {
+            let fadeInX = x(forTime: clip.start + min(clip.fadeIn, clip.dur))
+            let fadeOutX = x(forTime: clip.start + clip.dur - min(clip.fadeOut, clip.dur))
+            var envelope = Path()
+            envelope.move(to: CGPoint(x: rect.minX, y: clip.fadeIn > 0 ? rect.maxY - 2 : rect.minY + 2))
+            envelope.addLine(to: CGPoint(x: fadeInX, y: rect.minY + 2))
+            envelope.addLine(to: CGPoint(x: fadeOutX, y: rect.minY + 2))
+            envelope.addLine(to: CGPoint(x: rect.maxX,
+                                         y: clip.fadeOut > 0 ? rect.maxY - 2 : rect.minY + 2))
+            ctx.stroke(envelope, with: .color(.white.opacity(0.62)), lineWidth: 1)
+            if selected {
+                for px in [fadeInX, fadeOutX] {
+                    ctx.fill(Path(ellipseIn: CGRect(x: px - 3, y: rect.minY, width: 6, height: 6)),
+                             with: .color(.white))
+                }
+            }
+        } else if selected {
+            // Zero-length fades still expose tiny corner handles on selection.
+            for px in [rect.minX, rect.maxX] {
+                ctx.fill(Path(ellipseIn: CGRect(x: px - 3, y: rect.minY, width: 6, height: 6)),
+                         with: .color(.white.opacity(0.85)))
+            }
+        }
         if selected {
             ctx.stroke(Path(roundedRect: rect.insetBy(dx: -1, dy: -1), cornerRadius: 3),
                        with: .color(.white), lineWidth: 1.5)
@@ -2255,7 +2403,8 @@ struct StudioTimelineView: View {
                     handleTap(at: value.location)
                 }
                 if dragStartMarks != nil || resizing != nil || draggingClip != nil
-                    || draggingCue != nil || draggingSub != nil || draggingPresence != nil
+                    || draggingFade != nil || draggingCue != nil || draggingSub != nil
+                    || draggingPresence != nil
                     || runDrag != nil || bgGroupDrag != nil || draggingOutfit != nil {
                     model.registerUndoSnapshot(label: "Edit Timeline")
                 }
@@ -2275,6 +2424,7 @@ struct StudioTimelineView: View {
                 bgGroupDrag = nil
                 draggingOutfit = nil
                 draggingClip = nil
+                draggingFade = nil
                 draggingReaction = nil
                 draggingCue = nil
                 draggingSub = nil
@@ -2306,7 +2456,27 @@ struct StudioTimelineView: View {
     }
 
     private func handleLaneDrag(_ value: DragGesture.Value) {
+        let active = draggingFade != nil || draggingReaction != nil || draggingClip != nil
+            || resizing != nil || marquee != nil || runDrag != nil || bgGroupDrag != nil
+            || draggingOutfit != nil || draggingCue != nil || draggingSub != nil
+            || draggingPresence != nil || dragStartMarks != nil || dragStartClips != nil
+        if !active, let row = row(at: value.startLocation.y),
+           model.isTrackLocked(kind(of: row)) {
+            return
+        }
 
+        if let fade = draggingFade {
+            let pointerTime = time(forX: value.location.x)
+            if fade.leading {
+                model.setClipFades(id: fade.id,
+                                   fadeIn: min(fade.dur, max(0, pointerTime - fade.start)))
+            } else {
+                model.setClipFades(id: fade.id,
+                                   fadeOut: min(fade.dur,
+                                                max(0, fade.start + fade.dur - pointerTime)))
+            }
+            return
+        }
         if var drag = draggingReaction {
             let dt = Double(value.translation.width / pxPerSecond)
             if !drag.undoRegistered, abs(dt) > 0.0001 {
@@ -2418,6 +2588,13 @@ struct StudioTimelineView: View {
             return
         }
         if dragStartMarks == nil {
+            if let handle = fadeHandle(at: value.startLocation),
+               !model.isClipLocked(handle.clip.id) {
+                model.registerUndoSnapshot(label: "Adjust Clip Fade")
+                draggingFade = (handle.clip.id, handle.leading,
+                                handle.clip.start, handle.clip.dur)
+                return
+            }
             if let row = row(at: value.startLocation.y),
                value.startLocation.y - laneTop(of: row) < presenceStripH {
                 // Grab an existing marker if close; the tap handler adds new ones.
@@ -2643,6 +2820,7 @@ struct StudioTimelineView: View {
     /// Pointer within grabbing distance of a clip/cue/mark edge?
     private func resizeEdgeHit(at p: CGPoint) -> Bool {
         let edge: CGFloat = 7
+        if fadeHandle(at: p) != nil { return true }
         if let hit = reaction(at: p)
             ?? reaction(at: CGPoint(x: p.x - 6, y: p.y))
             ?? reaction(at: CGPoint(x: p.x + 6, y: p.y)),
@@ -2759,7 +2937,22 @@ struct StudioTimelineView: View {
                 ts.append(cue.start + cue.dur)
             }
         }
+        for marker in model.scene.markers {
+            ts.append(marker.start)
+            if marker.kind == .section { ts.append(marker.end) }
+        }
         return ts
+    }
+
+    private func timelineMarkerColor(_ color: TimelineMarker.Color) -> Color {
+        switch color {
+        case .orange: return .orange
+        case .blue: return .blue
+        case .green: return .green
+        case .purple: return .purple
+        case .red: return .red
+        case .gray: return .gray
+        }
     }
 
     /// Snaps t to the nearest anchor within ~14px at the current zoom, and
@@ -2847,6 +3040,12 @@ struct StudioTimelineView: View {
                 && abs($0.location.y - point.y) < 6
         } ?? false
         lastTap = (point, now)
+        if let lockedRow = row(at: y),
+           model.isTrackLocked(kind(of: lockedRow)) {
+            model.selectedTrackKey = lockedRow.key(in: model.scene)
+            if case .character(let index) = lockedRow { model.selection = [index] }
+            return
+        }
         if let row = row(at: y), y - laneTop(of: row) < presenceStripH,
            !{ if case .background = row { return true }; return false }() {
             var events = presence(of: row)
@@ -3153,6 +3352,35 @@ struct StudioTimelineView: View {
         return nil
     }
 
+    /// Selected clips expose Final Cut-style fade handles at their top corners.
+    /// Keeping the hit zone in the top 12pt leaves the ordinary trim handles
+    /// available down the rest of each edge.
+    private func fadeHandle(at point: CGPoint) -> (clip: AudioClip, leading: Bool)? {
+        guard let row = row(at: point.y) else { return nil }
+        let rowY = laneTop(of: row)
+        let h = height(of: row)
+        let clips: [AudioClip]
+        let top: CGFloat
+        switch row {
+        case .character(let i):
+            clips = model.scene.characters[i].clips
+            top = rowY + characterLaneZones(h: h).clipTop
+        case .audio(let i):
+            clips = model.scene.audioTracks[i].clips
+            top = rowY + presenceStripH + 2
+        default:
+            return nil
+        }
+        guard point.y >= top - 3, point.y <= top + 12 else { return nil }
+        for clip in clips where model.selectedClips.contains(clip.id) {
+            let leadingX = x(forTime: clip.start + min(clip.fadeIn, clip.dur))
+            let trailingX = x(forTime: clip.start + clip.dur - min(clip.fadeOut, clip.dur))
+            if abs(point.x - leadingX) <= 7 { return (clip, true) }
+            if abs(point.x - trailingX) <= 7 { return (clip, false) }
+        }
+        return nil
+    }
+
     private func cue(at point: CGPoint) -> (TrackRow, (id: String, start: Double, dur: Double))? {
         guard let row = row(at: point.y) else { return nil }
         let rowY = laneTop(of: row)
@@ -3388,31 +3616,6 @@ struct TransportBar: View {
             .stroke(tint.opacity(0.6), lineWidth: 1))
     }
 
-    /// The physical keys that drive each group (web key map), one keycap each.
-    private func chipKeys(_ group: EventGroup) -> [String] {
-        switch group {
-        case .move: return ["←", "→"]
-        case .depth: return ["↑", "↓"]
-        case .tilt: return ["N", "B"]
-        case .talk: return ["M"]
-        case .blink: return [",", ".", "/"]
-        case .jump: return ["J"]
-        case .spin: return ["⇧", "sep:+", "←", "→"]
-        case .zoom: return ["−", "+"]
-        }
-    }
-
-    private func chipTitle(_ group: EventGroup) -> String {
-        switch group {
-        case .move: return "Move L/R"
-        case .depth: return "Move F/B"
-        case .talk: return "mouth"
-        case .spin: return "rotate"
-        case .zoom: return "scale"
-        default: return group.rawValue
-        }
-    }
-
     /// Labeled arm toggle: colored + filled when it records, hollow when it plays back.
     @ViewBuilder
     private func armChip(_ group: EventGroup, pose: CharacterPose?) -> some View {
@@ -3426,10 +3629,10 @@ struct TransportBar: View {
                 model.scene.characters[i] = c
             } label: {
                 HStack(spacing: 4) {
-                    Text(chipTitle(group))
+                    Text(group.performanceTitle)
                         .font(.system(size: 9, weight: .bold))
                     HStack(spacing: 2) {
-                        ForEach(chipKeys(group), id: \.self) { key in
+                        ForEach(group.performanceKeys, id: \.self) { key in
                             if key.hasPrefix("sep:") {
                                 // A plain glyph between keycaps (e.g. the "+" in ⇧ + ←).
                                 Text(String(key.dropFirst(4)))
@@ -3458,7 +3661,7 @@ struct TransportBar: View {
                 .brightness(active ? 0.06 : 0)
                 .animation(.easeOut(duration: 0.12), value: active)
             }
-            .help("\(chipTitle(group)): \(armed ? "armed (records)" : "disarmed (plays back)")")
+            .help("\(group.performanceTitle): \(armed ? "armed (records)" : "disarmed (plays back)")")
         }
     }
 }

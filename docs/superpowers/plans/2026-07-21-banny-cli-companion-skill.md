@@ -860,7 +860,7 @@ Always validate before shipping. Preview at least one frame per scene beat.
       audio/<id>.<ext>   — audio sources; <id> must match a clip id
       assets/<id>.<ext>  — images/videos; <id> must match an asset id
 
-`show.json` top level: `{version: 3, stage, assets, show, settings}`.
+`show.json` top level: `{version: 4, stage, assets, show, settings}`.
 All times are seconds. The timeline ends at the last event/clip/cue.
 
 - `settings`: `{activeScene, lightSize, frameW, frameH}` — frameW×frameH

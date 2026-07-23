@@ -50,8 +50,8 @@ A `.bs` can also be a single zipped file — what the app's File > Import/
 Export Project uses. Every command accepts both forms; `banny pack` zips a
 folder for sharing, `banny unpack` makes a zipped `.bs` editable again.
 
-`show.json` top level: `{version: 3, stage, assets, show, settings}`.
-All times are seconds. The timeline ends at the last event/clip/cue.
+`show.json` top level: `{version: 4, stage, assets, show, settings}`.
+All times are seconds. The timeline ends at the last event/clip/cue/section.
 
 - `settings`: `{activeScene, lightSize, frameW, frameH}` — frameW×frameH
   sets aspect (16:9 default; 1080×1920 for vertical shorts).
@@ -59,6 +59,8 @@ All times are seconds. The timeline ends at the last event/clip/cue.
   names the extension used in `assets/`.
 - `show`: `[{name, from, to}]` — optional playlist segments; empty = whole
   timeline.
+- `stage.markers`: named navigation points and production spans, for example
+  `{"id":"verse","name":"Verse","start":12,"kind":"section","duration":8,"color":"blue"}`.
 
 ## Characters (stage.characters[])
 
@@ -74,7 +76,8 @@ All times are seconds. The timeline ends at the last event/clip/cue.
       "reactions": [...],          // placed reusable reaction blocks (below)
       "clips": [...],              // this character's voice audio
       "subs": [{"text": "GOAL!", "start": 1.2, "dur": 2.0}],
-      "voicePitch": 0, "voiceSpeed": 1
+      "voicePitch": 0, "voiceSpeed": 1,
+      "locked": false, "solo": false
     }
 
 Outfit names and slot numbers MUST come from `banny catalog --json`
@@ -148,11 +151,13 @@ Generate speech with any TTS, save as m4a/mp3/wav into `audio/<id>.<ext>`,
 and add a clip on the speaking character:
 
     {"id": "line1", "name": "Coach: kickoff", "start": 1.0, "dur": 3.4,
-     "offset": 0, "srcDur": 3.4,
+     "offset": 0, "srcDur": 3.4, "fadeIn": 0.08, "fadeOut": 0.12,
      "fx": {"gain": 1, "low": 0, "mid": 0, "high": 0, "pan": 0, "reverb": 0}}
 
 `dur`/`srcDur` must match the real file length. Background music goes on
-`stage.audioTracks[]` (same clip shape) at low gain (~0.15–0.3).
+`stage.audioTracks[]` (same clip shape) at low gain (~0.15–0.3). Character
+and audio tracks accept `locked` and `solo`; visual, scene, and light tracks
+accept `locked`.
 
 ## Backgrounds and images
 

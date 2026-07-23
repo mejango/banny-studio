@@ -140,6 +140,26 @@ public enum ShowLint {
                 }
             }
         }
+        let markerIDs = stage.markers.map(\.id)
+        if Set(markerIDs).count != markerIDs.count {
+            out.append(.init(.error, "timeline markers contain duplicate identifiers"))
+        }
+        for marker in stage.markers {
+            let label = marker.kind == .section ? "section" : "marker"
+            if marker.id.isEmpty {
+                out.append(.init(.error, "timeline \(label) has an empty identifier"))
+            }
+            if marker.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                out.append(.init(.warning, "timeline \(label) \(marker.id) has no name"))
+            }
+            if !marker.start.isFinite || marker.start < 0 {
+                out.append(.init(.error, "timeline \(label) \"\(marker.name)\" has invalid start \(clean(marker.start))"))
+            }
+            if marker.kind == .section,
+               !marker.duration.isFinite || marker.duration <= 0 {
+                out.append(.init(.error, "timeline section \"\(marker.name)\" has invalid duration \(clean(marker.duration))"))
+            }
+        }
         for asset in document.assets where !assetFileIDs.contains(asset.id) {
             out.append(.init(.error, "asset \"\(asset.name)\" (\(asset.id)) has no file in assets/"))
         }
@@ -149,8 +169,8 @@ public enum ShowLint {
     private static func checkEditableStructure(_ document: ShowDocument,
                                                into out: inout [Diagnostic]) {
         let stage = document.stage
-        if document.version != 3 {
-            out.append(.init(.error, "The editable show schema version must remain 3."))
+        if document.version != 4 {
+            out.append(.init(.error, "The editable show schema version must remain 4."))
         }
         if stage.backgroundTracks.count != 1 {
             out.append(.init(.error, "The show must contain exactly one Scenes track."))
@@ -173,6 +193,7 @@ public enum ShowLint {
                          label: "scene cue", into: &out)
         checkIdentifiers(stage.lightTracks.flatMap(\.cues).map(\.id),
                          label: "light cue", into: &out)
+        checkIdentifiers(stage.markers.map(\.id), label: "timeline marker", into: &out)
     }
 
     /// Audio clip identifiers are reusable media references, so this helper is
@@ -204,6 +225,12 @@ public enum ShowLint {
             }
             if clip.start < 0 {
                 out.append(.init(.error, "\(owner): audio clip \"\(clip.name)\" starts before 0 (start=\(clean(clip.start)))"))
+            }
+            if !clip.fadeIn.isFinite || clip.fadeIn < 0 || clip.fadeIn > max(0, clip.dur) {
+                out.append(.init(.error, "\(owner): audio clip \"\(clip.name)\" has invalid fade-in \(clean(clip.fadeIn))"))
+            }
+            if !clip.fadeOut.isFinite || clip.fadeOut < 0 || clip.fadeOut > max(0, clip.dur) {
+                out.append(.init(.error, "\(owner): audio clip \"\(clip.name)\" has invalid fade-out \(clean(clip.fadeOut))"))
             }
         }
     }
@@ -273,6 +300,7 @@ public enum ShowLint {
     }
 
     private static func clean(_ v: Double) -> String {
-        v == v.rounded() ? String(Int(v)) : String(v)
+        guard v.isFinite else { return String(v) }
+        return v == v.rounded() ? String(Int(v)) : String(v)
     }
 }

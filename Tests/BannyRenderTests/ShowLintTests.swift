@@ -96,7 +96,7 @@ final class ShowLintTests: XCTestCase {
                                       assetFileIDs: [asset.id], catalog: nil,
                                       profile: .editableShow)
             .map(\.message).joined(separator: "\n")
-        XCTAssertTrue(messages.contains("schema version must remain 3"), messages)
+        XCTAssertTrue(messages.contains("schema version must remain 4"), messages)
         XCTAssertTrue(messages.contains("exactly one Scenes track"), messages)
         XCTAssertTrue(messages.contains("Duplicate asset identifiers"), messages)
         XCTAssertTrue(messages.contains("Duplicate track identifiers"), messages)
@@ -138,5 +138,26 @@ final class ShowLintTests: XCTestCase {
         XCTAssertTrue(messages.contains("invalid range"), messages)
         XCTAssertTrue(messages.contains("intensity outside 0...1"), messages)
         XCTAssertTrue(messages.contains("non-positive size"), messages)
+    }
+
+    func testAudioFadesAndTimelineStructureAreLinted() {
+        var clip = AudioClip(id: "voice", name: "Voice", start: 0, dur: 2, srcDur: 2)
+        clip.fadeIn = 3
+        var marker = TimelineMarker(id: "marker", name: "", start: 0)
+        marker.start = -.infinity
+        var section = TimelineMarker(id: "section", name: "Act", start: 1,
+                                     kind: .section, duration: 2)
+        section.duration = 0
+        let document = ShowDocument(stage: SceneState(
+            characters: [Character(body: .orange, clips: [clip])],
+            markers: [marker, section]))
+
+        let diagnostics = ShowLint.check(document: document, audioIDs: ["voice"],
+                                         assetFileIDs: [], catalog: nil)
+        let messages = diagnostics.map(\.message).joined(separator: "\n")
+        XCTAssertTrue(messages.contains("invalid fade-in"), messages)
+        XCTAssertTrue(messages.contains("has no name"), messages)
+        XCTAssertTrue(messages.contains("invalid start"), messages)
+        XCTAssertTrue(messages.contains("invalid duration"), messages)
     }
 }

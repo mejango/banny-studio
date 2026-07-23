@@ -16,7 +16,7 @@ public enum ShowJSONCodec {
         }
 
         public var errorDescription: String? {
-            "Advanced editing requires show schema version 3; found version \(version)."
+            "Advanced editing requires show schema version 4; found version \(version)."
         }
     }
 
@@ -44,7 +44,7 @@ public enum ShowJSONCodec {
     public static func decodeDocument(_ text: String) throws -> ShowDocument {
         let version = try JSONDecoder().decode(VersionEnvelope.self,
                                                from: Data(text.utf8)).version
-        guard version == 3 else {
+        guard version == 4 else {
             throw UnsupportedDocumentVersionError(version: version)
         }
         return try decodeValue(ShowDocument.self, from: text)

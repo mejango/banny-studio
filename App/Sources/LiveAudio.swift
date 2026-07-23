@@ -55,6 +55,7 @@ final class LiveAudioEngine: StudioAudioEngine {
             g.updatePans { i in
                 model.scene.characters.indices.contains(i) ? sim.pose(characterIndex: i, at: t).x : nil
             }
+            g.updateLevels(timelineTime: t)
             g.playAll()
             graph = g
         } catch {
@@ -70,5 +71,6 @@ final class LiveAudioEngine: StudioAudioEngine {
         g.updatePans { i in
             model.scene.characters.indices.contains(i) ? sim.pose(characterIndex: i, at: t).x : nil
         }
+        g.updateLevels(timelineTime: t)
     }
 }

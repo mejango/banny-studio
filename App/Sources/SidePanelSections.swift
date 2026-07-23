@@ -12,26 +12,232 @@ import UIKit
 struct AudioSection: View {
     @Bindable var model: StudioModel
     let file: ShowDocumentFile
+    /// Explicit owner when hosted in a character inspector.
+    var characterIndex: Int? = nil
     /// When set, clips land on this standalone audio track instead of a character.
     var audioTrackIndex: Int? = nil
     @State private var importing = false
 
-    private var target: Int? { audioTrackIndex == nil ? model.selection.first : nil }
+    private var target: Int? {
+        audioTrackIndex == nil ? (characterIndex ?? model.selection.first) : nil
+    }
+    private var recorder: MicRecorder { file.micRecorder }
+    private var targetLocked: Bool {
+        if let i = target { return model.scene.characters[safe: i]?.locked ?? true }
+        if let i = audioTrackIndex { return model.scene.audioTracks[safe: i]?.locked ?? true }
+        return false
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
+            MissingMediaRecoverySection(model: model, file: file)
             Text("AUDIO").font(.caption.bold()).foregroundStyle(.secondary)
-            Button("＋ Import…") { importing = true }
-                .font(.caption)
+            HStack(spacing: 8) {
+                Button("＋ Import…") { importing = true }
+                    .font(.caption)
+                Button {
+                    recorder.toggle(model: model, characterIndex: target,
+                                    audioTrackIndex: audioTrackIndex)
+                } label: {
+                    Label(recorder.isRecording ? "Stop & Keep Take" : "Record from Mic",
+                          systemImage: recorder.isRecording ? "stop.fill" : "mic.fill")
+                        .font(.caption.bold())
+                        .foregroundStyle(recorder.isRecording ? Color.red : Color.primary)
+                }
+                .buttonStyle(.borderless)
+                .disabled(targetLocked && !recorder.isRecording)
+            }
+            if recorder.isRecording {
+                HStack(spacing: 7) {
+                    Capsule()
+                        .fill(Color.red.opacity(0.2))
+                        .overlay(alignment: .leading) {
+                            GeometryReader { proxy in
+                                Capsule()
+                                    .fill(Color.red)
+                                    .frame(width: max(3, proxy.size.width * recorder.level))
+                            }
+                        }
+                        .frame(height: 5)
+                    Text(Self.clock(recorder.elapsed))
+                        .font(.caption2.monospacedDigit())
+                        .foregroundStyle(.red)
+                }
+                .accessibilityElement(children: .combine)
+                .accessibilityLabel("Microphone recording")
+                .accessibilityValue(Self.clock(recorder.elapsed))
+            }
             Text(target.map { i in
                 "onto \(model.scene.characters[safe: i]?.name.isEmpty == false ? model.scene.characters[i].name : "banny \((i + 1) % 10)")'s track at the playhead"
             } ?? "onto this audio track at the playhead")
                 .font(.caption2).foregroundStyle(.secondary)
+            if targetLocked {
+                Text("Unlock this track to add or record audio.")
+                    .font(.caption2).foregroundStyle(.orange)
+            } else if !recorder.isRecording {
+                Text("Mic recording rolls the timeline so you can perform against the show.")
+                    .font(.caption2).foregroundStyle(.secondary)
+            }
         }
+        .alert("Microphone unavailable", isPresented: Binding(
+            get: { recorder.lastError != nil },
+            set: { if !$0 { recorder.dismissError() } })) {
+                Button("OK") { recorder.dismissError() }
+            } message: {
+                Text(recorder.lastError ?? "")
+            }
         .fileImporter(isPresented: $importing, allowedContentTypes: [.audio, .mp3, .mpeg4Audio, .wav]) { result in
             if case .success(let url) = result {
                 model.addAudioClip(from: url, characterIndex: target, audioTrackIndex: audioTrackIndex)
             }
+        }
+    }
+
+    private static func clock(_ seconds: Double) -> String {
+        let whole = max(0, Int(seconds))
+        return String(format: "%02d:%02d.%01d", whole / 60, whole % 60,
+                      Int((seconds * 10).rounded(.down)) % 10)
+    }
+}
+
+/// Appears only when a package references bytes it no longer contains. Relink
+/// preserves stable ids, so every cue/clip heals at once and undo/checkpoints
+/// continue to refer to the same media.
+private struct MissingMediaRecoverySection: View {
+    @Bindable var model: StudioModel
+    let file: ShowDocumentFile
+
+    private enum Target {
+        case audio(id: String, name: String)
+        case asset(id: String, name: String, kind: Asset.Kind)
+    }
+
+    @State private var target: Target?
+    @State private var importerShown = false
+    @State private var error: String?
+
+    private var missingAudio: [(id: String, name: String)] {
+        let clips = model.scene.characters.flatMap(\.clips)
+            + model.scene.audioTracks.flatMap(\.clips)
+        var seen: Set<String> = []
+        return clips.compactMap { clip in
+            guard file.audio[clip.id] == nil, seen.insert(clip.id).inserted else { return nil }
+            return (clip.id, clip.name)
+        }
+    }
+
+    private var missingAssets: [Asset] {
+        model.document.assets.filter { file.assetsMedia[$0.id] == nil }
+    }
+
+    var body: some View {
+        if !missingAudio.isEmpty || !missingAssets.isEmpty {
+            VStack(alignment: .leading, spacing: 7) {
+                Label("Missing media", systemImage: "exclamationmark.triangle.fill")
+                    .font(.caption.bold())
+                    .foregroundStyle(.orange)
+                Text("Relink in place; cues, edits, and checkpoints keep working.")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+
+                ForEach(missingAudio, id: \.id) { item in
+                    recoveryRow(name: item.name, detail: "audio") {
+                        target = .audio(id: item.id, name: item.name)
+                        importerShown = true
+                    }
+                }
+                ForEach(missingAssets) { asset in
+                    recoveryRow(name: asset.name, detail: asset.kind.rawValue) {
+                        target = .asset(id: asset.id, name: asset.name, kind: asset.kind)
+                        importerShown = true
+                    }
+                }
+            }
+            .padding(8)
+            .background(Color.orange.opacity(0.09), in: RoundedRectangle(cornerRadius: 8))
+            .overlay(RoundedRectangle(cornerRadius: 8)
+                .stroke(Color.orange.opacity(0.4), lineWidth: 1))
+            .fileImporter(isPresented: $importerShown,
+                          allowedContentTypes: allowedTypes) { result in
+                if case .success(let url) = result { relink(url) }
+            }
+            .alert("Relink failed", isPresented: Binding(
+                get: { error != nil },
+                set: { if !$0 { error = nil } })) {
+                    Button("OK") { error = nil }
+                } message: {
+                    Text(error ?? "")
+                }
+        }
+    }
+
+    private func recoveryRow(name: String, detail: String,
+                             action: @escaping () -> Void) -> some View {
+        HStack(spacing: 6) {
+            VStack(alignment: .leading, spacing: 1) {
+                Text(name.isEmpty ? "Unnamed media" : name)
+                    .font(.caption2.bold())
+                    .lineLimit(1)
+                Text(detail).font(.system(size: 8)).foregroundStyle(.secondary)
+            }
+            Spacer()
+            Button("Relink…", action: action).font(.caption2.bold())
+        }
+    }
+
+    private var allowedTypes: [UTType] {
+        switch target {
+        case .audio: return [.audio, .mp3, .mpeg4Audio, .wav]
+        case .asset(_, _, let kind):
+            return kind == .video ? [.movie] : [.image]
+        case nil:
+            return [.data]
+        }
+    }
+
+    private func relink(_ url: URL) {
+        guard let target else { return }
+        let scoped = url.startAccessingSecurityScopedResource()
+        defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+        do {
+            let data = try Data(contentsOf: url)
+            let ext = url.pathExtension.lowercased()
+            guard !ext.isEmpty else {
+                throw CocoaError(.fileReadUnknown)
+            }
+            switch target {
+            case .audio(let id, _):
+                let avFile = try AVAudioFile(forReading: url)
+                let duration = Double(avFile.length) / avFile.processingFormat.sampleRate
+                guard duration.isFinite, duration > 0 else {
+                    throw CocoaError(.fileReadCorruptFile)
+                }
+                file.audio[id] = (data, ext)
+                model.relinkAudioClipSource(id: id, sourceDuration: duration)
+                model.resyncAudioIfPlaying()
+            case .asset(let id, _, let expectedKind):
+                let type = UTType(filenameExtension: ext)
+                let matches = expectedKind == .video
+                    ? type?.conforms(to: .movie) == true
+                    : type?.conforms(to: .image) == true
+                guard matches else { throw CocoaError(.fileReadUnsupportedScheme) }
+                file.assetsMedia[id] = (data, ext)
+                if let index = model.document.assets.firstIndex(where: { $0.id == id }) {
+                    model.document.assets[index].file = "\(id).\(ext)"
+                }
+                model.backgroundRevision += 1
+            }
+            self.target = nil
+        } catch {
+            self.error = "The selected file could not replace this \(targetDescription): \(error.localizedDescription)"
+        }
+    }
+
+    private var targetDescription: String {
+        switch target {
+        case .audio: return "audio source"
+        case .asset(_, _, let kind): return kind.rawValue
+        case nil: return "media"
         }
     }
 }
@@ -63,17 +269,22 @@ struct VisualMediaSection: View {
 struct AssetBankSection: View {
     @Bindable var model: StudioModel
     let file: ShowDocumentFile
+    var query = ""
     @State private var importing = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
+            MissingMediaRecoverySection(model: model, file: file)
             Text("ASSET BANK").font(.caption.bold()).foregroundStyle(.secondary)
             Button("＋ Add image/video…") { importing = true }.font(.caption)
             if model.document.assets.isEmpty {
                 Text("Assets you add live with the show and can back any number of scene or visual cues.")
                     .font(.caption2).foregroundStyle(.secondary)
+            } else if filteredAssets.isEmpty {
+                Text("No matching project media.")
+                    .font(.caption2).foregroundStyle(.secondary)
             }
-            ForEach(Array(model.document.assets.enumerated()), id: \.element.id) { i, asset in
+            ForEach(filteredAssets, id: \.element.id) { i, asset in
                 HStack(spacing: 6) {
                     AssetThumb(assetID: asset.id, file: file)
                         .frame(width: 34, height: 24)
@@ -107,62 +318,296 @@ struct AssetBankSection: View {
             }
         }
     }
+
+    private var filteredAssets: [(offset: Int, element: Asset)] {
+        Array(model.document.assets.enumerated()).filter { _, asset in
+            query.isEmpty || asset.name.localizedCaseInsensitiveContains(query)
+                || asset.kind.rawValue.localizedCaseInsensitiveContains(query)
+        }
+    }
 }
 
-/// Animalese voice profile + caption voicing for one character.
+/// Natural text-to-speech for one character. Generated speech is baked into
+/// the show package, so playback/export never depends on a voice still being
+/// installed later.
 struct VoiceSection: View {
     @Bindable var model: StudioModel
     let characterIndex: Int
-    @State private var player: AVAudioPlayer?
+    @AppStorage("studioTTSVoiceIdentifier") private var selectedVoiceID = ""
+    @State private var voices = StudioSpeechVoice.installed()
+    @State private var previewSynthesizer = AVSpeechSynthesizer()
+    @State private var pickerShown = false
+    @State private var isGenerating = false
     @State private var lastCount: Int?
+    @State private var generationError: String?
+
+    private var selectedVoice: StudioSpeechVoice? {
+        voices.first { $0.id == selectedVoiceID }
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text("VOICE").font(.caption.bold()).foregroundStyle(.secondary)
+            Text("TEXT TO SPEECH").font(.caption.bold()).foregroundStyle(.secondary)
             if let c = model.scene.characters[safe: characterIndex] {
-                HStack {
-                    Text("Pitch").font(.caption)
-                    Slider(value: Binding(
-                        get: { model.scene.characters[safe: characterIndex]?.voicePitch ?? 0 },
-                        set: { if model.scene.characters.indices.contains(characterIndex) {
-                            model.scene.characters[characterIndex].voicePitch = $0 } }),
-                        in: -12...12, step: 1)
-                    Text("\(Int(c.voicePitch))").font(.caption.monospacedDigit()).frame(width: 26)
-                }
-                HStack {
-                    Text("Speed").font(.caption)
-                    Slider(value: Binding(
-                        get: { model.scene.characters[safe: characterIndex]?.voiceSpeed ?? 1 },
-                        set: { if model.scene.characters.indices.contains(characterIndex) {
-                            model.scene.characters[characterIndex].voiceSpeed = $0 } }),
-                        in: 0.6...1.6)
-                    Text(String(format: "%.2f", c.voiceSpeed))
-                        .font(.caption.monospacedDigit()).frame(width: 34)
-                }
-                HStack {
-                    Button("▶ Preview") {
-                        if let data = model.animalesePreview(characterIndex: characterIndex) {
-                            player = try? AVAudioPlayer(data: data)
-                            player?.play()
+                if voices.isEmpty {
+                    Label("No system voices are available.", systemImage: "exclamationmark.triangle")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                } else {
+                    Button {
+                        pickerShown = true
+                    } label: {
+                        HStack(spacing: 8) {
+                            Image(systemName: "waveform")
+                                .foregroundStyle(Color.accentColor)
+                            VStack(alignment: .leading, spacing: 1) {
+                                Text(selectedVoice?.name ?? "Choose a voice")
+                                    .font(.caption.bold())
+                                    .foregroundStyle(.primary)
+                                if let selectedVoice {
+                                    Text(Self.voiceDetail(selectedVoice))
+                                        .font(.caption2)
+                                        .foregroundStyle(.secondary)
+                                }
+                            }
+                            Spacer()
+                            Image(systemName: "chevron.right")
+                                .font(.caption2.bold())
+                                .foregroundStyle(.tertiary)
                         }
-                    }.font(.caption)
-                    Spacer()
-                    Button("Voice all captions") {
-                        lastCount = model.generateAnimalese(characterIndex: characterIndex)
+                        .padding(8)
+                        .background(Color.primary.opacity(0.06),
+                                    in: RoundedRectangle(cornerRadius: 8))
                     }
-                    .font(.caption.bold())
-                    .disabled(c.subs.isEmpty)
-                    .help("Generates a gibberish-speech clip for every caption; re-run any time — generated clips are replaced, imported ones untouched")
-                }
-                if let lastCount {
-                    Text("Voiced \(lastCount) caption\(lastCount == 1 ? "" : "s").")
-                        .font(.caption2).foregroundStyle(.secondary)
-                } else if c.subs.isEmpty {
-                    Text("Add captions first — each caption becomes a spoken clip.")
-                        .font(.caption2).foregroundStyle(.secondary)
+                    .buttonStyle(.plain)
+                    .accessibilityIdentifier("choose-speech-voice")
+
+                    HStack(spacing: 8) {
+                        Button {
+                            preview(characterName: c.name, captions: c.subs.map(\.text))
+                        } label: {
+                            Label("Preview", systemImage: "play.fill")
+                        }
+                        .font(.caption)
+                        .disabled(selectedVoice == nil)
+
+                        Spacer()
+
+                        Button {
+                            generateSpeech()
+                        } label: {
+                            HStack(spacing: 5) {
+                                if isGenerating {
+                                    ProgressView().controlSize(.small)
+                                }
+                                Text(isGenerating ? "Generating…" : "Speak all captions")
+                            }
+                        }
+                        .font(.caption.bold())
+                        .disabled(isGenerating || selectedVoice == nil
+                                  || c.locked
+                                  || !c.subs.contains {
+                                      !$0.text.trimmingCharacters(
+                                          in: .whitespacesAndNewlines).isEmpty
+                                  })
+                        .help("Creates a natural speech clip at every caption. Re-running replaces only generated speech; imported files and mic takes stay untouched.")
+                    }
+
+                    if c.locked {
+                        Text("Unlock this character track to generate speech.")
+                            .font(.caption2).foregroundStyle(.orange)
+                    } else if let lastCount {
+                        Text("Created \(lastCount) speech clip\(lastCount == 1 ? "" : "s").")
+                            .font(.caption2).foregroundStyle(.secondary)
+                    } else if c.subs.isEmpty {
+                        Text("Add captions first — each caption becomes a spoken clip.")
+                            .font(.caption2).foregroundStyle(.secondary)
+                    } else {
+                        Text("Uses voices installed on this device. Provider voices appear here too; audio from other voice tools can be imported below.")
+                            .font(.caption2).foregroundStyle(.secondary)
+                    }
                 }
             }
         }
+        .onAppear(perform: refreshVoices)
+        .onReceive(NotificationCenter.default.publisher(
+            for: AVSpeechSynthesizer.availableVoicesDidChangeNotification)) { _ in
+                refreshVoices()
+            }
+        .sheet(isPresented: $pickerShown) {
+            StudioVoicePicker(voices: voices, selectedVoiceID: $selectedVoiceID)
+        }
+        .alert("Speech generation failed", isPresented: Binding(
+            get: { generationError != nil },
+            set: { if !$0 { generationError = nil } })) {
+                Button("OK") { generationError = nil }
+            } message: {
+                Text(generationError ?? "")
+            }
+    }
+
+    private func refreshVoices() {
+        voices = StudioSpeechVoice.installed()
+        if !voices.contains(where: { $0.id == selectedVoiceID }) {
+            selectedVoiceID = StudioSpeechVoice.recommendedIdentifier(in: voices) ?? ""
+        }
+    }
+
+    private func preview(characterName: String, captions: [String]) {
+        guard let selectedVoice,
+              let voice = AVSpeechSynthesisVoice(identifier: selectedVoice.id) else { return }
+        let caption = captions.first {
+            !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
+        let fallbackName = characterName.trimmingCharacters(in: .whitespacesAndNewlines)
+        let text = caption ?? "This is how \(fallbackName.isEmpty ? "this character" : fallbackName) will sound."
+        previewSynthesizer.stopSpeaking(at: .immediate)
+        let utterance = AVSpeechUtterance(string: text)
+        utterance.voice = voice
+        utterance.rate = AVSpeechUtteranceDefaultSpeechRate
+        previewSynthesizer.speak(utterance)
+    }
+
+    private func generateSpeech() {
+        guard !isGenerating, let voiceID = selectedVoice?.id else { return }
+        isGenerating = true
+        lastCount = nil
+        generationError = nil
+        Task { @MainActor in
+            defer { isGenerating = false }
+            do {
+                lastCount = try await model.generateSpeechCaptions(
+                    characterIndex: characterIndex,
+                    voiceIdentifier: voiceID)
+            } catch is CancellationError {
+                // A cancelled inspector task leaves the document unchanged.
+            } catch {
+                generationError = error.localizedDescription
+            }
+        }
+    }
+
+    fileprivate static func voiceDetail(_ voice: StudioSpeechVoice) -> String {
+        let language = Locale.current.localizedString(forIdentifier: voice.language)
+            ?? voice.language
+        return [language, voice.quality, voice.gender]
+            .filter { !$0.isEmpty }
+            .joined(separator: " · ")
+    }
+}
+
+/// Search, auditioning, and voice metadata stay in an on-demand sheet so the
+/// production inspector remains compact.
+private struct StudioVoicePicker: View {
+    let voices: [StudioSpeechVoice]
+    @Binding var selectedVoiceID: String
+    @Environment(\.dismiss) private var dismiss
+    @State private var query = ""
+    @State private var previewSynthesizer = AVSpeechSynthesizer()
+
+    private var filteredVoices: [StudioSpeechVoice] {
+        let needle = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !needle.isEmpty else { return voices }
+        return voices.filter {
+            $0.name.localizedCaseInsensitiveContains(needle)
+                || $0.language.localizedCaseInsensitiveContains(needle)
+                || VoiceSection.voiceDetail($0).localizedCaseInsensitiveContains(needle)
+        }
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Choose a Voice").font(.headline)
+                    Text("\(voices.count) installed")
+                        .font(.caption2).foregroundStyle(.secondary)
+                }
+                Spacer()
+                Button("Done") { dismiss() }.keyboardShortcut(.defaultAction)
+            }
+            .padding()
+
+            TextField("Search names or languages", text: $query)
+                .textFieldStyle(.roundedBorder)
+                .padding(.horizontal)
+                .padding(.bottom, 10)
+
+            Divider()
+
+            if filteredVoices.isEmpty {
+                ContentUnavailableView.search(text: query)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                ScrollView {
+                    LazyVStack(spacing: 0) {
+                        ForEach(filteredVoices) { voice in
+                            HStack(spacing: 8) {
+                                Button {
+                                    selectedVoiceID = voice.id
+                                } label: {
+                                    HStack(spacing: 9) {
+                                        Image(systemName: selectedVoiceID == voice.id
+                                              ? "checkmark.circle.fill" : "circle")
+                                            .foregroundStyle(selectedVoiceID == voice.id
+                                                             ? Color.accentColor : Color.secondary)
+                                        VStack(alignment: .leading, spacing: 2) {
+                                            HStack(spacing: 5) {
+                                                Text(voice.name).font(.callout.bold())
+                                                if voice.isPersonal {
+                                                    voiceBadge("Personal")
+                                                } else if voice.isNovelty {
+                                                    voiceBadge("Novelty")
+                                                }
+                                            }
+                                            Text(VoiceSection.voiceDetail(voice))
+                                                .font(.caption2)
+                                                .foregroundStyle(.secondary)
+                                        }
+                                        Spacer()
+                                    }
+                                    .contentShape(Rectangle())
+                                }
+                                .buttonStyle(.plain)
+
+                                Button {
+                                    preview(voice)
+                                } label: {
+                                    Image(systemName: "speaker.wave.2.fill")
+                                        .frame(width: 28, height: 28)
+                                }
+                                .buttonStyle(.borderless)
+                                .help("Preview \(voice.name)")
+                            }
+                            .padding(.horizontal)
+                            .padding(.vertical, 9)
+                            Divider().padding(.leading, 48)
+                        }
+                    }
+                }
+            }
+        }
+        .frame(minWidth: 390, idealWidth: 430, minHeight: 420, idealHeight: 520)
+        .accessibilityIdentifier("speech-voice-picker")
+    }
+
+    private func voiceBadge(_ text: String) -> some View {
+        Text(text.uppercased())
+            .font(.system(size: 8, weight: .bold))
+            .foregroundStyle(.secondary)
+            .padding(.horizontal, 5)
+            .padding(.vertical, 2)
+            .background(Color.primary.opacity(0.08), in: Capsule())
+    }
+
+    private func preview(_ studioVoice: StudioSpeechVoice) {
+        guard let voice = AVSpeechSynthesisVoice(identifier: studioVoice.id) else { return }
+        previewSynthesizer.stopSpeaking(at: .immediate)
+        let utterance = AVSpeechUtterance(
+            string: "The quick brown fox jumps over the lazy dog.")
+        utterance.voice = voice
+        utterance.rate = AVSpeechUtteranceDefaultSpeechRate
+        previewSynthesizer.speak(utterance)
     }
 }
 
@@ -535,7 +980,10 @@ struct LightCueInspector: View {
         }
         if let ti = trackIndex, model.scene.lightTracks.indices.contains(ti),
            !model.scene.lightTracks[ti].cues.isEmpty {
-            return (ti, 0)
+            let active = model.scene.lightTracks[ti].cues.firstIndex {
+                model.time >= $0.start && model.time < $0.start + $0.dur
+            }
+            return (ti, active ?? 0)
         }
         return nil
     }
@@ -547,7 +995,7 @@ struct LightCueInspector: View {
                 set: { model.scene.lightTracks[path.track].cues[path.cue] = $0 })
             VStack(alignment: .leading, spacing: 6) {
                 Text("LIGHT CUE").font(.caption.bold()).foregroundStyle(.secondary)
-                Text("drag the yellow point on the stage to aim the shadows; hit REC on the track to draw its motion")
+                Text("Drag the yellow source point to move this cue’s path. During REC, grab it and draw timed movement.")
                     .font(.caption2).foregroundStyle(.secondary)
                 HStack {
                     Text("size").font(.caption2).frame(width: 60, alignment: .leading)
@@ -842,8 +1290,10 @@ struct MotionSection: View {
                 Slider(value: Binding(
                     get: { StudioModel.uiSpeed(m.speed) },
                     set: { model.setMotionParam(characterIndex: characterIndex, at: model.time,
-                                                speed: StudioModel.speed(fromUI: ($0 * 10).rounded() / 10)) }),
-                    in: 1...10)
+                                                speed: StudioModel.speed(fromUI: ($0 * 10).rounded() / 10),
+                                                registerUndo: false) }),
+                    in: 1...10,
+                    onEditingChanged: registerMotionUndo)
                 Text(String(format: "%.1f", StudioModel.uiSpeed(m.speed)))
                     .font(.system(size: 9, design: .monospaced)).foregroundStyle(.secondary)
                     .frame(width: 28, alignment: .trailing)
@@ -854,8 +1304,10 @@ struct MotionSection: View {
                     get: { StudioModel.uiRotationSpeed(m.rotationSpeed) },
                     set: { model.setMotionParam(
                         characterIndex: characterIndex, at: model.time,
-                        rotationSpeed: StudioModel.rotationSpeed(fromUI: ($0 * 10).rounded() / 10)) }),
-                    in: 1...100)
+                        rotationSpeed: StudioModel.rotationSpeed(fromUI: ($0 * 10).rounded() / 10),
+                        registerUndo: false) }),
+                    in: 1...100,
+                    onEditingChanged: registerMotionUndo)
                 Text(String(format: "%.1f", StudioModel.uiRotationSpeed(m.rotationSpeed)))
                     .font(.system(size: 9, design: .monospaced)).foregroundStyle(.secondary)
                     .frame(width: 38, alignment: .trailing)
@@ -865,8 +1317,10 @@ struct MotionSection: View {
                 Slider(value: Binding(
                     get: { StudioModel.uiWobble(m.wobble) },
                     set: { model.setMotionParam(characterIndex: characterIndex, at: model.time,
-                                                wobble: StudioModel.wobble(fromUI: ($0 * 10).rounded() / 10)) }),
-                    in: 1...10)
+                                                wobble: StudioModel.wobble(fromUI: ($0 * 10).rounded() / 10),
+                                                registerUndo: false) }),
+                    in: 1...10,
+                    onEditingChanged: registerMotionUndo)
                 Text(String(format: "%.1f", StudioModel.uiWobble(m.wobble)))
                     .font(.system(size: 9, design: .monospaced)).foregroundStyle(.secondary)
                     .frame(width: 28, alignment: .trailing)
@@ -888,6 +1342,10 @@ struct MotionSection: View {
             }
         }
     }
+
+    private func registerMotionUndo(_ editing: Bool) {
+        if editing { model.registerUndoSnapshot(label: "Adjust Motion") }
+    }
 }
 
 /// Reusable composite performances. Saving replaces the selected raw marks
@@ -895,6 +1353,7 @@ struct MotionSection: View {
 struct ReactionLibrarySection: View {
     @Bindable var model: StudioModel
     let characterIndex: Int
+    var query = ""
     @State private var naming = false
     @State private var draftName = ""
     @State private var renamingID: String?
@@ -964,8 +1423,11 @@ struct ReactionLibrarySection: View {
                      ? "Save the selected performance as your first reusable reaction."
                      : "Select one or more performance bars on this character to make a reaction.")
                     .font(.caption2).foregroundStyle(.secondary)
+            } else if filteredReactions.isEmpty {
+                Text("No matching reactions.")
+                    .font(.caption2).foregroundStyle(.secondary)
             } else {
-                ForEach(model.scene.reactionLibrary) { reaction in
+                ForEach(filteredReactions) { reaction in
                     HStack(spacing: 7) {
                         VStack(alignment: .leading, spacing: 1) {
                             Text(reaction.name).font(.caption)
@@ -1022,6 +1484,12 @@ struct ReactionLibrarySection: View {
                 if let id = renamingID { model.renameReaction(id: id, to: renameDraft) }
                 renamingID = nil
             }
+        }
+    }
+
+    private var filteredReactions: [ReactionDefinition] {
+        model.scene.reactionLibrary.filter {
+            query.isEmpty || $0.name.localizedCaseInsensitiveContains(query)
         }
     }
 
@@ -1094,7 +1562,18 @@ struct MixSection: View {
             }
             slider("reverb", get: { $0.reverb }, set: { $0.reverb = $1 }, in: 0...1, fmt: "%.0f%%",
                    display: { $0 * 100 })
-            if clipID != nil {
+            if let clipID {
+                Divider()
+                Text("FADES").font(.caption2.bold()).foregroundStyle(.secondary)
+                clipFadeSlider("fade in", id: clipID, leading: true)
+                clipFadeSlider("fade out", id: clipID, leading: false)
+                if model.selectedCrossfadeDuration != nil {
+                    Button("Match overlap as crossfade") {
+                        model.applyCrossfadeToSelectedClips()
+                    }
+                    .font(.caption)
+                    .help("Sets the outgoing and incoming fades to the overlap of the two selected clips.")
+                }
                 Button("Reset to track mix") { resetClipOverride() }
                     .font(.caption)
             }
@@ -1139,6 +1618,7 @@ struct MixSection: View {
     }
 
     private func updateClip(_ id: String, _ transform: (inout Fx) -> Void) {
+        guard !model.isClipLocked(id) else { return }
         switch kind {
         case .character(let i):
             guard model.scene.characters.indices.contains(i),
@@ -1153,6 +1633,7 @@ struct MixSection: View {
     }
 
     private func setClipOverride(_ id: String, _ on: Bool) {
+        guard !model.isClipLocked(id) else { return }
         switch kind {
         case .character(let i):
             guard model.scene.characters.indices.contains(i),
@@ -1170,10 +1651,12 @@ struct MixSection: View {
     /// clip (unless `trackOnly`). Clip mode: writes just that clip + marks it.
     private func update(trackOnly: Bool = false, _ transform: @escaping (inout Fx) -> Void) {
         if let id = clipID {
+            guard !model.isClipLocked(id) else { return }
             updateClip(id, transform)
             setClipOverride(id, true)
             return
         }
+        guard !model.isTrackLocked(kind) else { return }
         switch kind {
         case .character(let i):
             guard model.scene.characters.indices.contains(i) else { return }
@@ -1206,10 +1689,40 @@ struct MixSection: View {
             Text(label).font(.caption2).frame(width: 60, alignment: .leading)
             Slider(value: Binding(get: { get(fx) },
                                   set: { v in update(trackOnly: trackOnly) { set(&$0, v) } }),
-                   in: range)
+                   in: range) { editing in
+                if editing {
+                    model.registerUndoSnapshot(label: clipID == nil ? "Adjust Track Mix"
+                                                                    : "Adjust Clip Mix")
+                }
+            }
             Text(String(format: fmt, display(get(fx))))
                 .font(.system(size: 9, design: .monospaced)).foregroundStyle(.secondary)
                 .frame(width: 40, alignment: .trailing)
+        }
+    }
+
+    private func clipFadeSlider(_ label: String, id: String, leading: Bool) -> some View {
+        let clip = model.audioClip(id: id)
+        let value = leading ? (clip?.fadeIn ?? 0) : (clip?.fadeOut ?? 0)
+        let upper = max(0.1, clip?.dur ?? 0.1)
+        return HStack {
+            Text(label).font(.caption2).frame(width: 60, alignment: .leading)
+            Slider(value: Binding(
+                get: {
+                    guard let clip = model.audioClip(id: id) else { return 0 }
+                    return leading ? clip.fadeIn : clip.fadeOut
+                },
+                set: { newValue in
+                    model.setClipFades(id: id,
+                                       fadeIn: leading ? newValue : nil,
+                                       fadeOut: leading ? nil : newValue)
+                }), in: 0...upper) { editing in
+                    if editing { model.registerUndoSnapshot(label: "Adjust Clip Fade") }
+                }
+            Text(String(format: "%.2fs", value))
+                .font(.system(size: 9, design: .monospaced))
+                .foregroundStyle(.secondary)
+                .frame(width: 42, alignment: .trailing)
         }
     }
 

@@ -28,4 +28,53 @@ final class ShowExporterTests: XCTestCase {
         let size = try FileManager.default.attributesOfItem(atPath: out.path)[.size] as? Int ?? 0
         XCTAssertGreaterThan(size, 1000, "expected a non-trivial mp4")
     }
+
+    func testExportCanCancelBeforeAllocatingWriter() throws {
+        let assets = try AssetCatalog(assetsRoot: Self.assetsRoot)
+        let out = FileManager.default.temporaryDirectory
+            .appendingPathComponent("cancelled-\(UUID().uuidString).mp4")
+        defer { try? FileManager.default.removeItem(at: out) }
+
+        XCTAssertThrowsError(try ShowExporter.export(
+            document: ShowDocument.starter(characterCount: 1),
+            assets: assets,
+            audioURL: { _ in nil }, assetURL: { _ in nil },
+            to: out, shouldCancel: { true })) { error in
+                guard case ShowExporter.ExportError.cancelled = error else {
+                    return XCTFail("expected cancellation, got \(error)")
+                }
+            }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: out.path))
+    }
+
+    func testExportPreflightIgnoresUnusedMissingLibraryAssets() {
+        let used = Asset(id: "used", name: "Used", kind: .image, file: "used.png")
+        let unused = Asset(id: "unused", name: "Unused", kind: .image, file: "unused.png")
+        let cue = ImageCue(id: "visual", assetID: used.id, start: 0, dur: 1,
+                           from: ImagePlacement())
+        var document = ShowDocument.starter(characterCount: 1)
+        document.assets = [used, unused]
+        document.stage.backgroundTracks = [
+            BackgroundTrack(id: "scenes", name: "Scenes"),
+        ]
+        document.stage.imageTracks = [
+            ImageTrack(id: "visuals", name: "Visuals", cues: [cue]),
+        ]
+
+        XCTAssertEqual(
+            ShowExportPreflight.errors(
+                document: document,
+                availableAudioIDs: [],
+                availableAssetIDs: [used.id],
+                catalog: nil),
+            [])
+
+        let errors = ShowExportPreflight.errors(
+            document: document,
+            availableAudioIDs: [],
+            availableAssetIDs: [],
+            catalog: nil)
+        XCTAssertTrue(errors.contains { $0.contains(used.id) }, errors.joined(separator: "\n"))
+        XCTAssertFalse(errors.contains { $0.contains(unused.id) }, errors.joined(separator: "\n"))
+    }
 }

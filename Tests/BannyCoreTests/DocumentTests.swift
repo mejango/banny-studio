@@ -9,7 +9,8 @@ import Testing
                 body: .orange, x: 0.4, depth: 0.2, face: -1,
                 baseOutfit: [5: "fierce", 11: "doc-coat"],
                 subs: [Subtitle(text: "hi", start: 1, dur: 2)],
-                clips: [AudioClip(id: "c1", name: "1-Darl", start: 0, dur: 11.16, srcDur: 25.208)],
+                clips: [AudioClip(id: "c1", name: "1-Darl", start: 0, dur: 11.16,
+                                  srcDur: 25.208, fadeIn: 0.4, fadeOut: 0.7)],
                 events: [
                     .key(t: 0.5, code: .keyM, down: true),
                     .key(t: 0.7, code: .keyM, down: false),
@@ -21,7 +22,7 @@ import Testing
                                              start: 7, dur: 2.5, intensity: 1.4)],
                 name: "DARL",
                 recStart: StartPose(x: 0.3, depth: 0, face: 1, spin: 42, zoom: 1.35),
-                speed: 280, rotationSpeed: 72)],
+                speed: 280, rotationSpeed: 72, locked: true, solo: true)],
             reactionLibrary: [ReactionDefinition(id: "shock", name: "Shock", dur: 2,
                                                  events: [
                                                     .key(t: 0, code: .slash, down: true),
@@ -47,7 +48,12 @@ import Testing
                 BackgroundCue(id: "bc", assetID: "a1", start: 0, dur: 10, crop: .fit),
             ])],
             lights: [Light(x: 0.8, y: 0.18)],
-            cropAnchors: [3.0, 12.4]
+            cropAnchors: [3.0, 12.4],
+            markers: [
+                TimelineMarker(id: "m1", name: "Cold open", start: 0, color: .orange),
+                TimelineMarker(id: "s1", name: "Act one", start: 3, kind: .section,
+                               duration: 9.4, color: .blue),
+            ]
         ),
         assets: [Asset(id: "a1", name: "thing", kind: .image, file: "a1.png")],
         show: [ShowSegment(name: "Scene 1 3.0–12.4s", from: 3, to: 12.4)],
@@ -76,6 +82,14 @@ import Testing
     #expect(character.speed == 320)
     #expect(character.rotationSpeed == 90)
     #expect(character.reactions.isEmpty)
+    #expect(!character.locked)
+    #expect(!character.solo)
+
+    let oldClip = try JSONDecoder().decode(
+        AudioClip.self,
+        from: Data(#"{"id":"a","name":"old","start":0,"dur":2,"offset":0,"srcDur":2}"#.utf8))
+    #expect(oldClip.fadeIn == 0)
+    #expect(oldClip.fadeOut == 0)
 
     let reaction = try JSONDecoder().decode(
         ReactionInstance.self,
@@ -86,6 +100,23 @@ import Testing
         StartPose.self,
         from: Data(#"{"x":0.25,"depth":-0.4,"face":-1}"#.utf8))
     #expect(oldStart == StartPose(x: 0.25, depth: -0.4, face: -1, spin: 0, zoom: 1))
+}
+
+@Test func audioFadeEnvelopeIsStableAndClamped() {
+    let clip = AudioClip(id: "a", name: "take", start: 10, dur: 4, srcDur: 4,
+                         fadeIn: 1, fadeOut: 2)
+    #expect(clip.level(at: 9.9) == 0)
+    #expect(clip.level(at: 10) == 0)
+    #expect(abs(clip.level(at: 10.5) - 0.5) < 1e-9)
+    #expect(clip.level(at: 11) == 1)
+    #expect(abs(clip.level(at: 13) - 0.5) < 1e-9)
+    #expect(clip.level(at: 14) == 0)
+    #expect(clip.level(at: 14.1) == 0)
+
+    let clamped = AudioClip(id: "b", name: "short", start: 0, dur: 1, srcDur: 1,
+                            fadeIn: 5, fadeOut: -2)
+    #expect(clamped.fadeIn == 1)
+    #expect(clamped.fadeOut == 0)
 }
 
 @Test func editableShowJSONRoundTripsAndRejectsUnknownFields() throws {

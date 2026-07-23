@@ -2,9 +2,32 @@ import SwiftUI
 import BannyCore
 import BannyMedia
 
+private final class ExportCancellationToken: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value = false
+
+    func cancel() {
+        lock.lock()
+        value = true
+        lock.unlock()
+    }
+
+    var isCancelled: Bool {
+        lock.lock()
+        let result = value
+        lock.unlock()
+        return result
+    }
+}
+
 /// Ship: export the show playlist (or active scene) to an mp4 and hand it to the
 /// system share sheet / save panel.
 struct ShipButton: View {
+    private struct ExportRequest {
+        let destination: URL
+        let options: ShowExporter.Options
+    }
+
     @Bindable var model: StudioModel
     let file: ShowDocumentFile
     /// Timeline-corner style: small plain label on the Export row.
@@ -13,6 +36,9 @@ struct ShipButton: View {
     @State private var shipping = false
     @State private var progress: Double = 0
     @State private var exportError: String?
+    @State private var cancellationToken: ExportCancellationToken?
+    @State private var exportTask: Task<Void, Never>?
+    @State private var retryRequest: ExportRequest?
 
     var body: some View {
         HStack(spacing: 8) {
@@ -43,9 +69,27 @@ struct ShipButton: View {
             .fixedSize()
             .disabled(shipping)
             .help("Export media (the marked range, or the whole show if none is marked) or a shareable project file.")
+            if shipping {
+                Button {
+                    cancellationToken?.cancel()
+                    exportTask?.cancel()
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+                .help("Cancel export")
+                .accessibilityLabel("Cancel export")
+            }
         }
         .alert("Export failed", isPresented: .init(get: { exportError != nil },
                                                    set: { if !$0 { exportError = nil } })) {
+            if let request = retryRequest {
+                Button("Retry") {
+                    exportError = nil
+                    ship(to: request.destination, tier: request.options)
+                }
+            }
             Button("OK") { exportError = nil }
         } message: {
             Text(exportError ?? "")
@@ -134,19 +178,53 @@ struct ShipButton: View {
     }
 
     private func ship(to dest: URL, tier: ShowExporter.Options = .p1080) {
+        let missingAudio = model.scene.characters.flatMap(\.clips)
+            .map(\.id) + model.scene.audioTracks.flatMap(\.clips).map(\.id)
+        let unresolvedAudio = Set(missingAudio).filter { file.audio[$0] == nil }
+        let referencedAssets = Set(
+            model.scene.backgroundTracks.flatMap(\.cues).map(\.assetID)
+            + model.scene.imageTracks.flatMap(\.cues).map(\.assetID)
+            + model.scene.audioTracks.flatMap(\.cues).map(\.assetID))
+        let unresolvedAssets = referencedAssets.filter { file.assetsMedia[$0] == nil }
+        guard unresolvedAudio.isEmpty, unresolvedAssets.isEmpty else {
+            let count = unresolvedAudio.count + unresolvedAssets.count
+            exportError = "\(count) linked media \(count == 1 ? "file is" : "files are") missing. Open Browse → Media and relink before exporting."
+            retryRequest = nil
+            return
+        }
+
+        let blocking = ShowExportPreflight.errors(
+            document: model.document,
+            availableAudioIDs: Set(file.audio.keys),
+            availableAssetIDs: Set(file.assetsMedia.keys),
+            catalog: SharedAssets.catalog)
+        guard blocking.isEmpty else {
+            let visible = blocking.prefix(4).map { "• \($0)" }
+            let remainder = blocking.count - visible.count
+            let suffix = remainder > 0 ? "\n…and \(remainder) more." : ""
+            exportError = "This show needs attention before export:\n\(visible.joined(separator: "\n"))\(suffix)"
+            retryRequest = nil
+            return
+        }
+
         model.pause()
         shipping = true
         progress = 0
+        exportError = nil
         let document = model.document
         let audio = file.audio
         let assetsMedia = file.assetsMedia
         let options = tier.fitted(aspect: document.settings.frameAspect)
+        let token = ExportCancellationToken()
+        cancellationToken = token
+        retryRequest = nil
 
-        Task.detached(priority: .userInitiated) {
+        exportTask = Task.detached(priority: .userInitiated) {
             // Media to temp files for AVFoundation.
             let dir = FileManager.default.temporaryDirectory
                 .appendingPathComponent("banny-ship-\(UUID().uuidString)", isDirectory: true)
             try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(at: dir) }
             var audioURLs: [String: URL] = [:]
             for (id, m) in audio {
                 let url = dir.appendingPathComponent("a-\(id).\(m.ext)")
@@ -170,18 +248,32 @@ struct ShipButton: View {
                     to: out,
                     progress: { p in
                         Task { @MainActor in progress = p }
-                    })
+                    },
+                    shouldCancel: { token.isCancelled })
                 await MainActor.run {
                     shipping = false
+                    cancellationToken = nil
+                    exportTask = nil
+                    retryRequest = nil
                     deliver(out, to: dest)
+                }
+            } catch ShowExporter.ExportError.cancelled {
+                await MainActor.run {
+                    shipping = false
+                    progress = 0
+                    cancellationToken = nil
+                    exportTask = nil
+                    retryRequest = nil
                 }
             } catch {
                 await MainActor.run {
                     shipping = false
-                    exportError = String(describing: error)
+                    cancellationToken = nil
+                    exportTask = nil
+                    retryRequest = ExportRequest(destination: dest, options: tier)
+                    exportError = error.localizedDescription
                 }
             }
         }
     }
 }
-

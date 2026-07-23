@@ -13,6 +13,7 @@ public final class AudioGraph {
         /// Which character owns the clip (nil = standalone audio track). Drives pan "follow".
         public let characterIndex: Int?
         let player: AVAudioPlayerNode
+        let mixer: AVAudioMixerNode
         let eq: AVAudioUnitEQ
         let reverb: AVAudioUnitReverb
         let file: AVAudioFile
@@ -71,15 +72,19 @@ public final class AudioGraph {
             engine.connect(reverb, to: busNode, format: stereo)
             player.volume = Float(clip.fx.gain)
             clipNodes.append(ClipNode(clip: clip, characterIndex: characterIndex,
-                                      player: player, eq: eq, reverb: reverb, file: file))
+                                      player: player, mixer: clipMixer, eq: eq,
+                                      reverb: reverb, file: file))
         }
 
-        for (i, c) in scene.characters.enumerated() where !c.hidden {
+        let hasSolo = scene.characters.contains { !$0.hidden && $0.solo }
+            || scene.audioTracks.contains { !$0.hidden && $0.solo }
+        for (i, c) in scene.characters.enumerated()
+        where !c.hidden && (!hasSolo || c.solo) {
             for clip in c.clips {
                 try wire(clip, owner: "c\(i)", ownerFx: c.trackFx, characterIndex: i)
             }
         }
-        for track in scene.audioTracks where !track.hidden {
+        for track in scene.audioTracks where !track.hidden && (!hasSolo || track.solo) {
             for clip in track.clips {
                 try wire(clip, owner: track.id, ownerFx: track.fx, characterIndex: nil)
             }
@@ -118,6 +123,14 @@ public final class AudioGraph {
 
     public func stopAll() {
         for node in clipNodes { node.player.stop() }
+    }
+
+    /// Applies non-destructive clip fades. Live playback calls this each frame;
+    /// offline rendering calls it before every short render chunk.
+    public func updateLevels(timelineTime: Double) {
+        for node in clipNodes {
+            node.mixer.outputVolume = Float(node.clip.level(at: timelineTime))
+        }
     }
 
     /// Web pan modes: follow = character X · 0.3, narrow = 0, wide = X · 2 (clamped).

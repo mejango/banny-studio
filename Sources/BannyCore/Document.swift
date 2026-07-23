@@ -1,6 +1,6 @@
 import Foundation
 
-/// Banny Studio document model, schema v2.
+/// Banny Studio document model.
 /// Concepts map 1:1 to the web v1 studio; see docs/superpowers/specs/2026-07-07-banny-studio-native-design.md.
 
 public struct ShowDocument: Equatable, Sendable {
@@ -12,7 +12,7 @@ public struct ShowDocument: Equatable, Sendable {
     public var show: [ShowSegment]
     public var settings: Settings
 
-    public init(version: Int = 3, stage: SceneState = SceneState(), assets: [Asset] = [],
+    public init(version: Int = 4, stage: SceneState = SceneState(), assets: [Asset] = [],
                 show: [ShowSegment] = [], settings: Settings = Settings()) {
         self.version = version
         self.stage = stage
@@ -162,24 +162,29 @@ public struct ImageTrack: Codable, Equatable, Identifiable, Sendable {
     public var id: String
     public var name: String
     public var hidden: Bool
+    /// Locked tracks remain visible but cannot be edited or recorded over.
+    public var locked: Bool
     public var cues: [ImageCue]
     public var presence: [VisibilityEvent]
 
-    public init(id: String, name: String, hidden: Bool = false, cues: [ImageCue] = [],
+    public init(id: String, name: String, hidden: Bool = false, locked: Bool = false,
+                cues: [ImageCue] = [],
                 presence: [VisibilityEvent] = []) {
         self.id = id
         self.name = name
         self.hidden = hidden
+        self.locked = locked
         self.cues = cues
         self.presence = presence
     }
 
-    private enum CodingKeys: String, CodingKey { case id, name, hidden, cues, presence }
+    private enum CodingKeys: String, CodingKey { case id, name, hidden, locked, cues, presence }
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         id = try c.decode(String.self, forKey: .id)
         name = try c.decode(String.self, forKey: .name)
         hidden = try c.decodeIfPresent(Bool.self, forKey: .hidden) ?? false
+        locked = try c.decodeIfPresent(Bool.self, forKey: .locked) ?? false
         cues = try c.decodeIfPresent([ImageCue].self, forKey: .cues) ?? []
         presence = try c.decodeIfPresent([VisibilityEvent].self, forKey: .presence) ?? []
     }
@@ -519,24 +524,28 @@ public struct BackgroundTrack: Codable, Equatable, Identifiable, Sendable {
     public var id: String
     public var name: String
     public var hidden: Bool
+    public var locked: Bool
     public var cues: [BackgroundCue]
     public var presence: [VisibilityEvent]
 
-    public init(id: String, name: String, hidden: Bool = false, cues: [BackgroundCue] = [],
+    public init(id: String, name: String, hidden: Bool = false, locked: Bool = false,
+                cues: [BackgroundCue] = [],
                 presence: [VisibilityEvent] = []) {
         self.id = id
         self.name = name
         self.hidden = hidden
+        self.locked = locked
         self.cues = cues
         self.presence = presence
     }
 
-    private enum CodingKeys: String, CodingKey { case id, name, hidden, cues, presence }
+    private enum CodingKeys: String, CodingKey { case id, name, hidden, locked, cues, presence }
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         id = try c.decode(String.self, forKey: .id)
         name = try c.decode(String.self, forKey: .name)
         hidden = try c.decodeIfPresent(Bool.self, forKey: .hidden) ?? false
+        locked = try c.decodeIfPresent(Bool.self, forKey: .locked) ?? false
         cues = try c.decodeIfPresent([BackgroundCue].self, forKey: .cues) ?? []
         presence = try c.decodeIfPresent([VisibilityEvent].self, forKey: .presence) ?? []
     }
@@ -662,6 +671,62 @@ public struct ShowSegment: Codable, Equatable, Sendable {
     }
 }
 
+/// A named point or span on the production timeline. Markers are navigation
+/// anchors; sections make the show's structure explicit without changing what
+/// is rendered or exported.
+public struct TimelineMarker: Codable, Equatable, Identifiable, Sendable {
+    public enum Kind: String, Codable, CaseIterable, Sendable {
+        case marker
+        case section
+    }
+
+    public enum Color: String, Codable, CaseIterable, Sendable {
+        case orange
+        case blue
+        case green
+        case purple
+        case red
+        case gray
+    }
+
+    public var id: String
+    public var name: String
+    public var start: Double
+    public var kind: Kind
+    /// Only sections use duration. A section is always at least 0.1 seconds.
+    public var duration: Double
+    public var color: Color
+
+    public init(id: String, name: String, start: Double, kind: Kind = .marker,
+                duration: Double = 0, color: Color = .orange) {
+        self.id = id
+        self.name = name
+        self.start = max(0, start)
+        self.kind = kind
+        self.duration = kind == .section ? max(0.1, duration) : 0
+        self.color = color
+    }
+
+    public var end: Double {
+        kind == .section ? start + max(0.1, duration) : start
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, name, start, kind, duration, color
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(String.self, forKey: .id)
+        name = try c.decodeIfPresent(String.self, forKey: .name) ?? "Marker"
+        start = max(0, try c.decodeIfPresent(Double.self, forKey: .start) ?? 0)
+        kind = try c.decodeIfPresent(Kind.self, forKey: .kind) ?? .marker
+        let decodedDuration = try c.decodeIfPresent(Double.self, forKey: .duration) ?? 0
+        duration = kind == .section ? max(0.1, decodedDuration) : 0
+        color = try c.decodeIfPresent(Color.self, forKey: .color) ?? .orange
+    }
+}
+
 public struct SceneState: Equatable, Sendable {
     public var characters: [Character]
     /// Reusable performances referenced by character reaction blocks.
@@ -673,6 +738,8 @@ public struct SceneState: Equatable, Sendable {
     public var lights: [Light]
     /// Crop anchor times (seconds) that split the timeline into Show segments.
     public var cropAnchors: [Double]
+    /// User-authored navigation markers and named production sections.
+    public var markers: [TimelineMarker]
     /// Depth→scale intensity (web slider 0..1.2).
     public var gScale: Double
     /// Jump gravity (0.3..2.5).
@@ -689,6 +756,7 @@ public struct SceneState: Equatable, Sendable {
                 imageTracks: [ImageTrack] = [], backgroundTracks: [BackgroundTrack] = [],
                 lightTracks: [LightTrack] = [],
                 lights: [Light] = [], cropAnchors: [Double] = [],
+                markers: [TimelineMarker] = [],
                 gScale: Double = 0.6, gravity: Double = 1, gSize: Double = 1,
                 background: BackgroundSpec? = nil, rowOrder: [String] = []) {
         self.characters = characters
@@ -699,6 +767,7 @@ public struct SceneState: Equatable, Sendable {
         self.lightTracks = lightTracks
         self.lights = lights
         self.cropAnchors = cropAnchors
+        self.markers = markers
         self.gScale = gScale
         self.gravity = gravity
         self.gSize = gSize
@@ -728,6 +797,7 @@ public struct SceneState: Equatable, Sendable {
         for t in lightTracks {
             for cue in t.cues { end = max(end, cue.start + cue.dur) }
         }
+        for marker in markers { end = max(end, marker.end) }
         return end
     }
 
@@ -763,7 +833,7 @@ public struct SceneState: Equatable, Sendable {
 extension SceneState: Codable {
     private enum CodingKeys: String, CodingKey {
         case characters, reactionLibrary, audioTracks, imageTracks, backgroundTracks, lightTracks, lights,
-             cropAnchors, gScale, gravity, gSize, background, rowOrder
+             cropAnchors, markers, gScale, gravity, gSize, background, rowOrder
     }
 
     public init(from decoder: Decoder) throws {
@@ -777,6 +847,7 @@ extension SceneState: Codable {
         lightTracks = try c.decodeIfPresent([LightTrack].self, forKey: .lightTracks) ?? []
         lights = try c.decodeIfPresent([Light].self, forKey: .lights) ?? []
         cropAnchors = try c.decodeIfPresent([Double].self, forKey: .cropAnchors) ?? []
+        markers = try c.decodeIfPresent([TimelineMarker].self, forKey: .markers) ?? []
         gScale = try c.decodeIfPresent(Double.self, forKey: .gScale) ?? 0.6
         gravity = try c.decodeIfPresent(Double.self, forKey: .gravity) ?? 1
         gSize = try c.decodeIfPresent(Double.self, forKey: .gSize) ?? 1
@@ -821,6 +892,10 @@ public struct Character: Equatable, Sendable {
     public var wobble: Double
     /// Hidden tracks stay in the document but don't render, play, or ship.
     public var hidden: Bool
+    /// Locked tracks remain visible but reject editing and recording gestures.
+    public var locked: Bool
+    /// Solo is an audio-monitoring/export state shared by voice and media tracks.
+    public var solo: Bool
     /// Timed show/hide toggles (presence on stage over the timeline).
     public var presence: [VisibilityEvent]
 
@@ -831,7 +906,8 @@ public struct Character: Equatable, Sendable {
                 armedGroups: Set<EventGroup> = Set(EventGroup.allCases),
                 name: String = "", trackFx: Fx = .defaultCharacterTrack, recStart: StartPose? = nil,
                 speed: Double = 320, rotationSpeed: Double = 90,
-                wobble: Double = 7, hidden: Bool = false,
+                wobble: Double = 7, hidden: Bool = false, locked: Bool = false,
+                solo: Bool = false,
                 presence: [VisibilityEvent] = []) {
         self.body = body
         self.x = x
@@ -853,6 +929,8 @@ public struct Character: Equatable, Sendable {
         self.rotationSpeed = rotationSpeed
         self.wobble = wobble
         self.hidden = hidden
+        self.locked = locked
+        self.solo = solo
         self.presence = presence
     }
 }
@@ -860,7 +938,7 @@ public struct Character: Equatable, Sendable {
 extension Character: Codable {
     private enum CodingKeys: String, CodingKey {
         case body, x, depth, size, face, baseOutfit, subs, clips, events, reactions,
-             armedGroups, name, trackFx, recStart, speed, rotationSpeed, wobble, hidden, presence,
+             armedGroups, name, trackFx, recStart, speed, rotationSpeed, wobble, hidden, locked, solo, presence,
              voicePitch, voiceSpeed
     }
 
@@ -887,6 +965,8 @@ extension Character: Codable {
         rotationSpeed = try c.decodeIfPresent(Double.self, forKey: .rotationSpeed) ?? 90
         wobble = try c.decodeIfPresent(Double.self, forKey: .wobble) ?? 7
         hidden = try c.decodeIfPresent(Bool.self, forKey: .hidden) ?? false
+        locked = try c.decodeIfPresent(Bool.self, forKey: .locked) ?? false
+        solo = try c.decodeIfPresent(Bool.self, forKey: .solo) ?? false
         presence = try c.decodeIfPresent([VisibilityEvent].self, forKey: .presence) ?? []
     }
 }
@@ -1107,20 +1187,27 @@ public struct AudioTrack: Codable, Equatable, Sendable {
     /// Image cues on the same track — audio tracks are general MEDIA tracks.
     public var cues: [ImageCue]
     public var hidden: Bool
+    public var locked: Bool
+    public var solo: Bool
     public var presence: [VisibilityEvent]
 
     public init(id: String, name: String, fx: Fx = .defaultTrack, clips: [AudioClip] = [],
-                cues: [ImageCue] = [], hidden: Bool = false, presence: [VisibilityEvent] = []) {
+                cues: [ImageCue] = [], hidden: Bool = false, locked: Bool = false,
+                solo: Bool = false, presence: [VisibilityEvent] = []) {
         self.id = id
         self.name = name
         self.fx = fx
         self.clips = clips
         self.cues = cues
         self.hidden = hidden
+        self.locked = locked
+        self.solo = solo
         self.presence = presence
     }
 
-    private enum CodingKeys: String, CodingKey { case id, name, fx, clips, cues, hidden, presence }
+    private enum CodingKeys: String, CodingKey {
+        case id, name, fx, clips, cues, hidden, locked, solo, presence
+    }
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         id = try c.decode(String.self, forKey: .id)
@@ -1129,6 +1216,8 @@ public struct AudioTrack: Codable, Equatable, Sendable {
         clips = try c.decodeIfPresent([AudioClip].self, forKey: .clips) ?? []
         cues = try c.decodeIfPresent([ImageCue].self, forKey: .cues) ?? []
         hidden = try c.decodeIfPresent(Bool.self, forKey: .hidden) ?? false
+        locked = try c.decodeIfPresent(Bool.self, forKey: .locked) ?? false
+        solo = try c.decodeIfPresent(Bool.self, forKey: .solo) ?? false
         presence = try c.decodeIfPresent([VisibilityEvent].self, forKey: .presence) ?? []
     }
 }
@@ -1148,9 +1237,13 @@ public struct AudioClip: Codable, Equatable, Sendable {
     /// True when this clip's fx intentionally diverge from the track mix
     /// (track-level mix edits then leave it alone).
     public var fxOverride: Bool?
+    /// Non-destructive edge fades, in seconds, clamped to the visible clip.
+    public var fadeIn: Double
+    public var fadeOut: Double
 
     public init(id: String, name: String, start: Double, dur: Double, offset: Double = 0,
-                srcDur: Double, fx: Fx = .defaultClip, fxOverride: Bool? = nil) {
+                srcDur: Double, fx: Fx = .defaultClip, fxOverride: Bool? = nil,
+                fadeIn: Double = 0, fadeOut: Double = 0) {
         self.id = id
         self.name = name
         self.start = start
@@ -1159,6 +1252,38 @@ public struct AudioClip: Codable, Equatable, Sendable {
         self.srcDur = srcDur
         self.fx = fx
         self.fxOverride = fxOverride
+        self.fadeIn = min(max(0, fadeIn), max(0, dur))
+        self.fadeOut = min(max(0, fadeOut), max(0, dur))
+    }
+
+    /// Linear edge-fade multiplier at an absolute timeline time.
+    public func level(at timelineTime: Double) -> Double {
+        guard timelineTime >= start, timelineTime <= start + dur else { return 0 }
+        let local = timelineTime - start
+        let into = fadeIn > 0 ? min(1, max(0, local / min(fadeIn, dur))) : 1
+        let remaining = start + dur - timelineTime
+        let out = fadeOut > 0 ? min(1, max(0, remaining / min(fadeOut, dur))) : 1
+        return min(into, out)
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, name, start, dur, offset, srcDur, fx, fxOverride, fadeIn, fadeOut
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(String.self, forKey: .id)
+        name = try c.decodeIfPresent(String.self, forKey: .name) ?? "Audio"
+        start = try c.decodeIfPresent(Double.self, forKey: .start) ?? 0
+        dur = try c.decodeIfPresent(Double.self, forKey: .dur) ?? 0
+        offset = try c.decodeIfPresent(Double.self, forKey: .offset) ?? 0
+        srcDur = try c.decodeIfPresent(Double.self, forKey: .srcDur) ?? dur
+        fx = try c.decodeIfPresent(Fx.self, forKey: .fx) ?? .defaultClip
+        fxOverride = try c.decodeIfPresent(Bool.self, forKey: .fxOverride)
+        fadeIn = min(max(0, try c.decodeIfPresent(Double.self, forKey: .fadeIn) ?? 0),
+                     max(0, dur))
+        fadeOut = min(max(0, try c.decodeIfPresent(Double.self, forKey: .fadeOut) ?? 0),
+                      max(0, dur))
     }
 }
 
@@ -1266,24 +1391,28 @@ public struct LightTrack: Codable, Equatable, Identifiable, Sendable {
     public var id: String
     public var name: String
     public var hidden: Bool
+    public var locked: Bool
     public var cues: [LightCue]
     public var presence: [VisibilityEvent]
 
-    public init(id: String, name: String, hidden: Bool = false, cues: [LightCue] = [],
+    public init(id: String, name: String, hidden: Bool = false, locked: Bool = false,
+                cues: [LightCue] = [],
                 presence: [VisibilityEvent] = []) {
         self.id = id
         self.name = name
         self.hidden = hidden
+        self.locked = locked
         self.cues = cues
         self.presence = presence
     }
 
-    private enum CodingKeys: String, CodingKey { case id, name, hidden, cues, presence }
+    private enum CodingKeys: String, CodingKey { case id, name, hidden, locked, cues, presence }
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         id = try c.decode(String.self, forKey: .id)
         name = try c.decode(String.self, forKey: .name)
         hidden = try c.decodeIfPresent(Bool.self, forKey: .hidden) ?? false
+        locked = try c.decodeIfPresent(Bool.self, forKey: .locked) ?? false
         cues = try c.decodeIfPresent([LightCue].self, forKey: .cues) ?? []
         presence = try c.decodeIfPresent([VisibilityEvent].self, forKey: .presence) ?? []
     }

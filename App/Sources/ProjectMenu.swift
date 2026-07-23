@@ -4,10 +4,16 @@ import UniformTypeIdentifiers
 /// Header project dropdown: rename the current project, spin up a new one,
 /// or import a shared .bs archive (zipped .bannyshow package).
 struct ProjectMenu: View {
+    @Bindable var model: StudioModel
+    let file: ShowDocumentFile
     @AppStorage("studioLightMode") private var lightMode = false
     @State private var projectName = ""
     @State private var importing = false
     @State private var importError: String?
+    @State private var checkpointName = ""
+    @State private var namingCheckpoint = false
+    @State private var pendingRestore: ShowCheckpoint?
+    @State private var checkpointRevision = 0
 
     var body: some View {
         Menu {
@@ -19,6 +25,33 @@ struct ProjectMenu: View {
             }
             Divider()
             Button("Import .bs file…") { importing = true }
+            Divider()
+            Menu("Checkpoints") {
+                Button("Create checkpoint…") {
+                    checkpointName = defaultCheckpointName
+                    namingCheckpoint = true
+                }
+                if !checkpoints.isEmpty { Divider() }
+                ForEach(checkpoints) { checkpoint in
+                    Menu {
+                        Button("Restore") { pendingRestore = checkpoint }
+                            .disabled(file.isMicRecording)
+                        Button("Delete", role: .destructive) {
+                            file.deleteCheckpoint(id: checkpoint.id)
+                            checkpointRevision += 1
+                        }
+                    } label: {
+                        VStack(alignment: .leading) {
+                            Text(checkpoint.name)
+                            Text(checkpoint.createdAt.formatted(
+                                date: .abbreviated, time: .shortened))
+                        }
+                    }
+                }
+                if checkpoints.isEmpty {
+                    Text("No checkpoints yet")
+                }
+            }
         } label: {
             HStack(spacing: 4) {
                 Text(projectName.isEmpty ? "Untitled" : projectName)
@@ -38,12 +71,37 @@ struct ProjectMenu: View {
         .onReceive(NotificationCenter.default.publisher(
             for: NSWindow.didBecomeKeyNotification)) { _ in refreshName() }
         #endif
-        .help("Rename, create, or import a project")
+        .help("Rename, create, import, or recover this project")
         .alert("Import failed", isPresented: .init(get: { importError != nil },
                                                    set: { if !$0 { importError = nil } })) {
             Button("OK") { importError = nil }
         } message: {
             Text(importError ?? "")
+        }
+        .alert("Create Checkpoint", isPresented: $namingCheckpoint) {
+            TextField("Checkpoint name", text: $checkpointName)
+            Button("Cancel", role: .cancel) {}
+            Button("Create") {
+                file.createCheckpoint(name: checkpointName)
+                checkpointRevision += 1
+            }
+        } message: {
+            Text("Saves the current edit state inside this project.")
+        }
+        .confirmationDialog("Restore \(pendingRestore?.name ?? "checkpoint")?",
+                            isPresented: Binding(
+                                get: { pendingRestore != nil },
+                                set: { if !$0 { pendingRestore = nil } }),
+                            titleVisibility: .visible) {
+            Button("Restore") {
+                if let checkpoint = pendingRestore {
+                    model.restoreCheckpoint(checkpoint)
+                }
+                pendingRestore = nil
+            }
+            Button("Cancel", role: .cancel) { pendingRestore = nil }
+        } message: {
+            Text("The current state remains available through Undo.")
         }
         #if os(macOS)
         .focusEffectDisabled()
@@ -53,6 +111,15 @@ struct ProjectMenu: View {
                                             .zip, .data]) { result in
             if case .success(let url) = result { importBS(url) }
         }
+    }
+
+    private var checkpoints: [ShowCheckpoint] {
+        _ = checkpointRevision
+        return file.checkpoints.sorted { $0.createdAt > $1.createdAt }
+    }
+
+    private var defaultCheckpointName: String {
+        "Checkpoint \(file.checkpoints.count + 1)"
     }
 
     private func refreshName() {

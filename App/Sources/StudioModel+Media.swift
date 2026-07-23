@@ -16,6 +16,12 @@ extension StudioModel {
     func addAudioClip(from url: URL, characterIndex: Int?, audioTrackIndex: Int? = nil,
                       at startTime: Double? = nil) {
         let time = startTime ?? self.time
+        if let i = characterIndex {
+            guard scene.characters[safe: i]?.locked == false else { return }
+        }
+        if let i = audioTrackIndex {
+            guard scene.audioTracks[safe: i]?.locked == false else { return }
+        }
         let scoped = url.startAccessingSecurityScopedResource()
         defer { if scoped { url.stopAccessingSecurityScopedResource() } }
         guard let data = try? Data(contentsOf: url),
@@ -33,15 +39,24 @@ extension StudioModel {
         } else if let ti = audioTrackIndex, scene.audioTracks.indices.contains(ti) {
             scene.audioTracks[ti].clips.append(clip)
         } else {
-            if scene.audioTracks.isEmpty {
+            if let ti = scene.audioTracks.firstIndex(where: { !$0.locked }) {
+                scene.audioTracks[ti].clips.append(clip)
+            } else {
                 scene.audioTracks.append(AudioTrack(id: ShowDocumentFile.newID(), name: "Audio"))
+                scene.audioTracks[scene.audioTracks.count - 1].clips.append(clip)
             }
-            scene.audioTracks[0].clips.append(clip)
         }
     }
 
     /// Registers a finished mic recording as a clip at `startTime`.
-    func addRecordedClip(data: Data, ext: String, dur: Double, startTime: Double, characterIndex: Int?) {
+    func addRecordedClip(data: Data, ext: String, dur: Double, startTime: Double,
+                         characterIndex: Int?, audioTrackIndex: Int? = nil) {
+        if let i = characterIndex {
+            guard scene.characters[safe: i]?.locked == false else { return }
+        }
+        if let i = audioTrackIndex {
+            guard scene.audioTracks[safe: i]?.locked == false else { return }
+        }
         registerUndoSnapshot(label: "Record Audio")
         let id = ShowDocumentFile.newID()
         file?.audio[id] = (data, ext)
@@ -49,16 +64,21 @@ extension StudioModel {
                              start: startTime, dur: dur, srcDur: dur)
         if let i = characterIndex, scene.characters.indices.contains(i) {
             scene.characters[i].clips.append(clip)
+        } else if let i = audioTrackIndex, scene.audioTracks.indices.contains(i) {
+            scene.audioTracks[i].clips.append(clip)
         } else {
-            if scene.audioTracks.isEmpty {
+            if let i = scene.audioTracks.firstIndex(where: { !$0.locked }) {
+                scene.audioTracks[i].clips.append(clip)
+            } else {
                 scene.audioTracks.append(AudioTrack(id: ShowDocumentFile.newID(), name: "Audio"))
+                scene.audioTracks[scene.audioTracks.count - 1].clips.append(clip)
             }
-            scene.audioTracks[0].clips.append(clip)
         }
     }
 
     /// Web splitClip: cut a clip in two at time t preserving source offset.
     func splitClip(id: String, at t: Double) {
+        guard !isClipLocked(id) else { return }
         registerUndoSnapshot(label: "Split Clip")
         func split(_ clips: inout [AudioClip]) {
             guard let i = clips.firstIndex(where: { $0.id == id }) else { return }
@@ -67,11 +87,15 @@ extension StudioModel {
             let cut = t - c.start
             var left = c
             left.dur = cut
+            left.fadeOut = 0
+            left.fadeIn = min(left.fadeIn, left.dur)
             var right = c
             // The right half references the same source bytes at a deeper offset.
             right.start = t
             right.dur = c.dur - cut
             right.offset = c.offset + cut
+            right.fadeIn = 0
+            right.fadeOut = min(right.fadeOut, right.dur)
             clips[i] = left
             clips.insert(right, at: i + 1)
         }
@@ -80,6 +104,7 @@ extension StudioModel {
     }
 
     func removeClip(id: String) {
+        guard !isClipLocked(id) else { return }
         registerUndoSnapshot(label: "Delete Clip")
         for i in scene.characters.indices {
             scene.characters[i].clips.removeAll { $0.id == id }
@@ -92,6 +117,7 @@ extension StudioModel {
     }
 
     func moveClip(id: String, toStart newStart: Double) {
+        guard !isClipLocked(id) else { return }
         func move(_ clips: inout [AudioClip]) {
             guard let i = clips.firstIndex(where: { $0.id == id }) else { return }
             clips[i].start = max(0, newStart)
@@ -100,9 +126,30 @@ extension StudioModel {
         for i in scene.audioTracks.indices { move(&scene.audioTracks[i].clips) }
     }
 
+    /// Reconciles timing metadata after a missing source is relinked under its
+    /// stable clip id. Existing trims are preserved whenever the new file is
+    /// long enough and safely clamped otherwise.
+    func relinkAudioClipSource(id: String, sourceDuration: Double) {
+        let duration = max(0.01, sourceDuration)
+        func repair(_ clips: inout [AudioClip]) {
+            for index in clips.indices where clips[index].id == id {
+                clips[index].srcDur = duration
+                clips[index].offset = min(max(0, clips[index].offset),
+                                          max(0, duration - 0.01))
+                clips[index].dur = min(clips[index].dur,
+                                       max(0.01, duration - clips[index].offset))
+                clips[index].fadeIn = min(clips[index].fadeIn, clips[index].dur)
+                clips[index].fadeOut = min(clips[index].fadeOut, clips[index].dur)
+            }
+        }
+        for index in scene.characters.indices { repair(&scene.characters[index].clips) }
+        for index in scene.audioTracks.indices { repair(&scene.audioTracks[index].clips) }
+    }
+
     // MARK: - Renames
 
     func renameClip(id: String, to name: String) {
+        guard !isClipLocked(id) else { return }
         registerUndoSnapshot(label: "Rename Clip")
         for i in scene.characters.indices {
             for ci in scene.characters[i].clips.indices where scene.characters[i].clips[ci].id == id {
@@ -117,6 +164,8 @@ extension StudioModel {
     }
 
     func renameCue(id: String, to name: String) {
+        guard !isImageCueLocked(id), !isBackgroundCueLocked(id),
+              !isLightCueLocked(id) else { return }
         registerUndoSnapshot(label: "Rename Cue")
         for i in scene.imageTracks.indices {
             for ci in scene.imageTracks[i].cues.indices where scene.imageTracks[i].cues[ci].id == id {
@@ -145,6 +194,7 @@ extension StudioModel {
     /// Gallery click: copy a bundled backdrop into the document's asset bank
     /// (reusing an earlier copy if present) and cue it as the background.
     func addBundledBackdrop(url: URL) {
+        guard scene.backgroundTracks.first?.locked != true else { return }
         let name = BuiltInBackdrops.displayName(url.lastPathComponent)
         if let existing = document.assets.first(where: { $0.name == name }) {
             addBackgroundCueApplyingAutoFrame(assetID: existing.id, assetName: existing.name)
@@ -160,6 +210,7 @@ extension StudioModel {
     /// Settings.autoFrame): a square backdrop on an untouched project makes
     /// the whole project square.
     func addBackgroundCueApplyingAutoFrame(assetID: String, assetName: String) {
+        guard scene.backgroundTracks.first?.locked != true else { return }
         let hadCues = !scene.backgroundTracks.flatMap(\.cues).isEmpty
         addBackgroundCue(assetID: assetID, assetName: assetName)
         guard let media = file?.assetsMedia[assetID],
@@ -257,6 +308,11 @@ extension StudioModel {
     }
 
     func removeAsset(id: String) {
+        let hasLockedReference =
+            scene.imageTracks.contains { $0.locked && $0.cues.contains { $0.assetID == id } }
+            || scene.audioTracks.contains { $0.locked && $0.cues.contains { $0.assetID == id } }
+            || scene.backgroundTracks.contains { $0.locked && $0.cues.contains { $0.assetID == id } }
+        guard !hasLockedReference else { return }
         registerUndoSnapshot(label: "Remove Asset")
         document.assets.removeAll { $0.id == id }
         // assetsMedia bytes stay for undo-safety (see removeClip).
@@ -277,7 +333,8 @@ extension StudioModel {
     /// One caption per non-empty line. Existing timings are preserved by index;
     /// new lines start where the previous caption ends, 2 s each.
     func syncCaptions(characterIndex: Int, fromText text: String) {
-        guard scene.characters.indices.contains(characterIndex) else { return }
+        guard scene.characters.indices.contains(characterIndex),
+              !scene.characters[characterIndex].locked else { return }
         let lines = text.split(separator: "\n", omittingEmptySubsequences: false)
             .map { $0.trimmingCharacters(in: .whitespaces) }
             .filter { !$0.isEmpty }

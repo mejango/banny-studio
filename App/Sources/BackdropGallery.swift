@@ -39,6 +39,8 @@ enum BuiltInBackdrops {
 
 struct BackdropGallerySection: View {
     @Bindable var model: StudioModel
+    var query = ""
+    var expandedByDefault = false
     @State private var expanded = false
 
     private static let columns = [GridItem(.adaptive(minimum: 44), spacing: 4)]
@@ -48,7 +50,7 @@ struct BackdropGallerySection: View {
             DisclosureGroup(isExpanded: $expanded) {
                 ScrollView {
                     LazyVGrid(columns: Self.columns, spacing: 4) {
-                        ForEach(BuiltInBackdrops.urls, id: \.self) { url in
+                        ForEach(filteredURLs, id: \.self) { url in
                             BackdropThumb(url: url)
                                 .onTapGesture { model.addBundledBackdrop(url: url) }
                                 .help(BuiltInBackdrops.displayName(url.lastPathComponent))
@@ -60,6 +62,16 @@ struct BackdropGallerySection: View {
                 Text("BUILT-IN BACKDROPS (\(BuiltInBackdrops.urls.count))")
                     .font(.caption.bold()).foregroundStyle(.secondary)
             }
+        }
+        .onAppear {
+            if expandedByDefault { expanded = true }
+        }
+    }
+
+    private var filteredURLs: [URL] {
+        BuiltInBackdrops.urls.filter { url in
+            query.isEmpty || BuiltInBackdrops.displayName(url.lastPathComponent)
+                .localizedCaseInsensitiveContains(query)
         }
     }
 }

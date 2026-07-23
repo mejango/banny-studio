@@ -19,6 +19,7 @@ struct StageView: View {
     @State private var frameClock = FrameClock()
     @AppStorage("studioLightMode") private var lightMode = false
     @State private var dragLast: CGSize?
+    @State private var stageDragUndoRegistered = false
     /// A recording drag latches only when it starts on the selected visual.
     /// The offset keeps the exact grabbed point under the mouse/finger instead
     /// of snapping the asset's pivot to it.
@@ -28,6 +29,12 @@ struct StageView: View {
         var offset: CGSize = .zero
     }
     @State private var imageDrag = ImageDragState()
+    private struct LightDragState {
+        var resolved = false
+        var active = false
+        var offset: CGSize = .zero
+    }
+    @State private var lightDrag = LightDragState()
     /// Where the frame currently sits inside the canvas (normal: aspect-fit
     /// centered; overview: possibly shrunk). Gestures normalize against it.
     @State private var stageRect = CGRect(x: 0, y: 0, width: 1280, height: 720)
@@ -193,6 +200,9 @@ struct StageView: View {
         }
         .background(Color.black)
         .gesture(stageDrag)
+        #if os(macOS)
+        .help(stageDragHelp)
+        #endif
     }
 
     /// Frame overview while a scene cue is selected (paused): the whole
@@ -280,74 +290,39 @@ struct StageView: View {
         }
     }
 
-    /// Temporary editor-only handle for the selected light cue: lights never
-    /// render in the scene, but while selected they show a draggable point.
+    /// Editor-only source handle for the selected light track. Lights never
+    /// render into the shipped frame; the handle is an explicit grab target
+    /// whose state is shared with hit-testing below.
     private func drawLightHandle(context: GraphicsContext, rect frame: CGRect) {
         func point(_ x: Double, _ y: Double) -> CGPoint {
             CGPoint(x: frame.minX + x * frame.width, y: frame.minY + y * frame.height)
         }
-        // While drawing a light path, show the pen position.
-        if model.isLightRecording {
-            if let pen = model.lightPenNow {
-                let p = point(pen.x, pen.y)
-                let r = max(6, min(24, 10 * pen.size / 120))
-                context.fill(Path(ellipseIn: CGRect(x: p.x - 4, y: p.y - 4, width: 8, height: 8)),
-                             with: .color(.black))
-                context.stroke(Path(ellipseIn: CGRect(x: p.x - r, y: p.y - r, width: r * 2, height: r * 2)),
-                               with: .color(.red), lineWidth: 1.5)
-                context.draw(Text(String(format: "☀ %.0f%%", pen.intensity * 100))
-                                .font(.system(size: 9, weight: .bold))
-                                .foregroundStyle(.black),
-                             at: CGPoint(x: p.x, y: p.y - r - 8))
-            }
-            return
-        }
-        // A selected light TRACK always shows where its light is right now.
-        if model.selectedLightCuePath == nil,
-           let key = model.selectedTrackKey,
-           let track = model.scene.lightTracks.first(where: { $0.id == key }),
-           !track.hidden, track.presence.isPresent(at: model.time) {
-            // Only while a cue is actually shining — no ghost ring after the
-            // light's stream ends.
-            let state = track.cues.first { model.time >= $0.start && model.time < $0.start + $0.dur }?
-                .state(at: model.time)
-            if let state {
-                let p = point(state.x, state.y)
-                let r = max(6, min(24, 10 * state.size / 120))
-                context.stroke(Path(ellipseIn: CGRect(x: p.x - r, y: p.y - r, width: r * 2, height: r * 2)),
-                               with: .color(.black), style: StrokeStyle(lineWidth: 1.5, dash: [4, 3]))
-                context.fill(Path(ellipseIn: CGRect(x: p.x - 2.5, y: p.y - 2.5, width: 5, height: 5)),
-                             with: .color(.black))
-                context.draw(Text(String(format: "☀ %.0f%%", state.intensity * 100))
-                                .font(.system(size: 9, weight: .bold))
-                                .foregroundStyle(.black),
-                             at: CGPoint(x: p.x, y: p.y - r - 8))
-            }
-            return
-        }
-        // Editor-only affordance: never during playback, and only while the
-        // cue's own light track is the selected track.
-        guard !model.playing, let path = model.selectedLightCuePath,
-              model.selectedTrackKey == model.scene.lightTracks[path.track].id else { return }
-        let cue = model.scene.lightTracks[path.track].cues[path.cue]
-        guard model.time >= cue.start, model.time < cue.start + cue.dur else { return }
-        let state = cue.state(at: model.time)
+        let recording = model.isLightRecording
+        guard recording || !model.playing,
+              let state = lightStateForDrag else { return }
         let p = point(state.x, state.y)
         let r = max(6, min(24, 10 * state.size / 120))
-        context.stroke(Path(ellipseIn: CGRect(x: p.x - r, y: p.y - r, width: r * 2, height: r * 2)),
-                       with: .color(.black), style: StrokeStyle(lineWidth: 1.5, dash: [4, 3]))
-        context.fill(Path(ellipseIn: CGRect(x: p.x - 2.5, y: p.y - 2.5, width: 5, height: 5)),
-                     with: .color(.black))
-        // Rays hint + intensity readout.
+        let ring = Path(ellipseIn: CGRect(x: p.x - r, y: p.y - r,
+                                         width: r * 2, height: r * 2))
+        // A dark under-stroke keeps the yellow source visible on bright and
+        // dark sets. Red means its movement is currently being written.
+        context.stroke(ring, with: .color(.black.opacity(0.9)),
+                       style: StrokeStyle(lineWidth: 3, dash: [4, 3]))
+        context.stroke(ring, with: .color(recording ? .red : .yellow),
+                       style: StrokeStyle(lineWidth: 1.5, dash: [4, 3]))
+        let center = Path(ellipseIn: CGRect(x: p.x - 4, y: p.y - 4,
+                                           width: 8, height: 8))
+        context.fill(center, with: .color(recording ? .red : .yellow))
+        context.stroke(center, with: .color(.black), lineWidth: 1)
         context.draw(Text(String(format: "☀ %.0f%%", state.intensity * 100))
                         .font(.system(size: 9, weight: .bold))
                         .foregroundStyle(.black),
                      at: CGPoint(x: p.x, y: p.y - r - 8))
     }
 
-    /// Stage drag: repositions the selected image cue if the playhead is inside it
-    /// (second half sets the end placement when animated); otherwise moves the
-    /// selected character's start pose (web idle drag).
+    /// Stage drag has strict track ownership. Once a track is selected, a drag
+    /// is either handled by that track type or intentionally does nothing; it
+    /// never falls through and edits a character behind another track.
     private var stageDrag: some Gesture {
         DragGesture(minimumDistance: 4)
             .onChanged { value in
@@ -365,7 +340,10 @@ struct StageView: View {
                     return
                 }
                 if model.isLightRecording {
-                    model.lightRecordSample(x: fx, y: fy)
+                    if !lightDrag.resolved { resolveLightDrag(at: value.startLocation) }
+                    guard lightDrag.active else { return }
+                    model.lightRecordSample(x: fx - lightDrag.offset.width,
+                                            y: fy - lightDrag.offset.height)
                     return
                 }
                 guard !model.playing, !model.recording else { return }
@@ -374,32 +352,46 @@ struct StageView: View {
                 let dy = (value.translation.height - prev.height) / stageRect.height
                 dragLast = value.translation
 
-                if let path = model.selectedLightCuePath {
-                    var cue = model.scene.lightTracks[path.track].cues[path.cue]
-                    if model.time >= cue.start, model.time < cue.start + cue.dur {
-                        let inSecondHalf = model.time > cue.start + cue.dur / 2
-                        if var end = cue.to, inSecondHalf {
-                            end.x = min(1.1, max(-0.1, end.x + dx))
-                            end.y = min(1.1, max(-0.1, end.y + dy))
-                            cue.to = end
-                        } else {
-                            cue.from.x = min(1.1, max(-0.1, cue.from.x + dx))
-                            cue.from.y = min(1.1, max(-0.1, cue.from.y + dy))
-                        }
-                        model.scene.lightTracks[path.track].cues[path.cue] = cue
-                        return
+                guard let kind = model.selectedTrackKind else { return }
+                switch kind {
+                case .light(let trackIndex):
+                    guard model.scene.lightTracks.indices.contains(trackIndex),
+                          !model.scene.lightTracks[trackIndex].locked else { return }
+                    guard let path = lightCuePathForDrag, path.track == trackIndex else { return }
+                    let cueIndex = path.cue
+                    var cue = model.scene.lightTracks[trackIndex].cues[cueIndex]
+                    if !lightDrag.resolved { resolveLightDrag(at: value.startLocation) }
+                    guard lightDrag.active else { return }
+                    beginStageDragUndo("Move Light Cue")
+                    model.selectedLightCue = cue.id
+                    // Move the entire path by the handle delta. The point
+                    // under the cursor therefore follows exactly, and the
+                    // cue's existing motion shape is preserved.
+                    let state = cue.state(at: model.time)
+                    let x = min(1.1, max(-0.1, fx - lightDrag.offset.width))
+                    let y = min(1.1, max(-0.1, fy - lightDrag.offset.height))
+                    let dx = x - state.x
+                    let dy = y - state.y
+                    cue.from.x = min(1.1, max(-0.1, cue.from.x + dx))
+                    cue.from.y = min(1.1, max(-0.1, cue.from.y + dy))
+                    if var end = cue.to {
+                        end.x = min(1.1, max(-0.1, end.x + dx))
+                        end.y = min(1.1, max(-0.1, end.y + dy))
+                        cue.to = end
                     }
-                }
-                // Frame pan: grab-the-world drag while the Scenes track is
-                // selected — moves the freeform pen; commit with the Scenes
-                // row's "Set start state".
-                if let key = model.selectedTrackKey,
-                   model.scene.backgroundTracks.contains(where: { $0.id == key }) {
+                    model.scene.lightTracks[trackIndex].cues[cueIndex] = cue
+
+                case .background:
+                    // Grab-the-world preview. The Scenes inspector's “Set start
+                    // state” is the explicit, undoable commit.
+                    guard !model.isTrackLocked(kind) else { return }
                     model.cameraFreeformDrag(dx: dx, dy: dy)
-                    return
-                }
-                if let cue = model.selectedImageCueValue,
-                   model.time >= cue.start, model.time < cue.start + cue.dur {
+
+                case .audio, .image:
+                    guard model.selectedVisualCueOnSelectedTrack,
+                          let cue = model.selectedImageCueValue,
+                          model.time >= cue.start, model.time < cue.start + cue.dur else { return }
+                    beginStageDragUndo("Place Visual")
                     let inSecondHalf = model.time > cue.start + cue.dur / 2
                     model.updateSelectedImageCue { cue in
                         if var end = cue.to, inSecondHalf {
@@ -411,26 +403,73 @@ struct StageView: View {
                             cue.from.y = min(1.2, max(-0.2, cue.from.y + dy))
                         }
                     }
-                    return
-                }
-                guard let i = model.selection.first, model.scene.characters.indices.contains(i) else { return }
-                var c = model.scene.characters[i]
-                c.x = min(1 - 0.044, max(0.044, c.x + dx))
-                c.depth = min(1, max(-12, c.depth - dy * 900 / 120 / (900 / stageRect.height) * 0.016))
-                if model.time < 0.1 {
+
+                case .character(let index):
+                    // Character placement is a start-state edit, never a
+                    // mid-show teleport. Performance during a take uses keys.
+                    guard model.time < 0.1,
+                          model.scene.characters.indices.contains(index),
+                          !model.scene.characters[index].locked else { return }
+                    beginStageDragUndo("Place Character")
+                    var c = model.scene.characters[index]
+                    c.x = min(1 - 0.044, max(0.044, c.x + dx))
+                    c.depth = min(1, max(-12,
+                        c.depth - dy * 900 / 120 / (900 / stageRect.height) * 0.016))
                     let start = c.recStart ?? StartPose(x: c.x, depth: c.depth, face: c.face)
                     c.recStart = StartPose(x: c.x, depth: c.depth, face: c.face,
                                            spin: start.spin, zoom: start.zoom)
+                    model.scene.characters[index] = c
                 }
-                model.scene.characters[i] = c
             }
             .onEnded { _ in
                 dragLast = nil
+                stageDragUndoRegistered = false
                 imageDrag = ImageDragState()
-                if !model.isImageRecording, model.selectedImageCueValue != nil {
-                    model.registerUndoSnapshot(label: "Place Image")
-                }
+                lightDrag = LightDragState()
             }
+    }
+
+    private func beginStageDragUndo(_ label: String) {
+        guard !stageDragUndoRegistered else { return }
+        model.registerUndoSnapshot(label: label)
+        stageDragUndoRegistered = true
+    }
+
+    private var stageDragHelp: String {
+        if model.isImageRecording {
+            return "Drag the selected visual itself to record its motion."
+        }
+        if model.isLightRecording {
+            return "Drag the visible light-source handle to record its path."
+        }
+        if model.isCameraRecording {
+            return "Drag anywhere to record where the camera aims."
+        }
+        if model.recording {
+            return "Character takes use the performance keys; stage dragging is inactive."
+        }
+        if model.playing {
+            return "Stage dragging is inactive during playback."
+        }
+        switch model.selectedTrackKind {
+        case .character:
+            return model.time < 0.1
+                ? "Drag to place this character’s starting position."
+                : "Park the playhead at 0s to drag the character’s starting position."
+        case .audio, .image:
+            return model.selectedVisualCueOnSelectedTrack
+                ? "Drag the selected visual; the first or second cue half chooses its start or end."
+                : "Select a visual cue on this track to drag it."
+        case .light(let index):
+            let hasCue = lightCuePathForDrag?.track == index
+            return hasCue
+                ? "Drag the visible light-source handle to move this cue’s path."
+                : "There is no light cue under the playhead to drag."
+        case .background:
+            return "Drag to preview a camera pan; use Set start state to commit it."
+        case nil:
+            return "Select a track to choose what stage dragging controls."
+        }
     }
 
     private func resolveImageRecordingDrag(at location: CGPoint) {
@@ -463,6 +502,57 @@ struct StageView: View {
         guard inside || nearPivot else { return }
         imageDrag.offset = CGSize(width: x - pen.x, height: y - pen.y)
         imageDrag.active = true
+    }
+
+    /// A light drag must begin on its visible source handle. This prevents an
+    /// empty-stage gesture from jumping the light—or touching another track.
+    private func resolveLightDrag(at location: CGPoint) {
+        lightDrag.resolved = true
+        guard stageRect.width > 1, stageRect.height > 1,
+              let state = lightStateForDrag else { return }
+        let point = CGPoint(x: stageRect.minX + state.x * stageRect.width,
+                            y: stageRect.minY + state.y * stageRect.height)
+        let ringRadius = max(6, min(24, 10 * state.size / 120))
+        #if os(macOS)
+        let padding: CGFloat = 9
+        #else
+        let padding: CGFloat = 18
+        #endif
+        guard hypot(location.x - point.x, location.y - point.y)
+                <= ringRadius + padding else { return }
+        let x = (location.x - stageRect.minX) / stageRect.width
+        let y = (location.y - stageRect.minY) / stageRect.height
+        lightDrag.offset = CGSize(width: x - state.x, height: y - state.y)
+        lightDrag.active = true
+    }
+
+    private var lightStateForDrag: LightState? {
+        if let pen = model.lightPenNow {
+            return LightState(x: pen.x, y: pen.y, intensity: pen.intensity, size: pen.size)
+        }
+        guard let path = lightCuePathForDrag else { return nil }
+        return model.scene.lightTracks[path.track].cues[path.cue].state(at: model.time)
+    }
+
+    /// Selection wins only when that cue is actually under the playhead;
+    /// otherwise the selected track's active cue owns the visible handle.
+    private var lightCuePathForDrag: (track: Int, cue: Int)? {
+        guard case .light(let trackIndex) = model.selectedTrackKind,
+              model.scene.lightTracks.indices.contains(trackIndex),
+              !model.scene.lightTracks[trackIndex].hidden,
+              model.scene.lightTracks[trackIndex].presence.isPresent(at: model.time)
+        else { return nil }
+        if let selected = model.selectedLightCuePath,
+           selected.track == trackIndex {
+            let cue = model.scene.lightTracks[selected.track].cues[selected.cue]
+            if model.time >= cue.start, model.time < cue.start + cue.dur {
+                return selected
+            }
+        }
+        guard let cueIndex = model.scene.lightTracks[trackIndex].cues.firstIndex(where: {
+            model.time >= $0.start && model.time < $0.start + $0.dur
+        }) else { return nil }
+        return (trackIndex, cueIndex)
     }
 }
 

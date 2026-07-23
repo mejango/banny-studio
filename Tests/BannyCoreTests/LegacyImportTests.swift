@@ -8,8 +8,8 @@ private let stagingPath = "/Users/jango/Documents/banny/show/ep1/beat1/staging/1
     let result = try V1Importer.importStudio(json: Data(contentsOf: URL(fileURLWithPath: stagingPath)))
     let doc = result.document
 
-    #expect(doc.version == 3)
-    // v3: both scenes concatenated on one timeline — DARL (Scene 2) + SAGE/HELIUS/TED (Scene 1).
+    #expect(doc.version == 4)
+    // v3+ single timeline: DARL (Scene 2) + SAGE/HELIUS/TED (Scene 1).
     #expect(doc.stage.characters.map(\.name) == ["DARL", "SAGE", "HELIUS", "TED"])
     #expect(doc.stage.audioTracks.contains { $0.name == "SAGE" })
 

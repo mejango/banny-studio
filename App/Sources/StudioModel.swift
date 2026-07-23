@@ -15,8 +15,12 @@ struct ReactionSelection: Equatable {
 @MainActor
 @Observable
 final class StudioModel {
-    var document: ShowDocument
-    weak var file: ShowDocumentFile?
+    var document: ShowDocument {
+        didSet { file?.updateDocumentSnapshot(document) }
+    }
+    weak var file: ShowDocumentFile? {
+        didSet { file?.updateDocumentSnapshot(document) }
+    }
     var undoManager: UndoManager? {
         didSet { undoManager?.levelsOfUndo = 0 } // 0 = unlimited history
     }
@@ -28,6 +32,7 @@ final class StudioModel {
     var recTargets: Set<Int> = []
     private var recPunched: [Int: Set<EventGroup>] = [:]
     private var recStartTime: Double = 0
+    private var characterRecordUndoScene: SceneState?
     private var startWall: TimeInterval = 0
 
     // Editor state.
@@ -71,12 +76,14 @@ final class StudioModel {
     /// ⌘V: paste right after the selected marks (or at the playhead when nothing
     /// is selected). The copies become the selection, so repeated ⌘V chains.
     func pasteMarks() {
-        guard !markClipboard.isEmpty else { return }
+        let editableClipboard = markClipboard.filter {
+            scene.characters[safe: $0.character]?.locked == false
+        }
+        guard !editableClipboard.isEmpty else { return }
         registerUndoSnapshot(label: "Paste Marks")
         let base = selectedMarks.map(\.end).max().map { $0 + 0.05 } ?? time
         var pasted: Set<PerfMark> = []
-        for m in markClipboard {
-            guard scene.characters.indices.contains(m.character) else { continue }
+        for m in editableClipboard {
             var events = scene.characters[m.character].events
             let s = ((base + m.start) * 1000).rounded() / 1000
             let e = ((base + m.end) * 1000).rounded() / 1000
@@ -92,11 +99,13 @@ final class StudioModel {
     /// ⌘-drag: duplicate the selected marks (nudged +0.05s so the copies are
     /// distinct) and select the copies — the drag then moves the copies.
     func duplicateSelectedMarksInPlace() {
-        guard !selectedMarks.isEmpty else { return }
+        let editableMarks = selectedMarks.filter {
+            scene.characters[safe: $0.character]?.locked == false
+        }
+        guard !editableMarks.isEmpty else { return }
         registerUndoSnapshot(label: "Duplicate Marks")
         var dups: Set<PerfMark> = []
-        for m in selectedMarks {
-            guard scene.characters.indices.contains(m.character) else { continue }
+        for m in editableMarks {
             var events = scene.characters[m.character].events
             let s = m.start + 0.05
             let e = m.end + 0.05
@@ -111,6 +120,7 @@ final class StudioModel {
 
     /// Mutates a clip wherever it lives (character or audio track).
     private func setClip(id: String, _ transform: (inout AudioClip) -> Void) {
+        guard !isClipLocked(id) else { return }
         for i in scene.characters.indices {
             if let ci = scene.characters[i].clips.firstIndex(where: { $0.id == id }) {
                 transform(&scene.characters[i].clips[ci])
@@ -139,11 +149,14 @@ final class StudioModel {
             } else {
                 clip.dur = min(max(0.2, baseDur + dt), max(0.2, srcDur - baseOffset))
             }
+            clip.fadeIn = min(clip.fadeIn, clip.dur)
+            clip.fadeOut = min(clip.fadeOut, clip.dur)
         }
     }
 
     /// ⌘-drag: clone a clip in place (media ref copied) and return the copy's id.
     func duplicateClip(id: String) -> String? {
+        guard !isClipLocked(id) else { return nil }
         registerUndoSnapshot(label: "Duplicate Clip")
         func clone(_ clips: inout [AudioClip]) -> String? {
             guard let ci = clips.firstIndex(where: { $0.id == id }) else { return nil }
@@ -162,8 +175,64 @@ final class StudioModel {
         return nil
     }
 
+    func audioClip(id: String) -> AudioClip? {
+        for character in scene.characters {
+            if let clip = character.clips.first(where: { $0.id == id }) { return clip }
+        }
+        for track in scene.audioTracks {
+            if let clip = track.clips.first(where: { $0.id == id }) { return clip }
+        }
+        return nil
+    }
+
+    func setClipFades(id: String, fadeIn: Double? = nil, fadeOut: Double? = nil) {
+        guard audioClip(id: id) != nil, !isClipLocked(id) else { return }
+        setClip(id: id) { value in
+            if let fadeIn { value.fadeIn = min(max(0, fadeIn), value.dur) }
+            if let fadeOut { value.fadeOut = min(max(0, fadeOut), value.dur) }
+        }
+    }
+
+    /// Duration shared by two selected overlapping clips, when they belong to
+    /// the same track and can form a conventional crossfade.
+    var selectedCrossfadeDuration: Double? {
+        guard selectedClips.count == 2 else { return nil }
+        let ids = Array(selectedClips)
+        guard let firstOwner = clipOwner(id: ids[0]),
+              let secondOwner = clipOwner(id: ids[1]),
+              firstOwner.key == secondOwner.key else { return nil }
+        let ordered = [firstOwner.clip, secondOwner.clip].sorted { $0.start < $1.start }
+        let overlap = ordered[0].start + ordered[0].dur - ordered[1].start
+        return overlap > 0.02 ? overlap : nil
+    }
+
+    func applyCrossfadeToSelectedClips() {
+        guard selectedClips.count == 2, let overlap = selectedCrossfadeDuration else { return }
+        let clips = selectedClips.compactMap { audioClip(id: $0) }.sorted { $0.start < $1.start }
+        guard clips.count == 2, !clips.contains(where: { isClipLocked($0.id) }) else { return }
+        registerUndoSnapshot(label: "Crossfade Clips")
+        setClip(id: clips[0].id) { $0.fadeOut = min($0.dur, overlap) }
+        setClip(id: clips[1].id) { $0.fadeIn = min($0.dur, overlap) }
+        resyncAudioIfPlaying()
+    }
+
+    private func clipOwner(id: String) -> (key: String, clip: AudioClip)? {
+        for (index, character) in scene.characters.enumerated() {
+            if let clip = character.clips.first(where: { $0.id == id }) {
+                return ("c-\(index)", clip)
+            }
+        }
+        for track in scene.audioTracks {
+            if let clip = track.clips.first(where: { $0.id == id }) {
+                return (track.id, clip)
+            }
+        }
+        return nil
+    }
+
     /// ⌘-drag: clone a cue in place; returns the copy's id.
     func duplicateCue(kind: TrackRowKind, id: String) -> String? {
+        guard !isTrackLocked(kind) else { return nil }
         registerUndoSnapshot(label: "Duplicate Cue")
         switch kind {
         case .image(let i):
@@ -230,12 +299,29 @@ final class StudioModel {
     /// ← / → on the timeline: shift every arrow-movable selected element. dt sec.
     func nudgeTimelineSelection(by dt: Double) {
         guard dt != 0, hasArrowMovableSelection else { return }
+        let editableMarks = Set(selectedMarks.filter {
+            scene.characters[safe: $0.character]?.locked == false
+        })
+        let editableClips = selectedClips.filter { !isClipLocked($0) }
+        let editableBackgrounds = selectedBackgroundCues.filter { !isBackgroundCueLocked($0) }
+        let editableOutfit = selectedOutfitEvent.map {
+            scene.characters[safe: $0.char]?.locked == false
+        } ?? false
+        let editableMotion = selectedMotionEvent.map {
+            scene.characters[safe: $0.char]?.locked == false
+        } ?? false
+        let editableReaction = selectedReaction.map {
+            scene.characters[safe: $0.character]?.locked == false
+        } ?? false
+        guard !editableMarks.isEmpty || !editableClips.isEmpty
+                || !editableBackgrounds.isEmpty || editableOutfit
+                || editableMotion || editableReaction else { return }
         registerUndoSnapshot(label: "Nudge Selection")
         // Marks (per character).
-        if !selectedMarks.isEmpty {
-            for ci in Set(selectedMarks.map(\.character)) where scene.characters.indices.contains(ci) {
+        if !editableMarks.isEmpty {
+            for ci in Set(editableMarks.map(\.character)) where scene.characters.indices.contains(ci) {
                 var events = scene.characters[ci].events
-                let hit = selectedMarks.filter { $0.character == ci }
+                let hit = editableMarks.filter { $0.character == ci }
                 events = events.map { ev in
                     guard case .key(let t, let code, let down) = ev,
                           hit.contains(where: { $0.code == code && t >= $0.start - 1e-6 && t <= $0.end + 1e-6 })
@@ -245,26 +331,20 @@ final class StudioModel {
                 events.sort { $0.t < $1.t }
                 scene.characters[ci].events = events
             }
-            selectedMarks = Set(selectedMarks.map {
-                PerfMark(character: $0.character, code: $0.code,
-                         start: max(0, $0.start + dt), end: max(0, $0.end + dt))
+            selectedMarks = Set(selectedMarks.map { mark in
+                guard editableMarks.contains(mark) else { return mark }
+                return PerfMark(character: mark.character, code: mark.code,
+                                start: max(0, mark.start + dt), end: max(0, mark.end + dt))
             })
         }
         // Clips (character + audio tracks).
-        for id in selectedClips {
-            for i in scene.characters.indices {
-                if let ci = scene.characters[i].clips.firstIndex(where: { $0.id == id }) {
-                    scene.characters[i].clips[ci].start = max(0, scene.characters[i].clips[ci].start + dt)
-                }
-            }
-            for i in scene.audioTracks.indices {
-                if let ci = scene.audioTracks[i].clips.firstIndex(where: { $0.id == id }) {
-                    scene.audioTracks[i].clips[ci].start = max(0, scene.audioTracks[i].clips[ci].start + dt)
-                }
+        for id in editableClips {
+            if let clip = audioClip(id: id) {
+                moveClip(id: id, toStart: clip.start + dt)
             }
         }
         // Marquee'd scene cues move as a group (single cues are drag-only).
-        for id in selectedBackgroundCues {
+        for id in editableBackgrounds {
             for ti in scene.backgroundTracks.indices {
                 if let ci = scene.backgroundTracks[ti].cues.firstIndex(where: { $0.id == id }) {
                     scene.backgroundTracks[ti].cues[ci].start = max(0, scene.backgroundTracks[ti].cues[ci].start + dt)
@@ -272,18 +352,18 @@ final class StudioModel {
             }
         }
         // Outfit event.
-        if let sel = selectedOutfitEvent, scene.characters.indices.contains(sel.char),
+        if editableOutfit, let sel = selectedOutfitEvent, scene.characters.indices.contains(sel.char),
            scene.characters[sel.char].events.indices.contains(sel.index),
            case .outfit(let t, _, _) = scene.characters[sel.char].events[sel.index] {
             moveOutfitEvent(char: sel.char, index: sel.index, to: t + dt)
         }
         // Motion keyframe.
-        if let sel = selectedMotionEvent, scene.characters.indices.contains(sel.char),
+        if editableMotion, let sel = selectedMotionEvent, scene.characters.indices.contains(sel.char),
            scene.characters[sel.char].events.indices.contains(sel.index),
            case .motion(let t, _, _, _, _) = scene.characters[sel.char].events[sel.index] {
             moveMotionEvent(char: sel.char, index: sel.index, to: t + dt)
         }
-        if let selection = selectedReaction,
+        if editableReaction, let selection = selectedReaction,
            scene.characters.indices.contains(selection.character),
            let index = scene.characters[selection.character].reactions
             .firstIndex(where: { $0.id == selection.id }) {
@@ -323,8 +403,12 @@ final class StudioModel {
     /// within 30ms). Mirrors how `setOutfit` splits base vs timed.
     func setMotionParam(characterIndex i: Int, at t: Double,
                         speed: Double? = nil, rotationSpeed: Double? = nil,
-                        wobble: Double? = nil, size: Double? = nil) {
-        guard scene.characters.indices.contains(i) else { return }
+                        wobble: Double? = nil, size: Double? = nil,
+                        registerUndo: Bool = true) {
+        guard scene.characters.indices.contains(i), !scene.characters[i].locked else { return }
+        if registerUndo {
+            registerUndoSnapshot(label: t < 0.05 ? "Adjust Motion" : "Motion Keyframe")
+        }
         if t < 0.05 {
             if let speed { scene.characters[i].speed = speed }
             if let rotationSpeed { scene.characters[i].rotationSpeed = rotationSpeed }
@@ -341,7 +425,6 @@ final class StudioModel {
                                   rotationSpeed: rotationSpeed ?? r0,
                                   wobble: wobble ?? w0, size: size ?? z0)
         } else {
-            registerUndoSnapshot(label: "Motion Keyframe")
             events.append(.motion(t: stamp, speed: speed, rotationSpeed: rotationSpeed,
                                   wobble: wobble, size: size))
             events.sort { $0.t < $1.t }
@@ -353,6 +436,7 @@ final class StudioModel {
     /// selection on it.
     func moveMotionEvent(char: Int, index: Int, to t: Double) {
         guard scene.characters.indices.contains(char),
+              !scene.characters[char].locked,
               scene.characters[char].events.indices.contains(index),
               case .motion(_, let s, let r, let w, let z) = scene.characters[char].events[index] else { return }
         let nt = max(0, (t * 1000).rounded() / 1000)
@@ -369,6 +453,7 @@ final class StudioModel {
     /// selection on the same event.
     func moveOutfitEvent(char: Int, index: Int, to t: Double) {
         guard scene.characters.indices.contains(char),
+              !scene.characters[char].locked,
               scene.characters[char].events.indices.contains(index),
               case .outfit(_, let slot, let name) = scene.characters[char].events[index] else { return }
         let nt = max(0, (t * 1000).rounded() / 1000)
@@ -445,10 +530,30 @@ final class StudioModel {
     /// selection when one exists, else at the playhead. Pasted items select,
     /// so repeated ⌘V chains.
     func pasteTimeline(at anchor: Double? = nil) {
-        let hasContent = !markClipboard.isEmpty || !clipClipboard.isEmpty
-            || !imageCueClipboard.isEmpty || !lightCueClipboard.isEmpty || !bgCueClipboard.isEmpty
-            || reactionClipboard != nil
-        guard hasContent else { return }
+        let canPasteMarks = markClipboard.contains {
+            scene.characters[safe: $0.character]?.locked == false
+        }
+        let canPasteClips = clipClipboard.contains { owner, _ in
+            if owner.hasPrefix("c"), let index = Int(owner.dropFirst()) {
+                return scene.characters[safe: index]?.locked == false
+            }
+            return scene.audioTracks.first(where: { $0.id == owner })?.locked == false
+        }
+        let canPasteImages = imageCueClipboard.contains { trackID, _ in
+            scene.imageTracks.first(where: { $0.id == trackID })?.locked == false
+                || scene.audioTracks.first(where: { $0.id == trackID })?.locked == false
+        }
+        let canPasteLights = lightCueClipboard.contains { trackID, _ in
+            scene.lightTracks.first(where: { $0.id == trackID })?.locked == false
+        }
+        let canPasteBackgrounds = !bgCueClipboard.isEmpty
+            && scene.backgroundTracks.first?.locked == false
+        let canPasteReaction = reactionClipboard.map { clipboard in
+            scene.characters[safe: clipboard.character]?.locked == false
+                && scene.reactionLibrary.contains(where: { $0.id == clipboard.block.reactionID })
+        } ?? false
+        guard canPasteMarks || canPasteClips || canPasteImages || canPasteLights
+                || canPasteBackgrounds || canPasteReaction else { return }
         var base = anchor ?? time
         if anchor == nil {
             var selEnd = -Double.greatestFiniteMagnitude
@@ -474,7 +579,7 @@ final class StudioModel {
         registerUndoSnapshot(label: "Paste")
         var pastedMarks: Set<PerfMark> = []
         for m in markClipboard {
-            guard scene.characters.indices.contains(m.character) else { continue }
+            guard scene.characters[safe: m.character]?.locked == false else { continue }
             var events = scene.characters[m.character].events
             let s = ((base + m.start) * 1000).rounded() / 1000
             let e = ((base + m.end) * 1000).rounded() / 1000
@@ -490,24 +595,31 @@ final class StudioModel {
             let oldID = c.id
             c.id = ShowDocumentFile.newID()
             c.start = clip.start + base
-            if let media = file?.audio[oldID] { file?.audio[c.id] = media }
+            var inserted = false
             if owner.hasPrefix("c"), let i = Int(owner.dropFirst()),
-               scene.characters.indices.contains(i) {
+               scene.characters[safe: i]?.locked == false {
                 scene.characters[i].clips.append(c)
-            } else if let ti = scene.audioTracks.firstIndex(where: { $0.id == owner }) {
+                inserted = true
+            } else if let ti = scene.audioTracks.firstIndex(where: { $0.id == owner }),
+                      !scene.audioTracks[ti].locked {
                 scene.audioTracks[ti].clips.append(c)
-            } else { continue }
+                inserted = true
+            }
+            guard inserted else { continue }
+            if let media = file?.audio[oldID] { file?.audio[c.id] = media }
             pastedClips.insert(c.id)
         }
         for (tid, cue) in imageCueClipboard {
             var c = cue
             c.id = ShowDocumentFile.newID()
             c.start = cue.start + base
-            if let ti = scene.imageTracks.firstIndex(where: { $0.id == tid }) {
+            if let ti = scene.imageTracks.firstIndex(where: { $0.id == tid }),
+               !scene.imageTracks[ti].locked {
                 scene.imageTracks[ti].cues.append(c)
                 scene.imageTracks[ti].cues.sort { $0.start < $1.start }
                 selectedImageCue = c.id
-            } else if let ti = scene.audioTracks.firstIndex(where: { $0.id == tid }) {
+            } else if let ti = scene.audioTracks.firstIndex(where: { $0.id == tid }),
+                      !scene.audioTracks[ti].locked {
                 scene.audioTracks[ti].cues.append(c)
                 scene.audioTracks[ti].cues.sort { $0.start < $1.start }
                 selectedImageCue = c.id
@@ -517,7 +629,8 @@ final class StudioModel {
             var c = cue
             c.id = ShowDocumentFile.newID()
             c.start = cue.start + base
-            if let ti = scene.lightTracks.firstIndex(where: { $0.id == tid }) {
+            if let ti = scene.lightTracks.firstIndex(where: { $0.id == tid }),
+               !scene.lightTracks[ti].locked {
                 scene.lightTracks[ti].cues.append(c)
                 scene.lightTracks[ti].cues.sort { $0.start < $1.start }
                 selectedLightCue = c.id
@@ -527,14 +640,14 @@ final class StudioModel {
             var c = cue
             c.id = ShowDocumentFile.newID()
             c.start = cue.start + base
-            if !scene.backgroundTracks.isEmpty {
+            if scene.backgroundTracks.first?.locked == false {
                 scene.backgroundTracks[0].cues.append(c)
                 scene.backgroundTracks[0].cues.sort { $0.start < $1.start }
                 selectedBackgroundCue = c.id
             }
         }
         if let (character, source) = reactionClipboard,
-           scene.characters.indices.contains(character),
+           scene.characters[safe: character]?.locked == false,
            scene.reactionLibrary.contains(where: { $0.id == source.reactionID }) {
             var block = source
             block.id = ShowDocumentFile.newID()
@@ -554,18 +667,22 @@ final class StudioModel {
 
     /// Delete the timeline selection (anchors handled by the view).
     func deleteTimelineSelection() {
-        if !selectedMarks.isEmpty {
+        let editableMarks = Set(selectedMarks.filter {
+            scene.characters[safe: $0.character]?.locked != true
+        })
+        if !editableMarks.isEmpty {
             registerUndoSnapshot(label: "Delete Marks")
-            for charIndex in Set(selectedMarks.map(\.character)) {
-                let charMarks = Set(selectedMarks.filter { $0.character == charIndex })
+            for charIndex in Set(editableMarks.map(\.character)) {
+                let charMarks = Set(editableMarks.filter { $0.character == charIndex })
                 scene.characters[charIndex].events =
                     TimelineMath.removeMarks(charMarks, from: scene.characters[charIndex].events)
             }
-            selectedMarks = []
+            selectedMarks.subtract(editableMarks)
         }
-        for id in selectedClips { removeClip(id: id) }
-        selectedClips = []
-        if let id = selectedImageCue {
+        let editableClips = selectedClips.filter { !isClipLocked($0) }
+        for id in editableClips { removeClip(id: id) }
+        selectedClips.subtract(editableClips)
+        if let id = selectedImageCue, !isImageCueLocked(id) {
             registerUndoSnapshot(label: "Delete Image Cue")
             for i in scene.imageTracks.indices {
                 scene.imageTracks[i].cues.removeAll { $0.id == id }
@@ -577,6 +694,7 @@ final class StudioModel {
         }
         if let sel = selectedOutfitEvent {
             if scene.characters.indices.contains(sel.char),
+               !scene.characters[sel.char].locked,
                scene.characters[sel.char].events.indices.contains(sel.index),
                case .outfit = scene.characters[sel.char].events[sel.index] {
                 registerUndoSnapshot(label: "Delete Outfit Change")
@@ -586,6 +704,7 @@ final class StudioModel {
         }
         if let sel = selectedMotionEvent {
             if scene.characters.indices.contains(sel.char),
+               !scene.characters[sel.char].locked,
                scene.characters[sel.char].events.indices.contains(sel.index),
                case .motion = scene.characters[sel.char].events[sel.index] {
                 registerUndoSnapshot(label: "Delete Motion Keyframe")
@@ -594,13 +713,14 @@ final class StudioModel {
             selectedMotionEvent = nil
         }
         if let selection = selectedReaction {
-            if scene.characters.indices.contains(selection.character) {
+            if scene.characters.indices.contains(selection.character),
+               !scene.characters[selection.character].locked {
                 registerUndoSnapshot(label: "Delete Reaction Block")
                 scene.characters[selection.character].reactions.removeAll { $0.id == selection.id }
             }
             selectedReaction = nil
         }
-        let bgKill = bgCueSelection()
+        let bgKill = bgCueSelection().filter { !isBackgroundCueLocked($0) }
         if !bgKill.isEmpty {
             registerUndoSnapshot(label: "Delete Scene Cue")
             for i in scene.backgroundTracks.indices {
@@ -610,7 +730,7 @@ final class StudioModel {
             selectedBackgroundCues = []
             backgroundRevision += 1
         }
-        if let id = selectedLightCue {
+        if let id = selectedLightCue, !isLightCueLocked(id) {
             registerUndoSnapshot(label: "Delete Light Cue")
             for i in scene.lightTracks.indices {
                 scene.lightTracks[i].cues.removeAll { $0.id == id }
@@ -629,7 +749,7 @@ final class StudioModel {
     }
 
     func updateSelectedBackgroundCue(_ body: (inout BackgroundCue) -> Void) {
-        guard let id = selectedBackgroundCue else { return }
+        guard let id = selectedBackgroundCue, !isBackgroundCueLocked(id) else { return }
         for ti in scene.backgroundTracks.indices {
             if let ci = scene.backgroundTracks[ti].cues.firstIndex(where: { $0.id == id }) {
                 body(&scene.backgroundTracks[ti].cues[ci])
@@ -706,7 +826,7 @@ final class StudioModel {
     }
 
     func updateSelectedImageCue(_ body: (inout ImageCue) -> Void) {
-        guard let id = selectedImageCue else { return }
+        guard let id = selectedImageCue, !isImageCueLocked(id) else { return }
         for ti in scene.imageTracks.indices {
             if let ci = scene.imageTracks[ti].cues.firstIndex(where: { $0.id == id }) {
                 body(&scene.imageTracks[ti].cues[ci])
@@ -741,7 +861,8 @@ final class StudioModel {
 
     /// Image cue on a MEDIA (audio) track.
     func addMediaImageCue(trackIndex: Int, assetID: String, at t: Double) {
-        guard scene.audioTracks.indices.contains(trackIndex) else { return }
+        guard scene.audioTracks.indices.contains(trackIndex),
+              !scene.audioTracks[trackIndex].locked else { return }
         registerUndoSnapshot(label: "Add Visual Cue")
         let cue = ImageCue(id: ShowDocumentFile.newID(), assetID: assetID,
                            start: t, dur: 5, from: ImagePlacement())
@@ -776,11 +897,15 @@ final class StudioModel {
             // Pre-rename documents used the plural.
             doc.stage.backgroundTracks[0].name = "Scenes"
         }
+        // v4 adds production markers, track locks/solo, and audio fades. Their
+        // decoders supply lossless defaults for older documents, so migration
+        // is simply recording the schema now represented in memory.
+        if doc.version < 4 { doc.version = 4 }
         self.document = doc
         self.activeSceneIndex = 0
     }
 
-    /// The single stage/timeline (v3).
+    /// The single stage/timeline (v3+).
     var scene: SceneState {
         get { document.stage }
         set { document.stage = newValue }
@@ -911,9 +1036,11 @@ final class StudioModel {
 
     private func replaceImageCues(for target: ImageRecordTarget, with cues: [ImageCue]) {
         switch target.owner {
-        case .imageTrack(let index) where scene.imageTracks.indices.contains(index):
+        case .imageTrack(let index) where scene.imageTracks.indices.contains(index)
+            && !scene.imageTracks[index].locked:
             scene.imageTracks[index].cues = cues
-        case .mediaTrack(let index) where scene.audioTracks.indices.contains(index):
+        case .mediaTrack(let index) where scene.audioTracks.indices.contains(index)
+            && !scene.audioTracks[index].locked:
             scene.audioTracks[index].cues = cues
         default:
             break
@@ -929,6 +1056,12 @@ final class StudioModel {
             imageSamples.append((time, imagePen.x, imagePen.y, imagePen.scale, imagePen.rotation))
         }
         guard imageSamples.count >= 2, let target = imageRecordTarget else { return }
+        switch target.owner {
+        case .imageTrack(let index):
+            guard scene.imageTracks[safe: index]?.locked == false else { return }
+        case .mediaTrack(let index):
+            guard scene.audioTracks[safe: index]?.locked == false else { return }
+        }
         let recordedCueID = target.cueID
         let origin = imageSamples[0]
         guard imageSamples.contains(where: {
@@ -1051,6 +1184,7 @@ final class StudioModel {
 
     /// Stage drag while the Scenes track is selected: grab-the-world pan.
     func cameraFreeformDrag(dx: Double, dy: Double) {
+        guard scene.backgroundTracks.first?.locked != true else { return }
         var pen = cameraFreeform ?? currentCueCamera()
         pen.x = min(1.5, max(-0.5, pen.x - dx / max(0.1, pen.zoom)))
         pen.y = min(1.5, max(-0.5, pen.y - dy / max(0.1, pen.zoom)))
@@ -1062,7 +1196,7 @@ final class StudioModel {
         guard let pen = cameraFreeform else { return }
         defer { cameraFreeform = nil }
         let id = selectedBackgroundCue ?? scene.activeBackgroundCue(at: time)?.id
-        guard let id else { return }
+        guard let id, !isBackgroundCueLocked(id) else { return }
         registerUndoSnapshot(label: "Set Frame Start")
         for ti in scene.backgroundTracks.indices {
             if let ci = scene.backgroundTracks[ti].cues.firstIndex(where: { $0.id == id }) {
@@ -1096,7 +1230,8 @@ final class StudioModel {
             cameraRecording = false
             cameraSamples = []
         }
-        guard cameraSamples.count >= 2, !scene.backgroundTracks.isEmpty else { return }
+        guard cameraSamples.count >= 2,
+              scene.backgroundTracks.first?.locked == false else { return }
         registerUndoSnapshot(label: "Record Camera")
         // Simplify: drop samples that barely deviate from their neighbours' line.
         var pts = cameraSamples
@@ -1183,6 +1318,7 @@ final class StudioModel {
 
     func lightKey(_ key: LightKey, down: Bool) {
         if down {
+            if let kind = selectedTrackKind, isTrackLocked(kind) { return }
             if heldLightKeys.isEmpty, selectedVisualCueOnSelectedTrack, !recording, !playing {
                 registerUndoSnapshot(label: "Place Visual")
             }
@@ -1258,7 +1394,7 @@ final class StudioModel {
         // Paused nudge of the FRAME while the Scenes track is selected: the
         // preview pen moves; "Set start state" commits it.
         if !playing, let key = selectedTrackKey,
-           scene.backgroundTracks.contains(where: { $0.id == key }) {
+           scene.backgroundTracks.contains(where: { $0.id == key && !$0.locked }) {
             var pen = cameraFreeform ?? currentCueCamera()
             pen.x = min(1.5, max(-0.5, pen.x + dx * cameraPanSpeed * dt))
             pen.y = min(1.5, max(-0.5, pen.y + dy * cameraPanSpeed * dt))
@@ -1269,6 +1405,7 @@ final class StudioModel {
         // Paused nudge of the selected/active cue on the selected light track.
         guard !playing, let key = selectedTrackKey,
               let li = scene.lightTracks.firstIndex(where: { $0.id == key }),
+              !scene.lightTracks[li].locked,
               !scene.lightTracks[li].cues.isEmpty else { return }
         let ci = scene.lightTracks[li].cues.firstIndex { selectedLightCue == $0.id }
             ?? scene.lightTracks[li].cues.firstIndex { time >= $0.start && time < $0.start + $0.dur }
@@ -1302,7 +1439,7 @@ final class StudioModel {
             lightSamples = []
         }
         guard let li = lightRecordTrack, scene.lightTracks.indices.contains(li),
-              lightSamples.count >= 2 else { return }
+              !scene.lightTracks[li].locked, lightSamples.count >= 2 else { return }
         registerUndoSnapshot(label: "Record Light Path")
         let t0 = lightSamples[0].t
         let tEnd = lightSamples[lightSamples.count - 1].t
@@ -1368,6 +1505,9 @@ final class StudioModel {
 
     func record() {
         if recording || playing { pause(); return }
+        guard file?.isMicRecording != true else { return }
+        if let kind = selectedTrackKind, isTrackLocked(kind) { return }
+        characterRecordUndoScene = nil
         // A selected image cue records its motion: drag it around as time rolls.
         if let id = selectedImageCue, let owner = selectedImageCueOwner,
            selectedVisualCueOnSelectedTrack {
@@ -1427,9 +1567,16 @@ final class StudioModel {
             file?.audioEngine?.syncPlayback(self)
             return
         }
-        guard !selection.isEmpty else { return }
+        let editableSelection = selection.filter {
+            scene.characters[safe: $0]?.locked == false
+        }
+        guard !editableSelection.isEmpty else { return }
+        // Character events are written live during a take. Capture the scene
+        // before any placement or recStart changes so one Undo removes the
+        // complete take and restores the exact pre-recording state.
+        characterRecordUndoScene = scene
         // Freeform placement at the start becomes the take's complete start state.
-        for i in selection where startStateMismatch(characterIndex: i) {
+        for i in editableSelection where startStateMismatch(characterIndex: i) {
             if let pose = displayedPose(characterIndex: i) {
                 var c = scene.characters[i]
                 c.x = pose.x
@@ -1442,7 +1589,7 @@ final class StudioModel {
             }
         }
         clearFreeform()
-        recTargets = selection
+        recTargets = Set(editableSelection)
         recStartTime = time
         recPunched = [:]
         for i in recTargets {
@@ -1476,10 +1623,12 @@ final class StudioModel {
         }
         // Close any still-held keys so no segment dangles open.
         for code in heldCodes { recordEvent(code: code, down: false) }
+        let undoScene = characterRecordUndoScene
+        characterRecordUndoScene = nil
         recording = false
         recTargets = []
         recPunched = [:]
-        registerUndoSnapshot(label: "Record")
+        if let undoScene { registerStageUndo(undoScene, label: "Record") }
     }
 
     /// Web recEvent: only armed groups; first press of a group replaces that group
@@ -1490,7 +1639,7 @@ final class StudioModel {
         let stamp = (time * 1000).rounded() / 1000
         for i in recTargets {
             var c = scene.characters[i]
-            guard c.armedGroups.contains(group) else { continue }
+            guard !c.locked, c.armedGroups.contains(group) else { continue }
             if recPunched[i]?.contains(group) != true {
                 recPunched[i, default: []].insert(group)
                 // Which codes of this group are held open across the record point?
@@ -1566,7 +1715,8 @@ final class StudioModel {
     }
 
     private func freeformKey(code: EventCode, down: Bool) {
-        for i in selection where scene.characters.indices.contains(i) {
+        for i in selection where scene.characters.indices.contains(i)
+            && !scene.characters[i].locked {
             if freeformStarts[i] == nil {
                 let pose = simulator.pose(characterIndex: i, at: time)
                 freeformStarts[i] = StartPose(x: pose.x, depth: pose.depth, face: pose.face,
@@ -1630,6 +1780,7 @@ final class StudioModel {
     /// Saves the complete spatial state shown on stage as the character's start.
     func commitStartState(characterIndex i: Int) {
         guard scene.characters.indices.contains(i),
+              !scene.characters[i].locked,
               let pose = displayedPose(characterIndex: i) else { return }
         registerUndoSnapshot(label: "Set Start State")
         var c = scene.characters[i]
@@ -1667,6 +1818,7 @@ final class StudioModel {
 
     /// Right-click duplicate: copies the track, its clips/cues, and media refs.
     func duplicateTrack(_ kind: TrackRowKind) {
+        guard !isTrackLocked(kind) else { return }
         registerUndoSnapshot(label: "Duplicate Track")
         func cloneClips(_ clips: [AudioClip]) -> [AudioClip] {
             clips.map { clip in
@@ -1708,7 +1860,9 @@ final class StudioModel {
     }
 
     func removeCharacter(at index: Int) {
-        guard scene.characters.indices.contains(index) else { return }
+        guard file?.isMicRecording != true,
+              scene.characters.indices.contains(index),
+              !scene.characters[index].locked else { return }
         registerUndoSnapshot(label: "Remove Character")
         scene.characters.remove(at: index)
         selectedReaction = nil
@@ -1723,7 +1877,8 @@ final class StudioModel {
 
     /// Edits the base (t=0) outfit regardless of where the playhead is.
     func setBaseOutfit(characterIndex: Int, slot: Int, name: String?) {
-        guard scene.characters.indices.contains(characterIndex) else { return }
+        guard scene.characters.indices.contains(characterIndex),
+              !scene.characters[characterIndex].locked else { return }
         registerUndoSnapshot(label: "Outfit")
         var c = scene.characters[characterIndex]
         if let name { c.baseOutfit[slot] = name } else { c.baseOutfit.removeValue(forKey: slot) }
@@ -1732,7 +1887,8 @@ final class StudioModel {
 
     /// Timed wardrobe change at an explicit time (the lane's wardrobe strip).
     func setOutfitEvent(characterIndex: Int, slot: Int, name: String?, at t: Double) {
-        guard scene.characters.indices.contains(characterIndex) else { return }
+        guard scene.characters.indices.contains(characterIndex),
+              !scene.characters[characterIndex].locked else { return }
         registerUndoSnapshot(label: "Outfit Change")
         var c = scene.characters[characterIndex]
         let ev = PerfEvent.outfit(t: t, slot: slot, name: name)
@@ -1742,7 +1898,8 @@ final class StudioModel {
     }
 
     func setOutfit(characterIndex: Int, slot: Int, name: String?) {
-        guard scene.characters.indices.contains(characterIndex) else { return }
+        guard scene.characters.indices.contains(characterIndex),
+              !scene.characters[characterIndex].locked else { return }
         registerUndoSnapshot(label: "Outfit")
         var c = scene.characters[characterIndex]
         if time < 0.05 {
@@ -1768,7 +1925,8 @@ final class StudioModel {
     }
 
     func addImageCue(trackIndex: Int, assetID: String, at t: Double) {
-        guard scene.imageTracks.indices.contains(trackIndex) else { return }
+        guard scene.imageTracks.indices.contains(trackIndex),
+              !scene.imageTracks[trackIndex].locked else { return }
         registerUndoSnapshot(label: "Add Visual Cue")
         let cue = ImageCue(id: ShowDocumentFile.newID(), assetID: assetID,
                            start: t, dur: 5, from: ImagePlacement())
@@ -1802,13 +1960,15 @@ final class StudioModel {
 
     func setLightCueStart(track: Int, id: String, start: Double) {
         guard scene.lightTracks.indices.contains(track),
+              !scene.lightTracks[track].locked,
               let ci = scene.lightTracks[track].cues.firstIndex(where: { $0.id == id }) else { return }
         scene.lightTracks[track].cues[ci].start = start
     }
 
     /// ⌘-drag on a chain: clone the whole run in place; returns the copies' ids.
     func duplicateLightRun(track: Int, containing id: String) -> [String]? {
-        guard scene.lightTracks.indices.contains(track) else { return nil }
+        guard scene.lightTracks.indices.contains(track),
+              !scene.lightTracks[track].locked else { return nil }
         let run = Self.lightRun(in: scene.lightTracks[track].cues, containing: id)
         guard !run.isEmpty else { return nil }
         registerUndoSnapshot(label: "Duplicate Light Take")
@@ -1828,6 +1988,7 @@ final class StudioModel {
     func splitLightCue(id: String, at t: Double) {
         for ti in scene.lightTracks.indices {
             guard let ci = scene.lightTracks[ti].cues.firstIndex(where: { $0.id == id }) else { continue }
+            guard !scene.lightTracks[ti].locked else { return }
             var first = scene.lightTracks[ti].cues[ci]
             guard t > first.start + 0.1, t < first.start + first.dur - 0.1 else { return }
             registerUndoSnapshot(label: "Split Light")
@@ -1850,6 +2011,7 @@ final class StudioModel {
 
     /// ⌘-click on an image cue: split at t, meeting at the interpolated placement.
     func splitImageCue(id: String, at t: Double) {
+        guard !isImageCueLocked(id) else { return }
         func split(_ cues: inout [ImageCue]) -> Bool {
             guard let ci = cues.firstIndex(where: { $0.id == id }) else { return false }
             var first = cues[ci]
@@ -1879,6 +2041,7 @@ final class StudioModel {
     func splitBackgroundCue(id: String, at t: Double) {
         for ti in scene.backgroundTracks.indices {
             guard let ci = scene.backgroundTracks[ti].cues.firstIndex(where: { $0.id == id }) else { continue }
+            guard !scene.backgroundTracks[ti].locked else { return }
             var first = scene.backgroundTracks[ti].cues[ci]
             guard t > first.start + 0.1, t < first.start + first.dur - 0.1 else { return }
             registerUndoSnapshot(label: "Split Background")
@@ -1902,6 +2065,8 @@ final class StudioModel {
 
     func addBackgroundCue(assetID: String, assetName: String, at startTime: Double? = nil) {
         let time = startTime ?? self.time
+        let createsTrack = scene.backgroundTracks.isEmpty
+        guard createsTrack || !scene.backgroundTracks[0].locked else { return }
         registerUndoSnapshot(label: "Set Background")
         if scene.backgroundTracks.isEmpty {
             scene.backgroundTracks = [BackgroundTrack(id: ShowDocumentFile.newID(), name: "Scenes")]
@@ -1920,6 +2085,7 @@ final class StudioModel {
     }
 
     func removeTrack(_ row: TrackRowKind) {
+        guard file?.isMicRecording != true, !isTrackLocked(row) else { return }
         registerUndoSnapshot(label: "Delete Track")
         switch row {
         case .character(let i):
@@ -1951,7 +2117,8 @@ final class StudioModel {
     /// New cue on an existing light track, seeded from where the light was
     /// last (previous cue's end state; else the next cue's start; else default).
     func addLightCue(trackIndex: Int, at t: Double) {
-        guard scene.lightTracks.indices.contains(trackIndex) else { return }
+        guard scene.lightTracks.indices.contains(trackIndex),
+              !scene.lightTracks[trackIndex].locked else { return }
         registerUndoSnapshot(label: "Add Light Cue")
         let cues = scene.lightTracks[trackIndex].cues
         let prev = cues.filter { $0.start + $0.dur <= t + 0.01 }
@@ -1977,6 +2144,137 @@ final class StudioModel {
                                             name: "Light \(scene.lightTracks.count + 1)",
                                             cues: [cue]))
         selectedLightCue = cue.id
+    }
+
+    // MARK: - Production structure and track safety
+
+    /// Adds a named navigation point or a span. Sections default to the marked
+    /// export range when it contains the playhead, otherwise a useful 5 seconds.
+    @discardableResult
+    func addTimelineMarker(kind: TimelineMarker.Kind, at requestedTime: Double? = nil) -> String {
+        let start = max(0, requestedTime ?? time)
+        let number = scene.markers.filter { $0.kind == kind }.count + 1
+        let name = kind == .section ? "Section \(number)" : "Marker \(number)"
+        let duration: Double
+        if kind == .section, let range = exportRange, start >= range.from, start < range.to {
+            duration = max(0.1, range.to - start)
+        } else {
+            duration = kind == .section ? 5 : 0
+        }
+        let marker = TimelineMarker(id: ShowDocumentFile.newID(), name: name, start: start,
+                                    kind: kind, duration: duration,
+                                    color: kind == .section ? .blue : .orange)
+        registerUndoSnapshot(label: kind == .section ? "Add Section" : "Add Marker")
+        scene.markers.append(marker)
+        scene.markers.sort { $0.start < $1.start }
+        return marker.id
+    }
+
+    func updateTimelineMarker(id: String, _ transform: (inout TimelineMarker) -> Void) {
+        guard let index = scene.markers.firstIndex(where: { $0.id == id }) else { return }
+        transform(&scene.markers[index])
+        scene.markers[index].start = max(0, scene.markers[index].start)
+        scene.markers[index].duration = scene.markers[index].kind == .section
+            ? max(0.1, scene.markers[index].duration) : 0
+        scene.markers.sort { $0.start < $1.start }
+    }
+
+    func deleteTimelineMarker(id: String) {
+        guard scene.markers.contains(where: { $0.id == id }) else { return }
+        registerUndoSnapshot(label: "Delete Marker")
+        scene.markers.removeAll { $0.id == id }
+    }
+
+    func isTrackLocked(_ kind: TrackRowKind) -> Bool {
+        switch kind {
+        case .character(let i): return scene.characters[safe: i]?.locked ?? false
+        case .audio(let i): return scene.audioTracks[safe: i]?.locked ?? false
+        case .image(let i): return scene.imageTracks[safe: i]?.locked ?? false
+        case .light(let i): return scene.lightTracks[safe: i]?.locked ?? false
+        case .background(let i): return scene.backgroundTracks[safe: i]?.locked ?? false
+        }
+    }
+
+    func toggleTrackLock(_ kind: TrackRowKind) {
+        guard !recording, file?.isMicRecording != true else { return }
+        switch kind {
+        case .character(let i):
+            guard scene.characters.indices.contains(i) else { return }
+            registerUndoSnapshot(label: scene.characters[i].locked ? "Unlock Track" : "Lock Track")
+            scene.characters[i].locked.toggle()
+        case .audio(let i):
+            guard scene.audioTracks.indices.contains(i) else { return }
+            registerUndoSnapshot(label: scene.audioTracks[i].locked ? "Unlock Track" : "Lock Track")
+            scene.audioTracks[i].locked.toggle()
+        case .image(let i):
+            guard scene.imageTracks.indices.contains(i) else { return }
+            registerUndoSnapshot(label: scene.imageTracks[i].locked ? "Unlock Track" : "Lock Track")
+            scene.imageTracks[i].locked.toggle()
+        case .light(let i):
+            guard scene.lightTracks.indices.contains(i) else { return }
+            registerUndoSnapshot(label: scene.lightTracks[i].locked ? "Unlock Track" : "Lock Track")
+            scene.lightTracks[i].locked.toggle()
+        case .background(let i):
+            guard scene.backgroundTracks.indices.contains(i) else { return }
+            registerUndoSnapshot(label: scene.backgroundTracks[i].locked ? "Unlock Track" : "Lock Track")
+            scene.backgroundTracks[i].locked.toggle()
+        }
+    }
+
+    func isTrackSoloed(_ kind: TrackRowKind) -> Bool {
+        switch kind {
+        case .character(let i): return scene.characters[safe: i]?.solo ?? false
+        case .audio(let i): return scene.audioTracks[safe: i]?.solo ?? false
+        default: return false
+        }
+    }
+
+    func toggleTrackSolo(_ kind: TrackRowKind) {
+        switch kind {
+        case .character(let i):
+            guard scene.characters.indices.contains(i) else { return }
+            registerUndoSnapshot(label: scene.characters[i].solo ? "Unsolo Track" : "Solo Track")
+            scene.characters[i].solo.toggle()
+        case .audio(let i):
+            guard scene.audioTracks.indices.contains(i) else { return }
+            registerUndoSnapshot(label: scene.audioTracks[i].solo ? "Unsolo Track" : "Solo Track")
+            scene.audioTracks[i].solo.toggle()
+        default:
+            return
+        }
+        resyncAudioIfPlaying()
+    }
+
+    func isClipLocked(_ id: String) -> Bool {
+        for character in scene.characters where character.clips.contains(where: { $0.id == id }) {
+            return character.locked
+        }
+        for track in scene.audioTracks where track.clips.contains(where: { $0.id == id }) {
+            return track.locked
+        }
+        return false
+    }
+
+    func isImageCueLocked(_ id: String) -> Bool {
+        for track in scene.imageTracks where track.cues.contains(where: { $0.id == id }) {
+            return track.locked
+        }
+        for track in scene.audioTracks where track.cues.contains(where: { $0.id == id }) {
+            return track.locked
+        }
+        return false
+    }
+
+    func isBackgroundCueLocked(_ id: String) -> Bool {
+        scene.backgroundTracks.contains {
+            $0.locked && $0.cues.contains(where: { $0.id == id })
+        }
+    }
+
+    func isLightCueLocked(_ id: String) -> Bool {
+        scene.lightTracks.contains {
+            $0.locked && $0.cues.contains(where: { $0.id == id })
+        }
     }
 
     /// The selected light cue's track/cue indices, if any.
@@ -2008,7 +2306,9 @@ final class StudioModel {
 
     /// Applies a validated raw character edit as one ordinary timeline edit.
     func applyAdvancedJSON(character: Character, at index: Int) {
-        guard scene.characters.indices.contains(index) else { return }
+        guard file?.isMicRecording != true,
+              scene.characters.indices.contains(index),
+              !scene.characters[index].locked else { return }
         pause()
         registerUndoSnapshot(label: "Edit Character JSON")
         scene.characters[index] = character
@@ -2020,11 +2320,24 @@ final class StudioModel {
     /// stage because all of them are exposed by the full-show JSON scope.
     func applyAdvancedJSON(document newDocument: ShowDocument,
                            preferredCharacter: Int) {
+        guard file?.isMicRecording != true else { return }
         pause()
         registerDocumentUndoSnapshot(label: "Edit Show JSON",
                                      preferredCharacter: preferredCharacter)
         restoreDocument(DocumentUndoSnapshot(document: newDocument, time: time,
                                              preferredCharacter: preferredCharacter))
+    }
+
+    /// Restores a named project checkpoint as one undoable document operation.
+    func restoreCheckpoint(_ checkpoint: ShowCheckpoint) {
+        guard file?.isMicRecording != true else { return }
+        pause()
+        registerDocumentUndoSnapshot(label: "Restore Checkpoint",
+                                     preferredCharacter: selection.first ?? 0)
+        var restored = checkpoint.document
+        if restored.version < 4 { restored.version = 4 }
+        restoreDocument(DocumentUndoSnapshot(document: restored, time: checkpoint.time,
+                                             preferredCharacter: selection.first ?? 0))
     }
 
     private func clearSelectionAfterJSONEdit(preferredCharacter: Int) {

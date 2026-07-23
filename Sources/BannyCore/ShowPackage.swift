@@ -3,7 +3,7 @@ import Foundation
 /// Reads/writes the `.bannyshow` document package:
 /// ```
 /// MyShow.bannyshow/
-///   show.json              — ShowDocument (schema v3)
+///   show.json              — ShowDocument (schema v4)
 ///   audio/<clipId>.<ext>   — audio sources
 ///   assets/<assetId>.<ext> — bank assets (images/videos; v2 wrote bg/<sceneId>)
 ///   thumbnail.png          — optional, written by the app

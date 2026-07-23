@@ -25,7 +25,9 @@ extension StudioModel {
     }
 
     func canCaptureReaction(characterIndex: Int) -> Bool {
-        !selectedMarks.isEmpty && selectedMarks.allSatisfy { $0.character == characterIndex }
+        scene.characters[safe: characterIndex]?.locked == false
+            && !selectedMarks.isEmpty
+            && selectedMarks.allSatisfy { $0.character == characterIndex }
     }
 
     func suggestedReactionName() -> String {
@@ -97,6 +99,7 @@ extension StudioModel {
     func insertReaction(_ reactionID: String, characterIndex: Int,
                         at start: Double? = nil) -> String? {
         guard scene.characters.indices.contains(characterIndex),
+              !scene.characters[characterIndex].locked,
               let definition = scene.reactionLibrary.first(where: { $0.id == reactionID }) else { return nil }
         registerUndoSnapshot(label: "Insert Reaction")
         let block = ReactionInstance(id: ShowDocumentFile.newID(), reactionID: reactionID,
@@ -109,6 +112,7 @@ extension StudioModel {
 
     func setReactionBlock(character: Int, id: String, start: Double, dur: Double) {
         guard scene.characters.indices.contains(character),
+              !scene.characters[character].locked,
               let index = scene.characters[character].reactions.firstIndex(where: { $0.id == id })
         else { return }
         scene.characters[character].reactions[index].start = max(0, start)
@@ -119,6 +123,7 @@ extension StudioModel {
     func setSelectedReactionIntensity(_ intensity: Double) {
         guard let selectedReaction,
               scene.characters.indices.contains(selectedReaction.character),
+              !scene.characters[selectedReaction.character].locked,
               let index = scene.characters[selectedReaction.character].reactions
                 .firstIndex(where: { $0.id == selectedReaction.id }) else { return }
         scene.characters[selectedReaction.character].reactions[index].intensity = min(4, max(0, intensity))
@@ -127,6 +132,7 @@ extension StudioModel {
     func setSelectedReactionDuration(_ duration: Double) {
         guard let selectedReaction,
               scene.characters.indices.contains(selectedReaction.character),
+              !scene.characters[selectedReaction.character].locked,
               let index = scene.characters[selectedReaction.character].reactions
                 .firstIndex(where: { $0.id == selectedReaction.id }) else { return }
         scene.characters[selectedReaction.character].reactions[index].dur = max(0.08, duration)
@@ -143,6 +149,7 @@ extension StudioModel {
     @discardableResult
     func duplicateReactionBlock(character: Int, id: String) -> String? {
         guard scene.characters.indices.contains(character),
+              !scene.characters[character].locked,
               let source = scene.characters[character].reactions.first(where: { $0.id == id })
         else { return nil }
         registerUndoSnapshot(label: "Duplicate Reaction")
@@ -168,6 +175,7 @@ extension StudioModel {
     /// reaction behavior while making every change editable.
     func expandReactionBlock(character: Int, id: String) {
         guard scene.characters.indices.contains(character),
+              !scene.characters[character].locked,
               let blockIndex = scene.characters[character].reactions.firstIndex(where: { $0.id == id })
         else { return }
         let block = scene.characters[character].reactions[blockIndex]

@@ -11,16 +11,67 @@ import BannyCore
 @MainActor
 @Observable
 final class MicRecorder {
-    private var recorder: AVAudioRecorder?
-    private var url: URL?
-    private(set) var isRecording = false
-    private var startTime: Double = 0
-
-    func toggle(model: StudioModel, characterIndex: Int?) {
-        if isRecording { stop(model: model, characterIndex: characterIndex) } else { start(model: model) }
+    private struct Target {
+        let characterIndex: Int?
+        let audioTrackIndex: Int?
     }
 
-    private func start(model: StudioModel) {
+    private var recorder: AVAudioRecorder?
+    private var url: URL?
+    private var target: Target?
+    private var meterTimer: Timer?
+    private var startedTransport = false
+    private(set) var isRecording = false
+    private var startTime: Double = 0
+    private(set) var elapsed: Double = 0
+    private(set) var level: Double = 0
+    private(set) var lastError: String?
+
+    func toggle(model: StudioModel, characterIndex: Int?, audioTrackIndex: Int? = nil) {
+        if isRecording {
+            stop(model: model)
+            return
+        }
+        guard !model.recording else {
+            lastError = "Stop the current performance recording before recording audio."
+            return
+        }
+        if let i = characterIndex, model.scene.characters[safe: i]?.locked == true {
+            lastError = "Unlock the character track before recording audio."
+            return
+        }
+        if let i = audioTrackIndex, model.scene.audioTracks[safe: i]?.locked == true {
+            lastError = "Unlock the media track before recording audio."
+            return
+        }
+
+        switch AVCaptureDevice.authorizationStatus(for: .audio) {
+        case .authorized:
+            start(model: model, target: Target(characterIndex: characterIndex,
+                                               audioTrackIndex: audioTrackIndex))
+        case .notDetermined:
+            AVCaptureDevice.requestAccess(for: .audio) { granted in
+                Task { @MainActor in
+                    if granted {
+                        self.start(model: model, target: Target(characterIndex: characterIndex,
+                                                               audioTrackIndex: audioTrackIndex))
+                    } else {
+                        self.lastError = "Microphone access was not granted. Enable it in System Settings → Privacy & Security → Microphone."
+                    }
+                }
+            }
+        case .denied, .restricted:
+            lastError = "Microphone access is off. Enable Banny Studio in System Settings → Privacy & Security → Microphone."
+        @unknown default:
+            lastError = "The microphone is unavailable."
+        }
+    }
+
+    func dismissError() {
+        lastError = nil
+    }
+
+    private func start(model: StudioModel, target: Target) {
         #if os(iOS)
         try? AVAudioSession.sharedInstance().setCategory(.playAndRecord, options: [.defaultToSpeaker])
         try? AVAudioSession.sharedInstance().setActive(true)
@@ -33,24 +84,85 @@ final class MicRecorder {
             AVNumberOfChannelsKey: 1,
             AVEncoderAudioQualityKey: AVAudioQuality.high.rawValue,
         ]
-        guard let rec = try? AVAudioRecorder(url: url, settings: settings) else { return }
+        guard let rec = try? AVAudioRecorder(url: url, settings: settings) else {
+            lastError = "Banny Studio could not open the selected microphone."
+            return
+        }
+        rec.isMeteringEnabled = true
+        guard rec.prepareToRecord(), rec.record() else {
+            lastError = "Banny Studio could not start microphone recording."
+            try? FileManager.default.removeItem(at: url)
+            return
+        }
         self.url = url
+        self.target = target
         startTime = model.time
-        rec.record()
         recorder = rec
+        elapsed = 0
+        level = 0
+        lastError = nil
         isRecording = true
+        startedTransport = !model.playing
+        if startedTransport { model.play() }
+        meterTimer?.invalidate()
+        meterTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] timer in
+            MainActor.assumeIsolated {
+                guard let self else {
+                    timer.invalidate()
+                    return
+                }
+                guard let recorder = self.recorder else { return }
+                recorder.updateMeters()
+                self.elapsed = recorder.currentTime
+                self.level = min(1, max(0,
+                    (Double(recorder.averagePower(forChannel: 0)) + 60) / 60))
+            }
+        }
     }
 
-    private func stop(model: StudioModel, characterIndex: Int?) {
-        guard let rec = recorder, let url else { return }
+    private func stop(model: StudioModel) {
+        guard let rec = recorder, let url, let target else { return }
+        let measuredDuration = rec.currentTime
         rec.stop()
+        meterTimer?.invalidate()
+        meterTimer = nil
         recorder = nil
         isRecording = false
-        let dur = rec.currentTime > 0 ? rec.currentTime : (try? AVAudioFile(forReading: url))
+        if startedTransport, model.playing { model.pause() }
+        startedTransport = false
+        defer {
+            try? FileManager.default.removeItem(at: url)
+            self.url = nil
+            self.target = nil
+            elapsed = 0
+            level = 0
+            #if os(iOS)
+            try? AVAudioSession.sharedInstance()
+                .setActive(false, options: .notifyOthersOnDeactivation)
+            #endif
+        }
+        let dur = measuredDuration > 0 ? measuredDuration : (try? AVAudioFile(forReading: url))
             .map { Double($0.length) / $0.processingFormat.sampleRate } ?? 0
-        guard dur > 0.2, let data = try? Data(contentsOf: url) else { return }
+        guard dur > 0.2, let data = try? Data(contentsOf: url) else {
+            lastError = "The recording was too short to keep."
+            return
+        }
+        if let index = target.characterIndex {
+            guard model.scene.characters[safe: index]?.locked == false else {
+                lastError = "The destination character track is no longer available."
+                return
+            }
+        }
+        if let index = target.audioTrackIndex {
+            guard model.scene.audioTracks[safe: index]?.locked == false else {
+                lastError = "The destination media track is no longer available."
+                return
+            }
+        }
         model.addRecordedClip(data: data, ext: "m4a", dur: dur,
-                              startTime: startTime, characterIndex: characterIndex)
+                              startTime: startTime,
+                              characterIndex: target.characterIndex,
+                              audioTrackIndex: target.audioTrackIndex)
     }
 }
 

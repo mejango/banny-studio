@@ -38,10 +38,20 @@ struct WideEditor: View {
 
     @AppStorage("timelineHeight") private var timelineHeight: Double = 230
     @AppStorage("studioLightMode") private var lightMode = false
+    @AppStorage("contextSmartBarVisible") private var contextSmartBarVisible = false
+    @Environment(\.undoManager) private var undoManager
     private var theme: Theme { lightMode ? .light : .dark }
     @State private var dividerDragBase: Double?
+    @State private var drawer: WorkspaceDrawerMode? = {
+        #if DEBUG
+        return UserDefaults.standard.string(forKey: "debugWorkspaceDrawer")
+            .flatMap(WorkspaceDrawerMode.init(rawValue:))
+        #else
+        return nil
+        #endif
+    }()
 
-    private let headerH = 36.0
+    private let headerH = 44.0
 
     var body: some View {
         GeometryReader { geo in
@@ -61,16 +71,59 @@ struct WideEditor: View {
             let stageBoxH = availH - 9 - tlH
             VStack(spacing: 0) {
                 header
-                StageView(model: model, file: file)
-                    .frame(width: CGFloat(stageWidth), height: CGFloat(stageBoxH))
-                    .background(Color.black)
-                    .overlay(alignment: .bottom) {
-                        if showDeck {
-                            PerformanceDeck(model: model)
+                ZStack(alignment: .trailing) {
+                    StageView(model: model, file: file)
+                        .frame(width: CGFloat(stageWidth), height: CGFloat(stageBoxH))
+                        .background(Color.black)
+                        .overlay(alignment: .bottom) {
+                            if showDeck {
+                                PerformanceDeck(model: model)
+                            } else if !model.recording {
+                                if contextSmartBarVisible {
+                                    ContextSmartBar(
+                                        model: model,
+                                        drawer: $drawer,
+                                        onDismiss: hideQuickControls)
+                                        .padding(.bottom, 12)
+                                        .transition(.move(edge: .bottom).combined(with: .opacity))
+                                } else if model.selectedTrackKind != nil {
+                                    Button(action: showQuickControls) {
+                                        Image(systemName: "slider.horizontal.3")
+                                            .font(.system(size: 11, weight: .semibold))
+                                            .frame(width: 28, height: 26)
+                                            .background(.ultraThinMaterial, in: Capsule())
+                                    }
+                                    .buttonStyle(.plain)
+                                    .help("Show quick controls")
+                                    .accessibilityLabel("Show quick controls")
+                                    .accessibilityIdentifier("smart-bar-show")
+                                    .frame(maxWidth: .infinity, alignment: .trailing)
+                                    .padding(.trailing, 12)
+                                    .padding(.bottom, 12)
+                                    .transition(.opacity)
+                                }
+                            }
                         }
+                        .overlay(alignment: .top) {
+                            if model.recording {
+                                RecordingHUD(model: model)
+                                    .padding(.top, 12)
+                            }
+                        }
+
+                    if drawer != nil {
+                        WorkspaceDrawer(model: model, file: file, mode: $drawer)
+                            .frame(width: min(350, max(300, geo.size.width * 0.32)),
+                                   height: CGFloat(stageBoxH))
+                            .transition(.move(edge: .trailing).combined(with: .opacity))
                     }
+                }
+                .frame(width: CGFloat(stageWidth), height: CGFloat(stageBoxH))
+                .clipped()
                 divider(maxHeight: availH - 9)
-                StudioTimelineView(model: model, file: file, showShip: false)
+                StudioTimelineView(model: model, file: file, showShip: false,
+                                   showTransport: false,
+                                   onInspectTrack: { row in openInspector(for: row) })
                     .frame(height: CGFloat(tlH), alignment: .top)
                     .clipped()
             }
@@ -82,31 +135,67 @@ struct WideEditor: View {
     }
 
     private var header: some View {
-        HStack(spacing: 16) {
+        HStack(spacing: 10) {
             Image(lightMode ? "HeaderLogo" : "HeaderLogoDark")
                 .resizable()
                 .interpolation(.none)
                 .scaledToFit()
                 // Dark variant carries a 7px outline outside the glyphs; scale
                 // so the BLACK eyes render at the same size in both themes.
-                .frame(height: lightMode ? 18 : 20.1)
+                .frame(height: lightMode ? 17 : 19)
             Text("BANNY STUDIO")
-                .font(.system(size: 22, weight: .heavy, design: .rounded))
-                .kerning(2)
+                .font(.system(size: 14, weight: .heavy, design: .rounded))
+                .kerning(1.2)
                 // Match the logo art: black in light mode, off-white in dark.
                 .foregroundStyle(lightMode ? Color.black
                                            : Color(red: 0.92, green: 0.92, blue: 0.92))
-            ThemeToggle()
-                // kerning(2) trails the wordmark's last glyph; pull back so the
-                // icon sits at the same visual gap as logo-to-title.
-                .padding(.leading, -4)
-            Spacer()
+            Divider().frame(height: 18)
+            ProjectMenu(model: model, file: file)
+            Spacer(minLength: 8)
+            WorkspaceUndoButtons(undoManager: undoManager)
+            WorkspaceTransport(model: model)
+            Spacer(minLength: 8)
             SaveBadge(indicator: file.saveIndicator, lightMode: lightMode)
-            ProjectMenu()
+            WorkspacePanelButton(title: "Browse", systemImage: "square.grid.2x2",
+                                 active: drawer == .browse,
+                                 accessibilityID: "workspace-browse") {
+                toggleDrawer(.browse)
+            }
+            WorkspacePanelButton(title: "Inspect", systemImage: "slider.horizontal.3",
+                                 active: drawer == .inspect,
+                                 accessibilityID: "workspace-inspect") {
+                toggleDrawer(.inspect)
+            }
+            ShipButton(model: model, file: file, compact: true)
+            ThemeToggle()
         }
-        .padding(.horizontal, 14)
+        .padding(.horizontal, 12)
         .frame(height: CGFloat(headerH))
         .background(theme.header)
+    }
+
+    private func toggleDrawer(_ requested: WorkspaceDrawerMode) {
+        withAnimation(.easeInOut(duration: 0.18)) {
+            drawer = drawer == requested ? nil : requested
+        }
+    }
+
+    private func hideQuickControls() {
+        withAnimation(.easeInOut(duration: 0.18)) {
+            contextSmartBarVisible = false
+        }
+    }
+
+    private func showQuickControls() {
+        withAnimation(.easeInOut(duration: 0.18)) {
+            contextSmartBarVisible = true
+        }
+    }
+
+    private func openInspector(for row: TrackRow) {
+        model.selectedTrackKey = row.key(in: model.scene)
+        if case .character(let index) = row { model.selection = [index] }
+        withAnimation(.easeInOut(duration: 0.18)) { drawer = .inspect }
     }
 
     /// Drag up to grow the timeline (shrinking the stage), down to shrink it.
@@ -143,7 +232,7 @@ struct CompactEditor: View {
     enum Mode: String, CaseIterable {
         case stage = "Stage"
         case timeline = "Timeline"
-        case wardrobe = "Wardrobe"
+        case inspect = "Inspect"
     }
 
     @State private var mode: Mode = .stage
@@ -167,7 +256,7 @@ struct CompactEditor: View {
                 StageView(model: model, file: file)
                     .frame(height: 180)
                 StudioTimelineView(model: model, file: file)
-            case .wardrobe:
+            case .inspect:
                 SidePanel(model: model, file: file)
             }
         }
@@ -202,8 +291,8 @@ struct SaveBadge: View {
     }
 }
 
-/// Per-track inspector — lives in each track's gutter-card popover
-/// (and the iPhone wardrobe tab via SidePanel).
+/// Complete per-track inspector. The wide workspace hosts it in the shared
+/// on-demand drawer; compact layouts and legacy callers can still present it.
 struct TrackInspector: View {
     @Bindable var model: StudioModel
     var file: ShowDocumentFile? = nil
@@ -214,24 +303,71 @@ struct TrackInspector: View {
     @State private var exportFilename = "track.bannytrack"
     @State private var exporting = false
     @State private var exportError: String?
+    @State private var dialogueExpanded = true
+    @State private var reactionsExpanded = false
+    @State private var mixExpanded = false
+    @State private var advancedExpanded = false
     @FocusState private var nameFocused: Bool
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            TextField("name", text: nameBinding)
+            TextField(namePrompt, text: nameBinding)
                 .textFieldStyle(.plain)
                 .font(.headline)
                 .focused($nameFocused)
-            switch kind {
+                .accessibilityLabel("Track name")
+                .disabled(isLocked)
+            trackSafetyControls
+            Group {
+                switch kind {
             case .character(let i):
-                AdvancedJSONSection(model: model, file: file, characterIndex: i)
-                Divider()
                 MotionSection(model: model, characterIndex: i)
-                ReactionLibrarySection(model: model, characterIndex: i)
-                MixSection(model: model, kind: kind)
+                Divider()
+                DisclosureGroup(isExpanded: $dialogueExpanded) {
+                    VStack(alignment: .leading, spacing: 12) {
+                        ScriptSection(model: model, characterIndex: i)
+                        Divider()
+                        VoiceSection(model: model, characterIndex: i)
+                        if let file {
+                            Divider()
+                            AudioSection(model: model, file: file, characterIndex: i)
+                        }
+                    }
+                    .padding(.top, 8)
+                } label: {
+                    Label("DIALOGUE & VOICE", systemImage: "text.bubble")
+                        .font(.caption.bold()).foregroundStyle(.secondary)
+                }
+                .accessibilityIdentifier("dialogue-disclosure")
+
                 // The card's wardrobe edits the character's START state; timed
                 // mid-show changes remain as recorded outfit events (white dots).
                 WardrobePanel(model: model, characterIndex: i, baseOnly: true)
+                Divider()
+                DisclosureGroup(isExpanded: $reactionsExpanded) {
+                    ReactionLibrarySection(model: model, characterIndex: i)
+                        .padding(.top, 8)
+                } label: {
+                    Label("REACTIONS", systemImage: "sparkles")
+                        .font(.caption.bold()).foregroundStyle(.secondary)
+                }
+                Divider()
+                DisclosureGroup(isExpanded: $mixExpanded) {
+                    MixSection(model: model, kind: kind)
+                        .padding(.top, 8)
+                } label: {
+                    Label("AUDIO MIX", systemImage: "dial.medium")
+                        .font(.caption.bold()).foregroundStyle(.secondary)
+                }
+                Divider()
+                DisclosureGroup(isExpanded: $advancedExpanded) {
+                    AdvancedJSONSection(model: model, file: file, characterIndex: i)
+                        .padding(.top, 8)
+                } label: {
+                    Label("ADVANCED", systemImage: "curlybraces")
+                        .font(.caption.bold()).foregroundStyle(.secondary)
+                }
+                .accessibilityIdentifier("advanced-disclosure")
             case .audio(let i):
                 MixSection(model: model, kind: kind)
                 if let file {
@@ -262,6 +398,8 @@ struct TrackInspector: View {
                     AssetBankSection(model: model, file: file)
                 }
             }
+            }
+            .disabled(isLocked)
 
             if file != nil {
                 Divider()
@@ -298,6 +436,7 @@ struct TrackInspector: View {
                             .stroke(Color.red.opacity(0.35), lineWidth: 1))
                 }
                 .buttonStyle(.plain)
+                .disabled(isLocked || file?.isMicRecording == true)
                 .confirmationDialog(deleteTitle + "?", isPresented: $confirmDelete,
                                     titleVisibility: .visible) {
                     Button(deleteTitle, role: .destructive) {
@@ -325,6 +464,46 @@ struct TrackInspector: View {
             Button("OK") { exportError = nil }
         } message: {
             Text(exportError ?? "")
+        }
+    }
+
+    private var isLocked: Bool { model.isTrackLocked(kind) }
+
+    @ViewBuilder
+    private var trackSafetyControls: some View {
+        HStack(spacing: 8) {
+            Button {
+                model.toggleTrackLock(kind)
+            } label: {
+                Label(isLocked ? "Unlock" : "Lock",
+                      systemImage: isLocked ? "lock.fill" : "lock.open")
+                    .font(.caption.bold())
+            }
+            .buttonStyle(.bordered)
+            .tint(isLocked ? .orange : nil)
+            .disabled(model.recording || file?.micRecorder.isRecording == true)
+
+            switch kind {
+            case .character, .audio:
+                Button {
+                    model.toggleTrackSolo(kind)
+                } label: {
+                    Label(model.isTrackSoloed(kind) ? "Soloed" : "Solo",
+                          systemImage: model.isTrackSoloed(kind)
+                            ? "speaker.wave.2.circle.fill" : "speaker.wave.2.circle")
+                        .font(.caption.bold())
+                }
+                .buttonStyle(.bordered)
+                .tint(model.isTrackSoloed(kind) ? .yellow : nil)
+            default:
+                EmptyView()
+            }
+            Spacer()
+        }
+        if isLocked {
+            Text("Protected from timeline, stage, inspector, and recording edits.")
+                .font(.caption2)
+                .foregroundStyle(.orange)
         }
     }
 
@@ -385,6 +564,16 @@ struct TrackInspector: View {
             })
     }
 
+    private var namePrompt: String {
+        switch kind {
+        case .character(let index): return "Banny \((index + 1) % 10)"
+        case .audio: return "Media"
+        case .image: return "Visual"
+        case .light: return "Light"
+        case .background: return "Scenes"
+        }
+    }
+
     private var stageSection: some View {
         VStack(alignment: .leading, spacing: 6) {
             Text("STAGE").font(.caption.bold()).foregroundStyle(.secondary)
@@ -421,6 +610,7 @@ struct TrackCardButton: View {
     var file: ShowDocumentFile? = nil
     let row: TrackRow
     var cardHeight: CGFloat = 54
+    var onInspect: ((TrackRow) -> Void)?
     @AppStorage("studioLightMode") private var lightMode = false
     @State private var open = false
 
@@ -428,7 +618,7 @@ struct TrackCardButton: View {
         Button {
             model.selectedTrackKey = row.key(in: model.scene)
             if case .character(let i) = row { model.selection = [i] }
-            open = true
+            if let onInspect { onInspect(row) } else { open = true }
         } label: {
             face
         }
@@ -437,11 +627,13 @@ struct TrackCardButton: View {
         .accessibilityIdentifier("track-card-\(row.key(in: model.scene))")
         .onChange(of: model.inspectorRequest) { _, req in
             if req == row.key(in: model.scene) {
-                open = true
+                if let onInspect { onInspect(row) } else { open = true }
                 model.inspectorRequest = nil
             }
         }
-        .popover(isPresented: $open) {
+        .popover(isPresented: Binding(
+            get: { onInspect == nil && open },
+            set: { open = $0 })) {
             ScrollView {
                 TrackInspector(model: model, file: file, kind: kind)
                     .padding(12)
@@ -560,19 +752,9 @@ struct SidePanel: View {
     var file: ShowDocumentFile? = nil
     @AppStorage("studioLightMode") private var lightMode = false
 
-    private var kind: TrackRowKind? {
-        guard let key = model.selectedTrackKey else { return nil }
-        for i in model.scene.characters.indices where "c-\(i)" == key { return .character(i) }
-        for (i, t) in model.scene.audioTracks.enumerated() where t.id == key { return .audio(i) }
-        for (i, t) in model.scene.imageTracks.enumerated() where t.id == key { return .image(i) }
-        for (i, t) in model.scene.lightTracks.enumerated() where t.id == key { return .light(i) }
-        for (i, t) in model.scene.backgroundTracks.enumerated() where t.id == key { return .background(i) }
-        return nil
-    }
-
     var body: some View {
         ScrollView {
-            if let kind {
+            if let kind = model.selectedTrackKind {
                 TrackInspector(model: model, file: file, kind: kind)
                     .padding(10)
             } else {
