@@ -1,8 +1,8 @@
 import Foundation
 
-/// Reads/writes the `.bannyshow` document package:
+/// Reads/writes the `.bs` document package:
 /// ```
-/// MyShow.bannyshow/
+/// MyShow.bs/
 ///   show.json              — ShowDocument (schema v4)
 ///   audio/<clipId>.<ext>   — audio sources
 ///   assets/<assetId>.<ext> — bank assets (images/videos; v2 wrote bg/<sceneId>)

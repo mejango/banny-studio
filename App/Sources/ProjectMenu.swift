@@ -2,7 +2,7 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 /// Header project dropdown: rename the current project, spin up a new one,
-/// or import a shared .bs archive (zipped .bannyshow package).
+/// or import a canonical/legacy project or `.bs.zip` share archive.
 struct ProjectMenu: View {
     @Bindable var model: StudioModel
     let file: ShowDocumentFile
@@ -24,7 +24,7 @@ struct ProjectMenu: View {
                 #endif
             }
             Divider()
-            Button("Import .bs file…") { importing = true }
+            Button("Import project…") { importing = true }
             Divider()
             Menu("Checkpoints") {
                 Button("Create checkpoint…") {
@@ -107,8 +107,7 @@ struct ProjectMenu: View {
         .focusEffectDisabled()
         #endif
         .fileImporter(isPresented: $importing,
-                      allowedContentTypes: [UTType(filenameExtension: "bs") ?? .data,
-                                            .zip, .data]) { result in
+                      allowedContentTypes: [.bannyShow, .zip, .data]) { result in
             if case .success(let url) = result { importBS(url) }
         }
     }
@@ -145,8 +144,7 @@ struct ProjectMenu: View {
         #endif
     }
 
-    /// Unpacks the archive into a fresh .bannyshow package in temp and opens
-    /// it as a normal document; the user saves it wherever they like.
+    /// Opens a private canonical copy, then asks the user where to save it.
     private func importBS(_ url: URL) {
         #if os(macOS)
         importError = BannyProjectImport.open(url)

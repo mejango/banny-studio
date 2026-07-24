@@ -1544,7 +1544,7 @@ public enum Crop: String, Codable, Sendable {
     case cover, fit, stretch, tile
 }
 
-/// Background media reference. `file` is a path inside the .bannyshow package's bg/ folder.
+/// Background media reference. `file` is a path inside the `.bs` package's legacy bg/ folder.
 public enum BackgroundSpec: Equatable, Sendable {
     case image(file: String, crop: Crop)
     case video(file: String, crop: Crop)

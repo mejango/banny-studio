@@ -43,8 +43,8 @@ swift run banny capabilities --json                    # machine contract
 swift run banny schema --example                       # canonical v4 example
 swift run banny catalog --json                         # wardrobe vocabulary
 swift run banny voices --json                          # installed TTS voices
-swift run banny new show.bs --characters 2             # editable folder
-swift run banny migrate legacy-show.bs --dry-run        # explicit v2/v3 → v4
+swift run banny new show.bs --characters 2             # editable Finder package
+swift run banny migrate legacy-show.bs --dry-run       # explicit v2/v3 → v4
 swift run banny apply show.bs patch.json --dry-run     # atomic RFC 6902
 swift run banny tts show.bs --character 1 --captions   # speech + mouth cues
 swift run banny media import show.bs take.wav \
@@ -52,13 +52,18 @@ swift run banny media import show.bs take.wav \
 swift run banny validate show.bs                       # strict preflight
 swift run banny preview show.bs frame.png --t 2        # deterministic frame
 swift run banny ship show.bs out.mp4 --720             # headless mp4 export
-swift run banny pack show.bs shareable.bs              # zipped app handoff
+swift run banny pack show.bs show.bs.zip               # standard ZIP handoff
 banny skill install --target all                       # Codex + Claude skill
 ```
 
-Read-only commands accept editable folders and zipped `.bs` archives. Mutation
-commands require an unpacked folder and reject unknown options and JSON fields.
-Use `banny capabilities --json` as the exact AI/automation contract.
+Editable, autosaving projects are `.bs` package directories. Finder presents
+each package as one document. A shared copy is an ordinary `.bs.zip` containing
+that top-level `.bs` package, so unzipping it produces an editable project.
+
+Read-only commands accept `.bs` packages and `.bs.zip` archives (plus legacy
+`.bannyshow` packages and zipped `.bs` handoffs). Mutation commands require an
+unpacked package and reject unknown options and JSON fields. Use
+`banny capabilities --json` as the exact AI/automation contract.
 
 Install without a checkout: `brew install mejango/banny/banny`.
 

@@ -20,8 +20,8 @@ refines the internals, and establishes a foundation for future show-making featu
 |---|---|
 | Architecture | Full native rewrite (no WKWebView) |
 | Rendering | Deterministic core: pure `draw(t)` compositor, parts baked to images at build time, SwiftUI `Canvas` / CoreGraphics |
-| Storage/sync | `.bannyshow` document packages on iCloud Drive; document-based SwiftUI app |
-| Sharing | System iCloud document collaboration + share sheet; rendered mp4s share anywhere |
+| Storage/sync | `.bs` document packages on iCloud Drive; document-based SwiftUI app |
+| Sharing | System iCloud collaboration plus standard `.bs.zip` copies; rendered mp4s share anywhere |
 | Packaging | One universal app target, one listing, universal purchase |
 | Touch puppeteering | Performance deck (thumbstick + hold-button cluster), game-controller layout |
 | Legacy files | One-way importer for web v1 JSON (staging/exports format) |
@@ -50,10 +50,10 @@ Three layers:
    - Stage view (Canvas), scene tabs, timeline, wardrobe/inspector, performance deck
    - Audio engine, exporter, share/collaboration UI
 
-## Document format — `.bannyshow` package
+## Document format — `.bs` package
 
 ```
-MyShow.bannyshow/
+MyShow.bs/
   show.json          — schema v2 (below)
   audio/<clipId>.m4a — audio sources as files
   bg/<sceneId>.*     — background media (png/jpg/gif/svg/mp4)
@@ -133,10 +133,10 @@ Offline and deterministic (replaces MediaRecorder capture):
 
 ## Sync, sharing, App Store
 
-- iCloud Drive syncs `.bannyshow` documents across the user's devices (ubiquity
+- iCloud Drive syncs `.bs` documents across the user's devices (ubiquity
   container, `NSDocument`/`UIDocument` via SwiftUI DocumentGroup).
-- Share a show: system collaboration (co-access) or Send Copy. Rendered videos
-  share anywhere.
+- Share a show: system collaboration (co-access) or an ordinary `.bs.zip`
+  containing the top-level `.bs` package. Rendered videos share anywhere.
 - Entitlements: iCloud Documents, ubiquity container. No push, no CloudKit custom
   DB, no accounts.
 - One listing; review notes explain it's an original content-creation tool.

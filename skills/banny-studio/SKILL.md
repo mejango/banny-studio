@@ -21,8 +21,8 @@ brief into a timing map with named sections before adding detailed performance.
 
 Plan for three deliverables:
 
-- the unpacked editable project used during production;
-- a packed `.bs` recovery/handoff copy;
+- the editable `.bs` package used during production;
+- a packed `.bs.zip` recovery/handoff copy;
 - review frames or a short review movie before the final MP4.
 
 ## Establish the contract
@@ -54,12 +54,12 @@ voice recipes, mouth timing, the single Scenes track, and export readiness.
 
 ## Safe production loop
 
-1. Create or unpack an editable folder:
+1. Create or unpack an editable package:
 
    ```sh
    banny new show.bs --characters 2
    # or
-   banny unpack shared.bs show.bs
+   banny unpack shared.bs.zip show.bs
    ```
 
 2. If an existing Studio project reports schema v2 or v3, migrate it
@@ -73,7 +73,7 @@ voice recipes, mouth timing, the single Scenes track, and export readiness.
 3. For a valuable existing project, pack a recovery snapshot before broad edits:
 
    ```sh
-   banny pack show.bs show-before-ai-edit.bs
+   banny pack show.bs show-before-ai-edit.bs.zip
    ```
 
 4. Inspect capabilities, schema, catalog, voices, current IDs, and the current
@@ -91,7 +91,7 @@ mkdir -p checks
 banny preview show.bs checks/intro.png --t 2.5
 banny ship show.bs checks/intro-review.mp4 --480 --range 0 8
 banny ship show.bs episode.mp4 --1080
-banny pack show.bs episode-editable.bs
+banny pack show.bs episode-editable.bs.zip
 ```
 
 Shipping runs the same preflight as Studio and stages output before replacing
@@ -99,7 +99,7 @@ anything. Existing output is preserved unless `--overwrite` is explicit.
 
 ## Project format
 
-Mutation commands require an unpacked folder:
+Mutation commands require an unpacked `.bs` package:
 
 ```text
 show.bs/
@@ -108,8 +108,13 @@ show.bs/
   assets/<asset-id>.* images, animated images, and video
 ```
 
-Read-only commands also accept zipped `.bs` archives. Use `unpack` before
-changing one. Never mutate an archive in place.
+Use `.bs` for every editable package. Finder presents the package directory as
+one document. `banny pack` writes an ordinary `.bs.zip` that contains the
+top-level `.bs`, so standard ZIP expansion produces an editable project.
+
+Read-only commands also accept `.bs.zip` archives. Legacy `.bannyshow`
+packages and zipped `.bs` handoffs remain readable for migration. Use `unpack`
+before changing an archive, and never mutate an archive in place.
 
 The document has one continuous `stage`, not a scenes array. It must contain
 exactly one background track, conventionally named `Scenes`; its background

@@ -56,7 +56,7 @@ private func mediaProbeCommand(_ args: [String]) async throws {
 
 private func mediaImportCommand(_ args: [String]) async throws {
     let usage = """
-    banny media import <folder.bs> <file> [--id ID] [--name NAME] [--at SECONDS] \
+    banny media import <project.bs> <file> [--id ID] [--name NAME] [--at SECONDS] \
     [--duration SECONDS] [--character N|--track ID|--background] \
     [--kind imported|microphone|speech] [--lipsync] \
     [--crop cover|fit|stretch|tile] [--x N --y N --scale N --rotation N] [--json]

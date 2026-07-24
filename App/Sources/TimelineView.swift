@@ -164,7 +164,8 @@ struct StudioTimelineView: View {
     private var theme: Theme { lightMode ? .light : .dark }
     @State private var zoom: Double = 1
     @State private var dragStartMarks: [Int: [PerfEvent]]?
-    @State private var resizing: (mark: PerfMark, leading: Bool, baseEvents: [PerfEvent])?
+    @State private var resizing: (mark: PerfMark, leading: Bool, baseEdge: Double,
+                                  baseEvents: [PerfEvent])?
     @State private var draggingClip: (id: String, baseStart: Double, baseDur: Double,
                                       baseOffset: Double, srcDur: Double, edge: Int)?
     /// A zero-distance clip drag is also a click. The press phase selects the
@@ -839,6 +840,32 @@ struct StudioTimelineView: View {
                     .padding(.trailing, 8)
                     .frame(height: exportRowH)
             }
+        }
+        .overlay(alignment: .bottomLeading) {
+            Menu {
+                Button("Zoom in") {
+                    zoom = min(16, zoom * 1.4)
+                }
+                Button("Zoom out") {
+                    zoom = max(minZoomOut, zoom / 1.4)
+                }
+                Divider()
+                Button("Fit whole show") {
+                    zoom = minZoomOut
+                    keepTime(0, atViewX: laneLabelWidth, fy: 0)
+                }
+            } label: {
+                Image(systemName: "magnifyingglass")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(theme.mutedText)
+                    .frame(width: 28, height: rulerHeight)
+                    .contentShape(Rectangle())
+            }
+            .menuStyle(.button)
+            .buttonStyle(.plain)
+            .menuIndicator(.hidden)
+            .help("Timeline zoom — pinch anywhere, or choose a precise zoom action")
+            .padding(.leading, 4)
         }
         .frame(width: laneLabelWidth, height: lanesTop)
     }
@@ -1983,9 +2010,16 @@ struct StudioTimelineView: View {
     /// Bottom band of every character lane: the wardrobe (outfit change) strip.
     private var wardrobeStripH: CGFloat { 20 }
 
-    private func characterLaneZones(h fullH: CGFloat) -> (clipTop: CGFloat, clipH: CGFloat,
-                                                          reactionTop: CGFloat, reactionH: CGFloat,
-                                                          eventTop: CGFloat, subH: CGFloat) {
+    private struct CharacterLaneZones {
+        let clipTop: CGFloat
+        let clipH: CGFloat
+        let reactionTop: CGFloat
+        let reactionH: CGFloat
+        let eventTop: CGFloat
+        let subH: CGFloat
+    }
+
+    private func characterLaneZones(h fullH: CGFloat) -> CharacterLaneZones {
         let h = fullH - wardrobeStripH
         let reactionH: CGFloat = 16
         let clipH: CGFloat = max(14, (h - presenceStripH - reactionH - 10) * 0.42)
@@ -1993,7 +2027,13 @@ struct StudioTimelineView: View {
         let reactionTop = clipTop + clipH + 2
         let eventTop = reactionTop + reactionH + 2
         let subH = max(2, (h - eventTop - 4) / CGFloat(EventGroup.allCases.count))
-        return (clipTop, clipH, reactionTop, reactionH, eventTop, subH)
+        return CharacterLaneZones(
+            clipTop: clipTop,
+            clipH: clipH,
+            reactionTop: reactionTop,
+            reactionH: reactionH,
+            eventTop: eventTop,
+            subH: subH)
     }
 
     /// The global CC strip: every character's captions, tinted per speaker body color.
@@ -2146,15 +2186,19 @@ struct StudioTimelineView: View {
             }
         }
         for mark in TimelineMath.marks(for: character.events, character: i, duration: model.duration) {
-            let my = y + zones.eventTop + CGFloat(mark.code.group.laneIndex) * zones.subH + 1
-            let rect = CGRect(x: x(forTime: mark.start), y: my,
-                              width: max(2, xw(mark.start, mark.end - mark.start)),
-                              height: max(2, zones.subH - 1))
+            let rect = markDisplayRect(mark, rowY: y, zones: zones)
             ctx.fill(Path(rect), with: .color(mark.code.group.color(light: lightMode).opacity(
                 model.selectedMarks.contains(mark) ? 1 : 0.85)))
             if model.selectedMarks.contains(mark) {
-                ctx.stroke(Path(rect.insetBy(dx: -1, dy: -1)),
+                let selectionRect = markSelectionRect(mark, rowY: y, zones: zones)
+                ctx.stroke(Path(selectionRect),
                            with: .color(lightMode ? .black : .white), lineWidth: 1)
+                for handleX in [selectionRect.minX, selectionRect.maxX] {
+                    ctx.stroke(Path { path in
+                        path.move(to: CGPoint(x: handleX, y: selectionRect.minY))
+                        path.addLine(to: CGPoint(x: handleX, y: selectionRect.maxY))
+                    }, with: .color(lightMode ? .black : .white), lineWidth: 1.5)
+                }
             }
         }
         let stripY = y + h - wardrobeStripH
@@ -2641,7 +2685,10 @@ struct StudioTimelineView: View {
             return
         }
         if let r = resizing {
-            let t = time(forX: value.location.x)
+            // Resize relative to the true event edge. Short taps intentionally
+            // draw with wider handles; using pointer time would make one jump
+            // as soon as the drag began from that enlarged visual target.
+            let t = max(0, r.baseEdge + Double(value.translation.width / pxPerSecond))
             model.scene.characters[r.mark.character].events =
                 TimelineMath.resizeMark(r.mark, leading: r.leading, to: t, in: r.baseEvents)
             return
@@ -2762,11 +2809,8 @@ struct StudioTimelineView: View {
             } else if let hit = mark(at: value.startLocation) {
                 model.selectedReaction = nil
                 model.selectedMouthCue = nil
-                let edge = 4.0
-                let startX = x(forTime: hit.start)
-                let endX = x(forTime: hit.end)
-                if abs(value.startLocation.x - startX) < edge || abs(value.startLocation.x - endX) < edge {
-                    resizing = (hit, abs(value.startLocation.x - startX) < edge,
+                if let leading = markResizeEdge(at: value.startLocation, mark: hit) {
+                    resizing = (hit, leading, leading ? hit.start : hit.end,
                                 model.scene.characters[hit.character].events)
                     return
                 }
@@ -3480,6 +3524,45 @@ struct StudioTimelineView: View {
 
     // MARK: - Hit tests
 
+    /// A tap-sized recorded action remains visible at overview zoom. Its
+    /// displayed width is centered on the true time span, so dense performance
+    /// lanes remain honest about when the action happened.
+    private func markDisplayRect(_ mark: PerfMark, rowY: CGFloat,
+                                 zones: CharacterLaneZones) -> CGRect {
+        let startX = x(forTime: mark.start)
+        let endX = x(forTime: mark.end)
+        let width = max(5, endX - startX)
+        let midX = (startX + endX) / 2
+        let y = rowY + zones.eventTop
+            + CGFloat(mark.code.group.laneIndex) * zones.subH + 1
+        return CGRect(x: midX - width / 2, y: y,
+                      width: width, height: max(3, zones.subH - 1))
+    }
+
+    /// Selection adds a quiet 14-point outline and edge handles without
+    /// changing the event's timing. This is large enough to acquire precisely
+    /// while keeping the unselected timeline visually calm.
+    private func markSelectionRect(_ mark: PerfMark, rowY: CGFloat,
+                                   zones: CharacterLaneZones) -> CGRect {
+        let display = markDisplayRect(mark, rowY: rowY, zones: zones)
+        let width = max(14, display.width)
+        return CGRect(x: display.midX - width / 2, y: display.minY - 1,
+                      width: width, height: display.height + 2)
+    }
+
+    private func markResizeEdge(at point: CGPoint, mark: PerfMark) -> Bool? {
+        let row = TrackRow.character(mark.character)
+        let zones = characterLaneZones(h: height(of: row))
+        let rect = markSelectionRect(mark, rowY: laneTop(of: row), zones: zones)
+        guard rect.insetBy(dx: -2, dy: -2).contains(point) else { return nil }
+        let leadingDistance = abs(point.x - rect.minX)
+        let trailingDistance = abs(point.x - rect.maxX)
+        guard min(leadingDistance, trailingDistance) <= 6 else { return nil }
+        // Tiny marks put both handles close together. Pick the genuinely
+        // nearest one instead of always biasing the leading edge.
+        return leadingDistance <= trailingDistance
+    }
+
     private func reaction(at point: CGPoint) -> (char: Int, block: ReactionInstance)? {
         guard case .character(let i) = row(at: point.y),
               model.scene.characters.indices.contains(i) else { return nil }
@@ -3501,15 +3584,29 @@ struct StudioTimelineView: View {
         let rowY = laneTop(of: .character(i))
         let h = height(of: .character(i))
         let zones = characterLaneZones(h: h)
-        for m in TimelineMath.marks(for: model.scene.characters[i].events, character: i,
-                                    duration: model.duration) {
-            let my = rowY + zones.eventTop + CGFloat(m.code.group.laneIndex) * zones.subH + 1
-            let rect = CGRect(x: x(forTime: m.start), y: my,
-                              width: max(6, CGFloat(m.end - m.start) * pxPerSecond),
-                              height: max(4, zones.subH - 1))
-            if rect.insetBy(dx: -2, dy: -2).contains(point) { return m }
+        let marks = TimelineMath.marks(for: model.scene.characters[i].events,
+                                       character: i, duration: model.duration)
+        return marks.compactMap { mark -> (mark: PerfMark, score: CGFloat)? in
+            let display = markDisplayRect(mark, rowY: rowY, zones: zones)
+            let hitWidth = max(14, display.width)
+            let hit = CGRect(x: display.midX - hitWidth / 2, y: display.minY - 3,
+                             width: hitWidth, height: display.height + 6)
+            guard hit.contains(point) else { return nil }
+            let startX = x(forTime: mark.start)
+            let endX = x(forTime: mark.end)
+            let distanceToTrueSpan: CGFloat
+            if point.x < startX {
+                distanceToTrueSpan = startX - point.x
+            } else if point.x > endX {
+                distanceToTrueSpan = point.x - endX
+            } else {
+                distanceToTrueSpan = 0
+            }
+            // Midpoint breaks ties when enlarged hit targets overlap.
+            return (mark, distanceToTrueSpan * 1_000 + abs(point.x - display.midX))
         }
-        return nil
+        .min { $0.score < $1.score }?
+        .mark
     }
 
     private struct MouthCueHit {

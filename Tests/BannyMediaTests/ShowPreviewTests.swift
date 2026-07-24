@@ -15,7 +15,7 @@ final class ShowPreviewTests: XCTestCase {
         // public struct is internal), so round-trip through write/read to build one —
         // equivalent to `Contents(document: doc, audioURLs: [:], assetURLs: [:])`.
         let pkgURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent("preview-pkg-\(UUID().uuidString).bannyshow")
+            .appendingPathComponent("preview-pkg-\(UUID().uuidString).bs")
         try ShowPackage.write(doc, to: pkgURL)
         defer { try? FileManager.default.removeItem(at: pkgURL) }
         let contents = try ShowPackage.read(from: pkgURL)

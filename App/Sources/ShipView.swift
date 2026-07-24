@@ -51,8 +51,8 @@ struct ShipButton: View {
                     Button("Large · 1080p\(sizeHint(.p1080, dur))") { exportVideo(.p1080) }
                     Button("Max · 4K\(sizeHint(.p2160, dur))") { exportVideo(.p2160) }
                 }
-                Button("Export project (.bs)…") {
-                    askSaveURL(suggested: "SHOW.bs") { dest in
+                Button("Share editable project (.bs.zip)…") {
+                    askSaveURL(suggested: "SHOW.bs.zip") { dest in
                         if let dest { exportProject(to: dest) }
                     }
                 }
@@ -142,32 +142,54 @@ struct ShipButton: View {
         #endif
     }
 
-    /// Packages the whole document as a single shareable .bs file (a zip of
-    /// the .bannyshow package) that any Banny Studio can import.
+    /// Packages the whole document as a standard `.bs.zip`. The archive keeps
+    /// the enclosing `.bs` package so unzipping it produces the editable
+    /// Finder document directly.
     private func exportProject(to dest: URL) {
         #if os(macOS)
         do {
+            let target = canonicalProjectArchiveURL(dest)
             let wrapper = try file.projectFileWrapper()
             let dir = FileManager.default.temporaryDirectory
                 .appendingPathComponent("banny-bs-\(UUID().uuidString)", isDirectory: true)
             try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-            let pkg = dir.appendingPathComponent("show.bannyshow")
+            defer { try? FileManager.default.removeItem(at: dir) }
+            let withoutZip = (target.lastPathComponent as NSString).deletingPathExtension
+            let packageName = withoutZip.lowercased().hasSuffix(".bs")
+                ? withoutZip
+                : withoutZip + ".bs"
+            let pkg = dir.appendingPathComponent(packageName, isDirectory: true)
             try wrapper.write(to: pkg, options: .atomic, originalContentsURL: nil)
-            let out = dir.appendingPathComponent("show.bs")
+            let out = dir.appendingPathComponent("share.bs.zip")
             let ditto = Process()
             ditto.executableURL = URL(fileURLWithPath: "/usr/bin/ditto")
-            ditto.arguments = ["-c", "-k", pkg.path, out.path]
+            ditto.arguments = ["-c", "-k", "--keepParent", pkg.path, out.path]
             try ditto.run()
             ditto.waitUntilExit()
             guard ditto.terminationStatus == 0 else {
                 exportError = "Could not package the project."
                 return
             }
-            deliver(out, to: dest)
+            deliver(out, to: target)
         } catch {
             exportError = String(describing: error)
         }
         #endif
+    }
+
+    private func canonicalProjectArchiveURL(_ requested: URL) -> URL {
+        let name = requested.lastPathComponent
+        if name.lowercased().hasSuffix(".bs.zip") { return requested }
+        let base: String
+        if name.lowercased().hasSuffix(".zip") {
+            base = (name as NSString).deletingPathExtension
+        } else if name.lowercased().hasSuffix(".bs") {
+            base = (name as NSString).deletingPathExtension
+        } else {
+            base = name
+        }
+        return requested.deletingLastPathComponent()
+            .appendingPathComponent(base + ".bs.zip")
     }
 
     private func exportVideo(_ tier: ShowExporter.Options) {

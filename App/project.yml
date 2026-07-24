@@ -15,7 +15,7 @@ settings:
     SWIFT_VERSION: "5.10"
     GENERATE_INFOPLIST_FILE: NO
     ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
-    CURRENT_PROJECT_VERSION: 12
+    CURRENT_PROJECT_VERSION: 13
     MARKETING_VERSION: 1.4.0
     DEVELOPMENT_TEAM: SY2W527QJA
     CODE_SIGN_STYLE: Automatic
@@ -86,21 +86,12 @@ targets:
             CFBundleTypeRole: Editor
             LSHandlerRank: Owner
             LSItemContentTypes: [com.banny.show]
-          - CFBundleTypeName: Banny Show Project
-            CFBundleTypeRole: Editor
-            LSHandlerRank: Owner
-            LSItemContentTypes: [com.banny.show-archive]
         UTExportedTypeDeclarations:
           - UTTypeIdentifier: com.banny.show
             UTTypeDescription: Banny Show
             UTTypeConformsTo: [com.apple.package]
             UTTypeTagSpecification:
-              public.filename-extension: [bannyshow]
-          - UTTypeIdentifier: com.banny.show-archive
-            UTTypeDescription: Banny Show Project
-            UTTypeConformsTo: [public.zip-archive]
-            UTTypeTagSpecification:
-              public.filename-extension: [bs]
+              public.filename-extension: [bs, bannyshow]
           - UTTypeIdentifier: com.banny.studio-track
             UTTypeDescription: Banny Studio Track
             UTTypeConformsTo: [public.data]

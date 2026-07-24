@@ -50,7 +50,7 @@ private struct TTSReport: Codable {
 
 func ttsCommand(_ args: [String]) async throws {
     let usage = """
-    banny tts <folder.bs> --character N [--text TEXT|--text-file FILE|--captions] \
+    banny tts <project.bs> --character N [--text TEXT|--text-file FILE|--captions] \
     [--at SECONDS] [--voice ID] [--preset NAME] [--flavor 0...1] \
     [--rate 0...1] [--pitch 0.5...2] [--name NAME] [--no-caption] \
     [--fade-in SECONDS] [--fade-out SECONDS] [--no-lipsync] \
@@ -269,7 +269,7 @@ private struct LipSyncReport: Codable {
 }
 
 func lipSyncCommand(_ args: [String]) throws {
-    let usage = "banny lipsync <folder.bs> --character N --clip ID [--clear] [--json]"
+    let usage = "banny lipsync <project.bs> --character N --clip ID [--clear] [--json]"
     guard let projectPath = args.first else { throw CLIError.usage(usage) }
     var options = CLIOptions(Array(args.dropFirst()))
     let characterNumber = try options.int("--character")

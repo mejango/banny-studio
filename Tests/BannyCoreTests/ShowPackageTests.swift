@@ -36,7 +36,7 @@ private func tempDir() throws -> URL {
         show: [ShowSegment(name: "seg", from: 0, to: 5)],
         settings: Settings(activeScene: 0, lightSize: 50))
 
-    let pkg = dir.appendingPathComponent("Test.bannyshow")
+    let pkg = dir.appendingPathComponent("Test.bs")
     try ShowPackage.write(doc,
                           audio: ["clipA": (Data([0xFF, 0xFB, 0x00]), "mp3")],
                           assets: ["s1": (Data([0x89, 0x50]), "png")],
@@ -53,7 +53,7 @@ private func tempDir() throws -> URL {
     let dir = try tempDir()
     defer { try? FileManager.default.removeItem(at: dir) }
     #expect(throws: ShowPackage.PackageError.missingShowJSON) {
-        _ = try ShowPackage.read(from: dir.appendingPathComponent("Nope.bannyshow"))
+        _ = try ShowPackage.read(from: dir.appendingPathComponent("Nope.bs"))
     }
 }
 
@@ -63,7 +63,7 @@ private func tempDir() throws -> URL {
 
     let staging = URL(fileURLWithPath: "/Users/jango/Documents/banny/show/ep1/beat1/staging/1.json")
     let result = try V1Importer.importStudio(json: Data(contentsOf: staging))
-    let pkg = dir.appendingPathComponent("ep1.bannyshow")
+    let pkg = dir.appendingPathComponent("ep1.bs")
     try ShowPackage.write(result.document, audio: result.audioFiles,
                           assets: result.backgroundFiles, to: pkg)
 

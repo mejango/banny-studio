@@ -356,7 +356,8 @@ func validatedSHA256(_ raw: String, option: String = "--if-hash") throws -> Stri
 
 func patchCommand(_ args: [String]) throws {
     let usage =
-        "banny apply <folder.bs> <patch.json|-> [--dry-run] [--if-hash SHA256] [--json]"
+        "banny apply <project.bs> <patch.json|-> "
+        + "[--dry-run] [--if-hash SHA256] [--json]"
     guard args.count >= 2 else {
         throw CLIError.usage(usage)
     }

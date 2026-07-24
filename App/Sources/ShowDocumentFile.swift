@@ -2,7 +2,13 @@ import SwiftUI
 import UniformTypeIdentifiers
 import BannyCore
 
-/// The .bannyshow package as a SwiftUI reference document:
+private struct LegacyBSArchiveError: LocalizedError {
+    var errorDescription: String? {
+        "This is a legacy zipped .bs file. Choose File > Import Project to convert it into an editable .bs project."
+    }
+}
+
+/// The `.bs` package as a SwiftUI reference document:
 /// show.json + audio/<clipId>.<ext> + bg/<sceneId>.<ext> (+ thumbnail.png).
 /// Pulses every time the document writes to disk (drives the header badge).
 @Observable
@@ -33,7 +39,8 @@ final class ShowDocumentFile: ReferenceFileDocument {
     let saveIndicator = SaveIndicator()
     typealias Snapshot = PackageSnapshot
 
-    static let readableContentTypes: [UTType] = [.bannyShow, .bannyShowArchive]
+    static let readableContentTypes: [UTType] = [.bannyShow]
+    static let writableContentTypes: [UTType] = [.bannyShow]
 
     /// The document as read from disk; the live model is created lazily on main.
     private let initialDocument: ShowDocument
@@ -112,19 +119,11 @@ final class ShowDocumentFile: ReferenceFileDocument {
 
     required init(configuration: ReadConfiguration) throws {
         let wrapper = configuration.file
-        // A .bs archive arrives as a regular file (zipped .bannyshow); the
-        // native .bannyshow arrives as a directory package.
-        if wrapper.isRegularFile, let zipData = wrapper.regularFileContents {
-            let loaded = try Self.readArchive(zipData)
-            self.initialDocument = loaded.document
-            self.audio = loaded.audio
-            self.assetsMedia = loaded.assets
-            self.checkpoints = loaded.checkpoints
-            self.packageSnapshot = PackageSnapshot(document: loaded.document,
-                                                   audio: loaded.audio,
-                                                   assetsMedia: loaded.assets,
-                                                   checkpoints: loaded.checkpoints)
-            return
+        // Older Studio releases used `.bs` for a ZIP. Never autosave a package
+        // over that regular file: import it first so conversion has a distinct,
+        // user-selected destination.
+        if wrapper.isRegularFile {
+            throw LegacyBSArchiveError()
         }
         guard let showData = wrapper.fileWrappers?["show.json"]?.regularFileContents else {
             throw CocoaError(.fileReadCorruptFile)
@@ -150,75 +149,6 @@ final class ShowDocumentFile: ReferenceFileDocument {
         self.packageSnapshot = PackageSnapshot(document: doc, audio: self.audio,
                                                assetsMedia: assets,
                                                checkpoints: self.checkpoints)
-    }
-
-    /// Expands a .bs (zipped .bannyshow) and reads its document + media.
-    /// Same `ditto` path the exporter uses in reverse.
-    private static func readArchive(_ zip: Data)
-        throws -> (document: ShowDocument, audio: [String: (data: Data, ext: String)],
-                   assets: [String: (data: Data, ext: String)],
-                   checkpoints: [ShowCheckpoint]) {
-        #if os(macOS)
-        let tmp = FileManager.default.temporaryDirectory
-            .appendingPathComponent("banny-open-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: tmp, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: tmp) }
-        let zipURL = tmp.appendingPathComponent("in.bs")
-        try zip.write(to: zipURL)
-        let outDir = tmp.appendingPathComponent("out", isDirectory: true)
-        try FileManager.default.createDirectory(at: outDir, withIntermediateDirectories: true)
-
-        let ditto = Process()
-        ditto.executableURL = URL(fileURLWithPath: "/usr/bin/ditto")
-        ditto.arguments = ["-x", "-k", zipURL.path, outDir.path]
-        try ditto.run()
-        ditto.waitUntilExit()
-        guard ditto.terminationStatus == 0 else { throw CocoaError(.fileReadCorruptFile) }
-
-        // The package root is wherever show.json landed (ditto's root layout
-        // varies), so find it rather than assume a fixed depth.
-        guard let showURL = Self.findFile(named: "show.json", under: outDir) else {
-            throw CocoaError(.fileReadCorruptFile)
-        }
-        let root = showURL.deletingLastPathComponent()
-        let doc = try JSONDecoder().decode(ShowDocument.self,
-                                           from: Data(contentsOf: showURL))
-        func media(_ folder: String) -> [String: (data: Data, ext: String)] {
-            var out: [String: (data: Data, ext: String)] = [:]
-            let dir = root.appendingPathComponent(folder)
-            for f in (try? FileManager.default.contentsOfDirectory(
-                        at: dir, includingPropertiesForKeys: nil)) ?? [] {
-                guard !f.lastPathComponent.hasPrefix("."), let data = try? Data(contentsOf: f)
-                else { continue }
-                out[f.deletingPathExtension().lastPathComponent] = (data, f.pathExtension)
-            }
-            return out
-        }
-        var assets = media("bg")
-        assets.merge(media("assets")) { _, new in new }
-        var checkpoints: [ShowCheckpoint] = []
-        let checkpointsDir = root.appendingPathComponent("checkpoints")
-        for file in (try? FileManager.default.contentsOfDirectory(
-            at: checkpointsDir, includingPropertiesForKeys: nil)) ?? []
-        where file.pathExtension.lowercased() == "json" {
-            if let data = try? Data(contentsOf: file),
-               let checkpoint = try? JSONDecoder().decode(ShowCheckpoint.self, from: data) {
-                checkpoints.append(checkpoint)
-            }
-        }
-        checkpoints.sort { $0.createdAt > $1.createdAt }
-        return (doc, media("audio"), assets, checkpoints)
-        #else
-        // iOS has no ditto/Process; zipped .bs import needs a zip reader.
-        throw CocoaError(.featureUnsupported)
-        #endif
-    }
-
-    private static func findFile(named name: String, under dir: URL) -> URL? {
-        guard let e = FileManager.default.enumerator(at: dir,
-                                                     includingPropertiesForKeys: nil) else { return nil }
-        for case let url as URL in e where url.lastPathComponent == name { return url }
-        return nil
     }
 
     private static func checkpoints(in wrapper: FileWrapper?) -> [ShowCheckpoint] {
@@ -248,8 +178,8 @@ final class ShowDocumentFile: ReferenceFileDocument {
         try packageWrapper(for: snapshot)
     }
 
-    /// The full package for the CURRENT in-memory state — used by "Export
-    /// project (.bs)" so unsaved edits ship too.
+    /// The full package for the CURRENT in-memory state — used by "Share
+    /// editable project (.bs.zip)" so unsaved edits ship too.
     @MainActor
     func projectFileWrapper() throws -> FileWrapper {
         try packageWrapper(for: PackageSnapshot(document: model.document,

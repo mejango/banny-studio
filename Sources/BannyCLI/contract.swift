@@ -4,7 +4,7 @@ import BannyCore
 // Public machine contract for GUI-free and agent-driven production.
 
 enum BannyCLIContract {
-    static let version = "1.4.0"
+    static let version = "1.5.0"
     static let schemaVersion = 4
     static let patchStandard = "RFC 6902"
 }
@@ -61,9 +61,9 @@ func capabilitiesCommand(_ args: [String]) throws {
         CommandCapability(name: "voices", mutatesProject: false, acceptsArchive: true,
                           synopsis: "banny voices [--language PREFIX] [--json]"),
         CommandCapability(name: "new", mutatesProject: true, acceptsArchive: false,
-                          synopsis: "banny new <folder.bs> [--characters N]"),
+                          synopsis: "banny new <project.bs> [--characters N]"),
         CommandCapability(name: "migrate", mutatesProject: true, acceptsArchive: false,
-                          synopsis: "banny migrate <folder.bs> [--dry-run] [--if-hash SHA256]"),
+                          synopsis: "banny migrate <project.bs> [--dry-run] [--if-hash SHA256]"),
         CommandCapability(name: "validate", mutatesProject: false, acceptsArchive: true,
                           synopsis: "banny validate <show.bs> [--json]"),
         CommandCapability(name: "info", mutatesProject: false, acceptsArchive: true,
@@ -73,21 +73,21 @@ func capabilitiesCommand(_ args: [String]) throws {
         CommandCapability(name: "ship", mutatesProject: false, acceptsArchive: true,
                           synopsis: "banny ship <show.bs> <out.mp4> [tier] [--range FROM TO]"),
         CommandCapability(name: "apply", mutatesProject: true, acceptsArchive: false,
-                          synopsis: "banny apply <folder.bs> <patch.json|-> [--dry-run] [--if-hash SHA256]"),
+                          synopsis: "banny apply <project.bs> <patch.json|-> [--dry-run] [--if-hash SHA256]"),
         CommandCapability(name: "tts", mutatesProject: true, acceptsArchive: false,
-                          synopsis: "banny tts <folder.bs> --character N [--text TEXT|--captions] [options]"),
+                          synopsis: "banny tts <project.bs> --character N [--text TEXT|--captions] [options]"),
         CommandCapability(name: "lipsync", mutatesProject: true, acceptsArchive: false,
-                          synopsis: "banny lipsync <folder.bs> --character N --clip ID [--clear]"),
+                          synopsis: "banny lipsync <project.bs> --character N --clip ID [--clear]"),
         CommandCapability(name: "media probe", mutatesProject: false, acceptsArchive: true,
                           synopsis: "banny media probe <file> [--json]"),
         CommandCapability(name: "media import", mutatesProject: true, acceptsArchive: false,
-                          synopsis: "banny media import <folder.bs> <file> [target/options]"),
+                          synopsis: "banny media import <project.bs> <file> [target/options]"),
         CommandCapability(name: "pack", mutatesProject: false, acceptsArchive: false,
-                          synopsis: "banny pack <folder.bs> <out.bs>"),
+                          synopsis: "banny pack <project.bs> <out.bs.zip>"),
         CommandCapability(name: "unpack", mutatesProject: true, acceptsArchive: true,
-                          synopsis: "banny unpack <in.bs> <folder.bs>"),
+                          synopsis: "banny unpack <in.bs.zip> <project.bs>"),
         CommandCapability(name: "import", mutatesProject: true, acceptsArchive: false,
-                          synopsis: "banny import <v1.json> <out.bannyshow>"),
+                          synopsis: "banny import <v1.json> <out.bs>"),
         CommandCapability(name: "stylize", mutatesProject: false, acceptsArchive: true,
                           synopsis: "banny stylize <in.png> <out.png> [gridWidth] [dither]"),
         CommandCapability(name: "skill", mutatesProject: true, acceptsArchive: true,
@@ -99,7 +99,7 @@ func capabilitiesCommand(_ args: [String]) throws {
         project: .init(
             schemaVersion: BannyCLIContract.schemaVersion,
             directoryExtension: ".bs",
-            archiveExtension: ".bs",
+            archiveExtension: ".bs.zip",
             strictUnknownFields: true,
             mutationFormat: BannyCLIContract.patchStandard,
             atomicDocumentWrites: true,

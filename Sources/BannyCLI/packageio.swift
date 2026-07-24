@@ -51,8 +51,8 @@ func withReadPackage<Result>(
 }
 
 /// Returns a package directory that can be changed in place. Read-only
-/// commands accept zipped `.bs` archives; mutation commands require an
-/// unpacked package so every write has an explicit, inspectable destination.
+/// commands accept `.bs` packages or `.bs.zip` archives; mutation commands
+/// require an unpacked package with an explicit, inspectable destination.
 func editablePackageRoot(at path: String) throws -> URL {
     let fm = FileManager.default
     let url = URL(fileURLWithPath: path)
@@ -63,7 +63,8 @@ func editablePackageRoot(at path: String) throws -> URL {
     guard isDirectory.boolValue else {
         throw CLIError.notAPackage(
             path,
-            "this command changes a project; run `banny unpack \(path) <folder.bs>` first")
+            "this command changes a project; run "
+            + "`banny unpack \(path) <project.bs>` first")
     }
     guard fm.fileExists(atPath: url.appendingPathComponent("show.json").path) else {
         throw CLIError.notAPackage(path, "no show.json — not a package directory")
@@ -88,6 +89,7 @@ func writeNewPackage(
     assets: [String: (data: Data, ext: String)] = [:],
     to output: URL
 ) throws {
+    try requireNativeProjectOutput(output)
     let staging = try newStagingSibling(for: output, directory: true)
     defer { try? FileManager.default.removeItem(at: staging) }
     try ShowPackage.write(document, audio: audio, assets: assets, to: staging)
@@ -104,9 +106,10 @@ func writeNewPackage(
     try FileManager.default.moveItem(at: staging, to: output)
 }
 
-/// Validates and archives an editable folder through a sibling staging file.
+/// Validates and archives an editable package through a sibling staging file.
 func packPackage(at input: String, to output: URL) throws {
     let (source, contents) = try readEditablePackage(at: input)
+    try requireShareArchiveOutput(output)
     try requireEditableDocument(
         contents,
         catalog: try? AssetCatalog(assetsRoot: locateAssetsRoot()))
@@ -122,9 +125,10 @@ func packPackage(at input: String, to output: URL) throws {
     try FileManager.default.moveItem(at: staging, to: output)
 }
 
-/// Extracts a folder through a sibling staging directory, validates it, then
+/// Extracts a package through a sibling staging directory, validates it, then
 /// atomically publishes it under the requested name.
 func unpackPackage(at input: String, to output: URL) throws {
+    try requireNativeProjectOutput(output)
     try withReadPackage(at: input) { source, sourceContents in
         try requireEditableDocument(
             sourceContents,
@@ -138,6 +142,22 @@ func unpackPackage(at input: String, to output: URL) throws {
             stagedContents,
             catalog: try? AssetCatalog(assetsRoot: locateAssetsRoot()))
         try FileManager.default.moveItem(at: staging, to: output)
+    }
+}
+
+/// A live project is always a package named `.bs`. A regular ZIP must retain
+/// its `.zip` suffix so Finder and autosave can never mistake one for the other.
+private func requireNativeProjectOutput(_ output: URL) throws {
+    guard output.pathExtension.lowercased() == "bs" else {
+        throw CLIError.invalid(
+            "editable project packages must end in .bs (for example, show.bs)")
+    }
+}
+
+private func requireShareArchiveOutput(_ output: URL) throws {
+    guard output.lastPathComponent.lowercased().hasSuffix(".bs.zip") else {
+        throw CLIError.invalid(
+            "shared project archives must end in .bs.zip (for example, show.bs.zip)")
     }
 }
 
@@ -184,7 +204,7 @@ func requireEditableDocument(_ contents: ShowPackage.Contents,
     if !errors.isEmpty { throw CLIError.validationFailed(errors) }
 }
 
-/// Locates show.json for a directory or shareable `.bs` archive. Archive
+/// Locates show.json for a `.bs` package or shareable `.bs.zip` archive. Archive
 /// extraction is owned by `withReadPackage`, which guarantees cleanup.
 private func readablePackageLocation(at path: String) throws -> PackageLocation {
     let fm = FileManager.default
@@ -205,7 +225,7 @@ private func readablePackageLocation(at path: String) throws -> PackageLocation 
     defer { try? fh.close() }
     let magic = try fh.read(upToCount: 2)
     guard magic == Data([0x50, 0x4B]) else {  // "PK"
-        throw CLIError.notAPackage(path, "not a package directory or .bs zip")
+        throw CLIError.notAPackage(path, "not a .bs package or ZIP archive")
     }
     let tmp = fm.temporaryDirectory
         .appendingPathComponent("banny-unpack-\(UUID().uuidString)", isDirectory: true)
@@ -227,10 +247,10 @@ private func readablePackageLocation(at path: String) throws -> PackageLocation 
     throw CLIError.notAPackage(path, "zip contains no show.json")
 }
 
-/// Zip a package directory into a shareable `.bs` (same format the app's
-/// File > Export Project writes: package contents at the zip root).
+/// Zip a package into a shareable `.bs.zip`, preserving the top-level `.bs`
+/// directory so ordinary Finder expansion recreates the editable document.
 func zipPackage(_ dir: URL, to out: URL) throws {
-    try ditto(["-c", "-k", dir.path, out.path])
+    try ditto(["-c", "-k", "--keepParent", dir.path, out.path])
 }
 
 func unzipArchive(_ zip: URL, to dir: URL) throws {

@@ -8,8 +8,6 @@ import BannyRender
 
 extension UTType {
     static let bannyShow = UTType(exportedAs: "com.banny.show", conformingTo: .package)
-    /// The shareable single-file project: a zip of the .bannyshow package.
-    static let bannyShowArchive = UTType(exportedAs: "com.banny.show-archive", conformingTo: .zip)
 }
 
 @main
@@ -53,7 +51,7 @@ struct BannyStudioApp: App {
 }
 
 #if !os(macOS)
-/// Screenshot-harness hook: when BANNY_OPEN_DOC names a .bannyshow path, load
+/// Screenshot-harness hook: when BANNY_OPEN_DOC names a .bs path, load
 /// its contents into the open (untitled) document — iOS has no programmatic
 /// document-open, and UI tests can't drive the system browser reliably.
 private struct DebugDocOpener: View {
@@ -133,19 +131,17 @@ struct SnapshotOnLaunch: NSViewRepresentable {
     func updateNSView(_ nsView: NSView, context: Context) {}
 }
 
-/// File > Import Project (.bs)… — the single import path. Shared projects are
-/// always .bs files (a zipped .bannyshow); the legacy web-studio JSON import
-/// was removed (it confused the workflow and only ever accepted one exact
-/// format). One-off web→native migration still lives in `banny-tool import`.
+/// File > Import Project… accepts canonical packages, `.bs.zip` share archives,
+/// legacy `.bannyshow` packages, and old zipped `.bs` files. One-off web→native
+/// JSON migration remains available through the CLI.
 struct ImportProjectCommand: View {
     @State private var importing = false
     @State private var importError: String?
 
     var body: some View {
-        Button("Import Project (.bs)…") { importing = true }
+        Button("Import Project…") { importing = true }
             .fileImporter(isPresented: $importing,
-                          allowedContentTypes: [UTType(filenameExtension: "bs") ?? .data,
-                                                .zip, .data]) { result in
+                          allowedContentTypes: [.bannyShow, .zip, .data]) { result in
                 if case .success(let url) = result {
                     importError = BannyProjectImport.open(url)
                 }
@@ -157,8 +153,10 @@ struct ImportProjectCommand: View {
     }
 }
 
-/// Unpacks a .bs archive into a temp .bannyshow package and opens it as a
-/// document. Returns an error message on failure, nil on success.
+/// Copies or expands an imported project into a private canonical `.bs`
+/// package, opens it, then asks where to save the converted editable document.
+/// Working from a private copy also prevents a generator or file watcher from
+/// racing Studio's autosave.
 enum BannyProjectImport {
     static func open(_ url: URL) -> String? {
         let scoped = url.startAccessingSecurityScopedResource()
@@ -167,23 +165,82 @@ enum BannyProjectImport {
             let dir = FileManager.default.temporaryDirectory
                 .appendingPathComponent("banny-import-\(UUID().uuidString)", isDirectory: true)
             try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-            let pkg = dir.appendingPathComponent(
-                url.deletingPathExtension().lastPathComponent + ".bannyshow")
-            let ditto = Process()
-            ditto.executableURL = URL(fileURLWithPath: "/usr/bin/ditto")
-            ditto.arguments = ["-x", "-k", url.path, pkg.path]
-            try ditto.run()
-            ditto.waitUntilExit()
-            guard ditto.terminationStatus == 0,
-                  FileManager.default.fileExists(
-                    atPath: pkg.appendingPathComponent("show.json").path) else {
+            let pkg = dir.appendingPathComponent(canonicalPackageName(for: url),
+                                                isDirectory: true)
+            var isDirectory: ObjCBool = false
+            let exists = FileManager.default.fileExists(
+                atPath: url.path,
+                isDirectory: &isDirectory)
+            guard exists else {
+                return "That project no longer exists."
+            }
+            if isDirectory.boolValue {
+                try FileManager.default.copyItem(at: url, to: pkg)
+            } else {
+                let extracted = dir.appendingPathComponent("expanded", isDirectory: true)
+                try FileManager.default.createDirectory(
+                    at: extracted, withIntermediateDirectories: true)
+                let ditto = Process()
+                ditto.executableURL = URL(fileURLWithPath: "/usr/bin/ditto")
+                ditto.arguments = ["-x", "-k", url.path, extracted.path]
+                try ditto.run()
+                ditto.waitUntilExit()
+                guard ditto.terminationStatus == 0 else {
+                    return "That file doesn't look like a Banny Studio project."
+                }
+                guard let source = packageRoot(in: extracted) else {
+                    return "That archive contains no Banny Studio project."
+                }
+                try FileManager.default.copyItem(at: source, to: pkg)
+            }
+            guard FileManager.default.fileExists(
+                atPath: pkg.appendingPathComponent("show.json").path) else {
                 return "That file doesn't look like a Banny Studio project."
             }
-            NSDocumentController.shared.openDocument(withContentsOf: pkg, display: true) { _, _, _ in }
+            NSDocumentController.shared.openDocument(
+                withContentsOf: pkg, display: true
+            ) { document, _, error in
+                if let error {
+                    NSApp.presentError(error)
+                } else if let document {
+                    // Imported projects live in a private temporary location.
+                    // Save As makes the canonical `.bs` destination explicit.
+                    DispatchQueue.main.async { document.saveAs(nil) }
+                }
+            }
             return nil
         } catch {
             return error.localizedDescription
         }
+    }
+
+    private static func canonicalPackageName(for url: URL) -> String {
+        let name = url.lastPathComponent
+        let withoutZip = name.lowercased().hasSuffix(".zip")
+            ? (name as NSString).deletingPathExtension
+            : name
+        if withoutZip.lowercased().hasSuffix(".bs") { return withoutZip }
+        return ((withoutZip as NSString).deletingPathExtension) + ".bs"
+    }
+
+    private static func packageRoot(in directory: URL) -> URL? {
+        let fm = FileManager.default
+        if fm.fileExists(
+            atPath: directory.appendingPathComponent("show.json").path) {
+            return directory
+        }
+        guard let enumerator = fm.enumerator(
+            at: directory,
+            includingPropertiesForKeys: [.isDirectoryKey],
+            options: [.skipsHiddenFiles])
+        else { return nil }
+        var roots: [URL] = []
+        for case let candidate as URL in enumerator
+        where candidate.lastPathComponent == "show.json" {
+            roots.append(candidate.deletingLastPathComponent())
+        }
+        guard roots.count == 1 else { return nil }
+        return roots[0]
     }
 }
 #endif

@@ -18,7 +18,7 @@ private struct MigrationReport: Codable {
 
 func migrateCommand(_ args: [String]) throws {
     let usage =
-        "banny migrate <folder.bs> [--dry-run] [--if-hash SHA256] [--json]"
+        "banny migrate <project.bs> [--dry-run] [--if-hash SHA256] [--json]"
     guard let projectPath = args.first else {
         throw CLIError.usage(usage)
     }

@@ -14,25 +14,25 @@ func printErr(_ message: String) {
 }
 
 private let usage = """
-usage: banny <command>              (read-only commands accept folder or zipped .bs)
+usage: banny <command>              (read-only commands accept .bs or .bs.zip)
   capabilities [--json]                            — machine-readable CLI feature contract
   schema [--compact|--example]                     — canonical show.json JSON Schema/example
   catalog [--json]                                 — wardrobe bodies, outfits, eyes, mouths
   voices [--language PREFIX] [--json]              — installed/system/personal TTS voices
-  new <folder.bs> [--characters N]                 — create a canonical starter project
-  migrate <folder.bs> [options]                    — atomically upgrade v2/v3 to strict v4
+  new <project.bs> [--characters N]                — create a canonical starter project
+  migrate <project.bs> [options]                   — atomically upgrade v2/v3 to strict v4
   validate <show.bs> [--json]                      — strict schema + semantic/package checks
   preview <show.bs> <out.png> [--t SECONDS]        — render one frame
   info <show.bs> [--json]                          — track/event/asset counts
   ship <show.bs> <out.mp4> [tier] [--range F T]    — preflight and render an mp4
-  apply <folder.bs> <patch.json|-> [options]       — atomic RFC 6902 JSON Patch
-  tts <folder.bs> --character N [source/options]   — synthesize portable speech clips
-  lipsync <folder.bs> --character N --clip ID      — analyze/clear precise mouth timing
+  apply <project.bs> <patch.json|-> [options]      — atomic RFC 6902 JSON Patch
+  tts <project.bs> --character N [options]         — synthesize portable speech clips
+  lipsync <project.bs> --character N --clip ID     — analyze/clear precise mouth timing
   media probe <file> [--json]                      — inspect media type/duration/dimensions
-  media import <folder.bs> <file> [options]        — copy and place media safely
-  pack <folder.bs> <out.bs>                        — zip a project for sharing/app import
-  unpack <in.bs> <folder.bs>                       — extract a zipped project for editing
-  import <v1.json> <out.bannyshow>                 — web v1 → native
+  media import <project.bs> <file> [options]       — copy and place media safely
+  pack <project.bs> <out.bs.zip>                   — zip for sharing/app import
+  unpack <in.bs.zip> <project.bs>                  — extract for editing
+  import <v1.json> <out.bs>                        — web v1 → native
   stylize <in.png> <out.png> [gridWidth] [dither]  — pixel-art stylizer
   skill [install|print] [--target TARGET]          — AI production skill
 
@@ -59,7 +59,7 @@ public func runCLI(arguments args: [String]) async throws -> Int32 {
 
     case "import":
         guard tail.count == 2 else {
-            throw CLIError.usage("banny import <v1.json> <out.bannyshow>")
+            throw CLIError.usage("banny import <v1.json> <out.bs>")
         }
         let data = try Data(contentsOf: URL(fileURLWithPath: tail[0]))
         let result = try V1Importer.importStudio(json: data)
@@ -214,12 +214,12 @@ public func runCLI(arguments args: [String]) async throws -> Int32 {
 
     case "new":
         guard let outputPath = tail.first else {
-            throw CLIError.usage("banny new <folder.bs> [--characters N]")
+            throw CLIError.usage("banny new <project.bs> [--characters N]")
         }
         var options = CLIOptions(Array(tail.dropFirst()))
         let count = try options.int("--characters") ?? 2
         try options.finish(
-            usage: "banny new <folder.bs> [--characters N]")
+            usage: "banny new <project.bs> [--characters N]")
         guard (1...4).contains(count) else {
             throw CLIError.invalid("--characters must be inside 1...4")
         }
@@ -244,7 +244,7 @@ public func runCLI(arguments args: [String]) async throws -> Int32 {
 
     case "pack":
         guard tail.count == 2 else {
-            throw CLIError.usage("banny pack <folder.bs> <out.bs>")
+            throw CLIError.usage("banny pack <project.bs> <out.bs.zip>")
         }
         let output = URL(fileURLWithPath: tail[1])
         try packPackage(at: tail[0], to: output)
@@ -252,7 +252,7 @@ public func runCLI(arguments args: [String]) async throws -> Int32 {
 
     case "unpack":
         guard tail.count == 2 else {
-            throw CLIError.usage("banny unpack <in.bs> <folder.bs>")
+            throw CLIError.usage("banny unpack <in.bs.zip> <project.bs>")
         }
         let output = URL(fileURLWithPath: tail[1])
         try unpackPackage(at: tail[0], to: output)

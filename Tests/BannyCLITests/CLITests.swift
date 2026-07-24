@@ -85,15 +85,34 @@ final class CLITests: XCTestCase {
         }
         XCTAssertEqual(try Data(contentsOf: showURL), beforeRejectedPatch)
 
-        let archive = root.appendingPathComponent("share.bs")
+        let archive = root.appendingPathComponent("show.bs.zip")
         try await assertSuccess([
             "banny", "pack", project.path, archive.path,
         ])
+        let expanded = root.appendingPathComponent("expanded", isDirectory: true)
+        try unzipArchive(archive, to: expanded)
+        XCTAssertTrue(FileManager.default.fileExists(
+            atPath: expanded.appendingPathComponent("show.bs/show.json").path))
+        XCTAssertFalse(FileManager.default.fileExists(
+            atPath: expanded.appendingPathComponent("show.json").path))
+
         let unpacked = root.appendingPathComponent("unpacked.bs")
         try await assertSuccess([
             "banny", "unpack", archive.path, unpacked.path,
         ])
         try await assertSuccess(["banny", "validate", unpacked.path])
+
+        // Pre-1.5 Studio shared package contents at the root of a zipped `.bs`.
+        // Keep those files readable even though all new archives use `.bs.zip`
+        // and preserve the enclosing package directory.
+        let legacyArchive = root.appendingPathComponent("legacy-share.bs")
+        let ditto = Process()
+        ditto.executableURL = URL(fileURLWithPath: "/usr/bin/ditto")
+        ditto.arguments = ["-c", "-k", project.path, legacyArchive.path]
+        try ditto.run()
+        ditto.waitUntilExit()
+        XCTAssertEqual(ditto.terminationStatus, 0)
+        try await assertSuccess(["banny", "validate", legacyArchive.path])
 
         struct ExpectedFailure: Error {}
         var extractedRoot: URL?
@@ -112,6 +131,37 @@ final class CLITests: XCTestCase {
         XCTAssertFalse(
             FileManager.default.fileExists(atPath: try XCTUnwrap(extractedRoot).path),
             "temporary archive extraction leaked after the read operation")
+    }
+
+    func testCanonicalProjectAndArchiveExtensionsAreUnambiguous() async throws {
+        let root = try temporaryDirectory("banny-cli-project-extension")
+        let project = root.appendingPathComponent("show.bs")
+        try await assertSuccess(["banny", "new", project.path])
+        XCTAssertTrue(FileManager.default.fileExists(
+            atPath: project.appendingPathComponent("show.json").path))
+
+        let legacyOutput = root.appendingPathComponent("new-show.bannyshow")
+        do {
+            _ = try await runCLI(arguments: [
+                "banny", "new", legacyOutput.path,
+            ])
+            XCTFail("new projects must use the canonical .bs package extension")
+        } catch {
+            let message = String(describing: error)
+            XCTAssertTrue(message.contains("must end in .bs"))
+        }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: legacyOutput.path))
+
+        let ambiguousArchive = root.appendingPathComponent("shared.bs")
+        do {
+            _ = try await runCLI(arguments: [
+                "banny", "pack", project.path, ambiguousArchive.path,
+            ])
+            XCTFail("ZIP archives must keep their visible .zip suffix")
+        } catch {
+            XCTAssertTrue(String(describing: error).contains(".bs.zip"))
+        }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: ambiguousArchive.path))
     }
 
     func testJSONPatchImplementsAllRFCOperations() throws {
@@ -242,7 +292,7 @@ final class CLITests: XCTestCase {
           "audio": {}
         }
         """#.utf8).write(to: legacy)
-        let output = root.appendingPathComponent("legacy.bannyshow")
+        let output = root.appendingPathComponent("legacy.bs")
         try await assertSuccess([
             "banny", "import", legacy.path, output.path,
         ])
