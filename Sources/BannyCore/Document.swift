@@ -318,6 +318,44 @@ public struct ImageCue: Codable, Equatable, Identifiable, Sendable {
 }
 
 public extension ImageCue {
+    /// Changes the point used for rotation without making the artwork jump.
+    ///
+    /// `ImagePlacement.x/y` stores the stage position of `pivot`, so changing
+    /// only the pivot would visibly move a cue (usually in the direction
+    /// opposite an editor's preset icon). Re-anchoring both endpoints keeps
+    /// their rendered rectangles fixed while future rotation uses the new
+    /// point.
+    mutating func setPivotPreservingVisualPosition(
+        _ newPivot: MediaPivot,
+        assetAspect: Double,
+        stageAspect: Double
+    ) {
+        let clamped = MediaPivot(
+            x: min(1, max(0, newPivot.x)),
+            y: min(1, max(0, newPivot.y)))
+        guard clamped != pivot else { return }
+        let safeAssetAspect = assetAspect.isFinite && assetAspect > 0
+            ? assetAspect : 1
+        let safeStageAspect = stageAspect.isFinite && stageAspect > 0
+            ? stageAspect : 1
+        let oldPivot = pivot
+
+        func reanchored(_ placement: ImagePlacement) -> ImagePlacement {
+            var result = placement
+            let localX = (clamped.x - oldPivot.x) * placement.scale
+            let localY = (clamped.y - oldPivot.y) * placement.scale
+                * safeStageAspect / safeAssetAspect
+            let radians = placement.rotation * .pi / 180
+            result.x += cos(radians) * localX - sin(radians) * localY
+            result.y += sin(radians) * localX + cos(radians) * localY
+            return result
+        }
+
+        from = reanchored(from)
+        if let to { self.to = reanchored(to) }
+        pivot = clamped
+    }
+
     /// Hit-tests the visual's rotated rectangular bounds in normalized stage
     /// coordinates. Editors use this to begin a direct-manipulation drag only
     /// when the pointer actually grabs the selected asset.

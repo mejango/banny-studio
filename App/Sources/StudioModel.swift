@@ -49,7 +49,11 @@ final class StudioModel {
         didSet { file?.updateDocumentSnapshot(document) }
     }
     weak var file: ShowDocumentFile? {
-        didSet { file?.updateDocumentSnapshot(document) }
+        didSet {
+            visualDurationCache.removeAll()
+            visualAspectCache.removeAll()
+            file?.updateDocumentSnapshot(document)
+        }
     }
     var undoManager: UndoManager? {
         didSet { undoManager?.levelsOfUndo = 0 } // 0 = unlimited history
@@ -91,6 +95,7 @@ final class StudioModel {
     /// Bumped whenever background media changes so caches invalidate.
     var backgroundRevision = 0
     @ObservationIgnored private var visualDurationCache: [String: Double] = [:]
+    @ObservationIgnored private var visualAspectCache: [String: Double] = [:]
 
     // Timeline selection (shared with keyboard shortcuts).
     var selectedMarks: Set<PerfMark> = []
@@ -953,6 +958,66 @@ final class StudioModel {
                 return
             }
         }
+    }
+
+    /// Moves a visual cue's rotation anchor while keeping its artwork fixed on
+    /// the stage. Preset buttons register one undo step; continuous sliders
+    /// register their snapshot when the drag begins.
+    func setSelectedImageCuePivotPreservingVisualPosition(
+        _ newPivot: MediaPivot,
+        registerUndo: Bool = true
+    ) {
+        let clamped = MediaPivot(
+            x: min(1, max(0, newPivot.x)),
+            y: min(1, max(0, newPivot.y)))
+        guard let cue = selectedImageCueValue,
+              cue.pivot != clamped,
+              !isImageCueLocked(cue.id) else { return }
+        if registerUndo {
+            registerUndoSnapshot(label: "Move Visual Rotation Anchor")
+        }
+        let assetAspect = visualAssetAspect(assetID: cue.assetID)
+        let stageAspect = frameAspect
+        updateSelectedImageCue {
+            $0.setPivotPreservingVisualPosition(
+                clamped,
+                assetAspect: assetAspect,
+                stageAspect: stageAspect)
+        }
+    }
+
+    /// Pixel aspect of an imported still, GIF, or movie. This is cached
+    /// because rotation-anchor sliders can emit many changes per second.
+    private func visualAssetAspect(assetID: String) -> Double {
+        if let cached = visualAspectCache[assetID] { return cached }
+        guard let media = file?.assetsMedia[assetID] else { return frameAspect }
+
+        var image: CGImage?
+        if let source = CGImageSourceCreateWithData(media.data as CFData, nil) {
+            image = CGImageSourceCreateImageAtIndex(source, 0, nil)
+        } else if let asset = document.assets.first(where: { $0.id == assetID }),
+                  asset.kind == .video {
+            let url = FileManager.default.temporaryDirectory
+                .appendingPathComponent("visual-aspect-\(assetID).\(media.ext)")
+            if !FileManager.default.fileExists(atPath: url.path) {
+                try? media.data.write(to: url)
+            }
+            let generator = AVAssetImageGenerator(asset: AVURLAsset(url: url))
+            generator.appliesPreferredTrackTransform = true
+            image = try? generator.copyCGImage(
+                at: CMTime(seconds: 0.1, preferredTimescale: 600),
+                actualTime: nil)
+        }
+
+        guard let image, image.height > 0 else { return frameAspect }
+        let aspect = Double(image.width) / Double(image.height)
+        visualAspectCache[assetID] = aspect
+        return aspect
+    }
+
+    func invalidateVisualMetadata(assetID: String) {
+        visualDurationCache[assetID] = nil
+        visualAspectCache[assetID] = nil
     }
 
     /// Whether the placement visible at the playhead differs from the visual

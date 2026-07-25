@@ -220,8 +220,6 @@ struct StudioTimelineView: View {
     @State private var hoverGutterRow: TrackRow?
     /// Double-clicked audio clip: per-clip mix override editor.
     @State private var clipMix: (kind: TrackRowKind, clipID: String, x: CGFloat, y: CGFloat)?
-    /// Double-clicked image/GIF/video cue: parameter editor anchored at the cue.
-    @State private var visualCueInspectorAt: (cueID: String, x: CGFloat, y: CGFloat)?
     /// Rubber-band selection over empty lane space.
     @State private var marquee: (start: CGPoint, current: CGPoint)?
     /// Edge auto-scroll while dragging: px past the viewport edge (sign = side).
@@ -283,6 +281,9 @@ struct StudioTimelineView: View {
     private let rulerHeight: CGFloat = 30
     private let scrubHeight: CGFloat = 0
     private let defaultLaneHeight: CGFloat = 52
+    /// Precision-editing ceiling for a manually expanded track. A tall lane
+    /// can occupy more than one viewport and remains reachable by scrolling.
+    private let maximumLaneHeight: CGFloat = 960
 
     var body: some View {
         VStack(spacing: 0) {
@@ -429,7 +430,6 @@ struct StudioTimelineView: View {
             .frame(width: laneLabelWidth)
             .frame(maxHeight: .infinity, alignment: .topLeading)
             .clipped()
-            visualCuePopoverAnchor
             }
             }
             // ONE playhead line across the band and the lanes — a single view,
@@ -1314,7 +1314,9 @@ struct StudioTimelineView: View {
                 }
                 if let tr = resizingTrack {
                     let delta = value.location.y - value.startLocation.y
-                    trackHeights[tr.key] = min(320, max(tr.minHeight, tr.baseHeight + delta))
+                    trackHeights[tr.key] = min(
+                        maximumLaneHeight,
+                        max(tr.minHeight, tr.baseHeight + delta))
                     return
                 }
                 if let dragging = draggingRow {
@@ -1482,33 +1484,6 @@ struct StudioTimelineView: View {
                                     .environment(\.colorScheme, lightMode ? .light : .dark)
                                 }
                         }
-    }
-
-    /// This anchor lives in the visible lanes viewport, not the much wider
-    /// scroll content. Convert the cue click from content coordinates so the
-    /// popover arrow remains beside the clicked cue at every scroll position.
-    @ViewBuilder private var visualCuePopoverAnchor: some View {
-        if let visual = visualCueInspectorAt {
-            Color.clear
-                .frame(width: 1, height: 1)
-                .position(x: laneLabelWidth + visual.x - scrollOffset.x,
-                          y: visual.y - scrollOffset.y)
-                .popover(isPresented: Binding(
-                    get: { visualCueInspectorAt != nil },
-                    set: { if !$0 { visualCueInspectorAt = nil } })) {
-                    ScrollView {
-                        ImageCueInspector(model: model)
-                            .padding(12)
-                    }
-                    .frame(width: 350, height: 460)
-                    .background(lightMode ? Color(red: 1, green: 0.99, blue: 0.95)
-                                          : Color(red: 0.13, green: 0.13, blue: 0.16))
-                    .presentationBackground(
-                        lightMode ? Color(red: 1, green: 0.99, blue: 0.95)
-                                  : Color(red: 0.13, green: 0.13, blue: 0.16))
-                    .environment(\.colorScheme, lightMode ? .light : .dark)
-                }
-        }
     }
 
     /// Present the Finder sheet on the timeline host, one run-loop turn after
@@ -2021,8 +1996,15 @@ struct StudioTimelineView: View {
 
     private func characterLaneZones(h fullH: CGFloat) -> CharacterLaneZones {
         let h = fullH - wardrobeStripH
-        let reactionH: CGFloat = 16
-        let clipH: CGFloat = max(14, (h - presenceStripH - reactionH - 10) * 0.42)
+        // Speech and reaction bands grow enough to remain comfortable, then
+        // stop. Beyond that point, every extra vertical point belongs to the
+        // eight performance lanes: expanding a character track is therefore
+        // a useful precision-editing operation instead of mostly enlarging
+        // its waveform.
+        let expansion = max(0, fullH - 88)
+        let reactionH = min(28, 16 + expansion * 0.035)
+        let clipBudget = max(0, h - presenceStripH - reactionH - 10)
+        let clipH = min(72, max(14, clipBudget * 0.30))
         let clipTop = presenceStripH + 2
         let reactionTop = clipTop + clipH + 2
         let eventTop = reactionTop + reactionH + 2
@@ -3309,14 +3291,15 @@ struct StudioTimelineView: View {
             }
             return
         }
-        // Double-clicking a visual cue opens its complete parameter inspector,
-        // including clicks on the label strip (whose first click starts rename).
+        // Double-clicking a visual cue reveals the one shared inspector rather
+        // than stacking a duplicate popover over the stage and right drawer.
+        // This also includes the label strip, whose first click starts rename.
         if isDoubleClick, let (row, cueHit) = cue(at: point) {
             switch row {
             case .image, .audio:
                 editingLabel = nil
                 selectCue(row: row, id: cueHit.id)
-                visualCueInspectorAt = (cueHit.id, point.x, point.y)
+                model.inspectorRequest = row.key(in: model.scene)
                 return
             default:
                 break

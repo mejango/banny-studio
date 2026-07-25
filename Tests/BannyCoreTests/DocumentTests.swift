@@ -177,6 +177,48 @@ import Testing
                                     assetAspect: 2, stageAspect: 16.0 / 9.0))
 }
 
+@Test func changingVisualPivotPreservesArtworkAtBothMotionEndpoints() throws {
+    let assetAspect = 1.7
+    let stageAspect = 16.0 / 9.0
+    var cue = ImageCue(
+        id: "visual",
+        assetID: "asset",
+        start: 0,
+        dur: 2,
+        from: ImagePlacement(x: 0.31, y: 0.62, scale: 0.4, rotation: 37),
+        to: ImagePlacement(x: 0.72, y: 0.28, scale: 0.23, rotation: -82))
+
+    func corners(_ placement: ImagePlacement, pivot: MediaPivot) -> [(Double, Double)] {
+        let width = placement.scale
+        let height = width * stageAspect / assetAspect
+        let radians = placement.rotation * .pi / 180
+        return [(0.0, 0.0), (1.0, 0.0), (0.0, 1.0), (1.0, 1.0)].map { x, y in
+            let localX = (x - pivot.x) * width
+            let localY = (y - pivot.y) * height
+            return (
+                placement.x + cos(radians) * localX - sin(radians) * localY,
+                placement.y + sin(radians) * localX + cos(radians) * localY)
+        }
+    }
+
+    let oldPivot = cue.pivot
+    let oldFromCorners = corners(cue.from, pivot: oldPivot)
+    let oldToCorners = corners(try #require(cue.to), pivot: oldPivot)
+
+    cue.setPivotPreservingVisualPosition(
+        .bottomRight,
+        assetAspect: assetAspect,
+        stageAspect: stageAspect)
+
+    #expect(cue.pivot == .bottomRight)
+    let newFromCorners = corners(cue.from, pivot: cue.pivot)
+    let newToCorners = corners(try #require(cue.to), pivot: cue.pivot)
+    for (old, new) in zip(oldFromCorners + oldToCorners, newFromCorners + newToCorners) {
+        #expect(abs(old.0 - new.0) < 1e-9)
+        #expect(abs(old.1 - new.1) < 1e-9)
+    }
+}
+
 @Test func mediaPlaybackMapsShowTimeIntoTrimmedSource() {
     var cue = ImageCue(id: "v", assetID: "video", start: 5, dur: 20,
                        from: ImagePlacement(),

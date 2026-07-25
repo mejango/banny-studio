@@ -336,6 +336,7 @@ private struct MissingMediaRecoverySection: View {
                 if let index = model.document.assets.firstIndex(where: { $0.id == id }) {
                     model.document.assets[index].file = "\(id).\(ext)"
                 }
+                model.invalidateVisualMetadata(assetID: id)
                 model.backgroundRevision += 1
             }
             self.target = nil
@@ -986,6 +987,7 @@ private struct StudioVoicePicker: View {
     let voices: [StudioSpeechVoice]
     @Binding var selectedVoiceID: String
     @Environment(\.dismiss) private var dismiss
+    @AppStorage("studioLightMode") private var lightMode = false
     @State private var query = ""
     @State private var previewSynthesizer = AVSpeechSynthesizer()
 
@@ -1072,7 +1074,16 @@ private struct StudioVoicePicker: View {
             }
         }
         .frame(minWidth: 390, idealWidth: 430, minHeight: 420, idealHeight: 520)
+        .foregroundStyle(.primary)
+        .background(pickerSurface)
+        .presentationBackground(pickerSurface)
+        .environment(\.colorScheme, lightMode ? .light : .dark)
         .accessibilityIdentifier("speech-voice-picker")
+    }
+
+    private var pickerSurface: Color {
+        lightMode ? Color(red: 1, green: 0.99, blue: 0.95)
+                  : Color(red: 0.13, green: 0.13, blue: 0.16)
     }
 
     private func voiceBadge(_ text: String) -> some View {
@@ -1367,18 +1378,20 @@ struct ImageCueInspector: View {
                       range: 0...1, format: "%.0f%%", displayScale: 100)
             Text("Tightens faint semi-transparent fringes around cut-out artwork.")
                 .font(.caption2).foregroundStyle(.secondary)
-            Text("rotation pivot").font(.caption2).foregroundStyle(.secondary)
+
+            Divider().padding(.vertical, 2)
+            Text("ROTATION ANCHOR").font(.caption.bold()).foregroundStyle(.secondary)
+            Text("Choose the point the visual turns around. The artwork stays in place.")
+                .font(.caption2).foregroundStyle(.secondary)
             HStack(spacing: 4) {
-                pivotButton("↖", .topLeft, cue)
-                pivotButton("↗", .topRight, cue)
+                pivotButton("Top left", .topLeft, cue)
+                pivotButton("Top right", .topRight, cue)
                 pivotButton("Center", .center, cue)
-                pivotButton("↙", .bottomLeft, cue)
-                pivotButton("↘", .bottomRight, cue)
+                pivotButton("Bottom left", .bottomLeft, cue)
+                pivotButton("Bottom right", .bottomRight, cue)
             }
-            placement("pivot x", value: pivot(cue, \MediaPivot.x),
-                      range: 0...1, format: "%.2f")
-            placement("pivot y", value: pivot(cue, \MediaPivot.y),
-                      range: 0...1, format: "%.2f")
+            pivotSlider("anchor x", keyPath: \.x, cue: cue)
+            pivotSlider("anchor y", keyPath: \.y, cue: cue)
         }
     }
 
@@ -1391,27 +1404,75 @@ struct ImageCueInspector: View {
         })
     }
 
-    private func pivot(_ cue: Binding<ImageCue>,
-                       _ keyPath: WritableKeyPath<MediaPivot, Double>) -> Binding<Double> {
-        Binding(get: { cue.wrappedValue.pivot[keyPath: keyPath] }, set: { value in
-            var updated = cue.wrappedValue
-            updated.pivot[keyPath: keyPath] = value
-            cue.wrappedValue = updated
-        })
-    }
-
-    private func pivotButton(_ label: String, _ value: MediaPivot,
+    private func pivotButton(_ name: String, _ value: MediaPivot,
                              _ cue: Binding<ImageCue>) -> some View {
         let selected = abs(cue.wrappedValue.pivot.x - value.x) < 0.001
             && abs(cue.wrappedValue.pivot.y - value.y) < 0.001
-        return Button(label) {
-            var updated = cue.wrappedValue
-            updated.pivot = value
-            cue.wrappedValue = updated
+        return Button {
+            model.setSelectedImageCuePivotPreservingVisualPosition(value)
+        } label: {
+            ZStack(alignment: pivotAlignment(value)) {
+                RoundedRectangle(cornerRadius: 4)
+                    .fill(Color.primary.opacity(selected ? 0.12 : 0.05))
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 4)
+                            .stroke(selected ? Color.orange : Color.secondary.opacity(0.55),
+                                    lineWidth: selected ? 1.5 : 1)
+                    }
+                Circle()
+                    .fill(selected ? Color.orange : Color.primary)
+                    .frame(width: 6, height: 6)
+                    .padding(4)
+            }
+            .frame(width: 34, height: 25)
         }
-        .font(.caption2)
-        .buttonStyle(.bordered)
-        .tint(selected ? .orange : .gray)
+        .buttonStyle(.plain)
+        .help("\(name) rotation anchor — keeps the artwork in place")
+        .accessibilityLabel("\(name) rotation anchor")
+        .accessibilityValue(selected ? "Selected" : "")
+        .accessibilityIdentifier(
+            "visual-rotation-anchor-\(name.lowercased().replacingOccurrences(of: " ", with: "-"))")
+    }
+
+    private func pivotAlignment(_ pivot: MediaPivot) -> Alignment {
+        if pivot.x < 0.25 && pivot.y < 0.25 { return .topLeading }
+        if pivot.x > 0.75 && pivot.y < 0.25 { return .topTrailing }
+        if pivot.x < 0.25 && pivot.y > 0.75 { return .bottomLeading }
+        if pivot.x > 0.75 && pivot.y > 0.75 { return .bottomTrailing }
+        return .center
+    }
+
+    private func pivotSlider(
+        _ label: String,
+        keyPath: WritableKeyPath<MediaPivot, Double>,
+        cue: Binding<ImageCue>
+    ) -> some View {
+        let value = cue.wrappedValue.pivot[keyPath: keyPath]
+        return HStack {
+            Text(label).font(.caption2).frame(width: 88, alignment: .leading)
+            Slider(value: Binding(
+                get: {
+                    model.selectedImageCueValue?.pivot[keyPath: keyPath] ?? value
+                },
+                set: { newValue in
+                    var pivot = model.selectedImageCueValue?.pivot
+                        ?? cue.wrappedValue.pivot
+                    pivot[keyPath: keyPath] = newValue
+                    model.setSelectedImageCuePivotPreservingVisualPosition(
+                        pivot,
+                        registerUndo: false)
+                }),
+                in: 0...1,
+                onEditingChanged: { editing in
+                    if editing {
+                        model.registerUndoSnapshot(label: "Move Visual Rotation Anchor")
+                    }
+                })
+            Text(String(format: "%.2f", value))
+                .font(.system(size: 9, design: .monospaced))
+                .foregroundStyle(.secondary)
+                .frame(width: 44, alignment: .trailing)
+        }
     }
 
     private func tintColor(_ cue: Binding<ImageCue>) -> Binding<Color> {
