@@ -107,20 +107,27 @@ public final class AssetCatalog: @unchecked Sendable {
         catalog.outfits[name]?.ref.file(for: body).flatMap(image(named:))
     }
 
+    /// A picker-sized copy of an outfit part. Wardrobe grids can contain every
+    /// catalog entry at once; decoding their 1600×1600 render sources eagerly
+    /// consumes hundreds of megabytes and eventually makes ImageIO return nil.
+    public func outfitThumbnail(_ name: String, body: Body) -> CGImage? {
+        catalog.outfits[name]?.ref.file(for: body).flatMap(thumbnail(named:))
+    }
+
     public func necklaceImage(body: Body) -> CGImage? {
         catalog.necklace.file(for: body).flatMap(image(named:))
     }
 
     /// Eye layer for an expression: open art, the option's blink art, or a shared brow frame.
     public func eyesImage(option: String, expression: EyeExpression, body: Body) -> CGImage? {
-        let ref: Ref?
-        switch expression {
-        case .open: ref = (catalog.eyes[option] ?? catalog.eyes["default"])?.open
-        case .closed: ref = (catalog.eyes[option] ?? catalog.eyes["default"])?.blink
-        case .brow1: ref = catalog.brows["brow1"]
-        case .brow2: ref = catalog.brows["brow2"]
-        }
-        return ref?.file(for: body).flatMap(image(named:))
+        eyesRef(option: option, expression: expression)?
+            .file(for: body).flatMap(image(named:))
+    }
+
+    public func eyesThumbnail(option: String, expression: EyeExpression,
+                              body: Body) -> CGImage? {
+        eyesRef(option: option, expression: expression)?
+            .file(for: body).flatMap(thumbnail(named:))
     }
 
     func mouth(option: String) -> MouthEntry? {
@@ -133,14 +140,14 @@ public final class AssetCatalog: @unchecked Sendable {
     }
 
     public func mouthImage(option: String, state: MouthState, body: Body) -> CGImage? {
-        guard let entry = mouth(option: option) else { return nil }
-        let ref: Ref
-        switch state {
-        case .open: ref = entry.open
-        case .tight: ref = entry.tight
-        case .closed: ref = entry.closed
-        }
-        return ref.file(for: body).flatMap(image(named:))
+        mouthRef(option: option, state: state)?
+            .file(for: body).flatMap(image(named:))
+    }
+
+    public func mouthThumbnail(option: String, state: MouthState,
+                               body: Body) -> CGImage? {
+        mouthRef(option: option, state: state)?
+            .file(for: body).flatMap(thumbnail(named:))
     }
 
     public func shadowImage() -> CGImage? {
@@ -168,6 +175,28 @@ public final class AssetCatalog: @unchecked Sendable {
 
     // MARK: - Image cache
 
+    private func eyesRef(option: String, expression: EyeExpression) -> Ref? {
+        switch expression {
+        case .open:
+            (catalog.eyes[option] ?? catalog.eyes["default"])?.open
+        case .closed:
+            (catalog.eyes[option] ?? catalog.eyes["default"])?.blink
+        case .brow1:
+            catalog.brows["brow1"]
+        case .brow2:
+            catalog.brows["brow2"]
+        }
+    }
+
+    private func mouthRef(option: String, state: MouthState) -> Ref? {
+        guard let entry = mouth(option: option) else { return nil }
+        return switch state {
+        case .open: entry.open
+        case .tight: entry.tight
+        case .closed: entry.closed
+        }
+    }
+
     func image(named file: String) -> CGImage? {
         lock.lock()
         defer { lock.unlock() }
@@ -177,6 +206,26 @@ public final class AssetCatalog: @unchecked Sendable {
               let img = CGImageSourceCreateImageAtIndex(src, 0, nil) else { return nil }
         cache[file] = img
         return img
+    }
+
+    private func thumbnail(named file: String) -> CGImage? {
+        let maxPixelSize = 400
+        let key = "\(file)#thumb-\(maxPixelSize)"
+        lock.lock()
+        defer { lock.unlock() }
+        if let hit = cache[key] { return hit }
+        let url = pngDirectory.appendingPathComponent(file)
+        guard let src = CGImageSourceCreateWithURL(url as CFURL, nil) else { return nil }
+        let options: [CFString: Any] = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceThumbnailMaxPixelSize: maxPixelSize,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceShouldCacheImmediately: true,
+        ]
+        guard let image = CGImageSourceCreateThumbnailAtIndex(
+            src, 0, options as CFDictionary) else { return nil }
+        cache[key] = image
+        return image
     }
 
     // MARK: - Machine-readable summary (banny catalog)

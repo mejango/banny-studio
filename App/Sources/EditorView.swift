@@ -6,6 +6,7 @@ import BannyCore
 struct EditorView: View {
     let file: ShowDocumentFile
     @Environment(\.undoManager) private var undoManager
+    @AppStorage("studioLightMode") private var lightMode = false
     #if !os(macOS)
     @Environment(\.horizontalSizeClass) private var sizeClass
     #endif
@@ -27,6 +28,10 @@ struct EditorView: View {
         .onAppear { model.undoManager = undoManager }
         .onChange(of: undoManager) { model.undoManager = $1 }
         .background(KeyCaptureView(model: model))
+        // Unlike a local colorScheme environment value, this updates the
+        // native window, title bar, menus, alerts, sheets, and popovers too.
+        .preferredColorScheme(lightMode ? .light : .dark)
+        .environment(\.colorScheme, lightMode ? .light : .dark)
     }
 }
 
@@ -59,7 +64,13 @@ struct WideEditor: View {
             // height for the available width, and the timeline absorbs all
             // remaining space.
             let availH = Double(geo.size.height) - headerH
-            let stageWidth = Double(max(200, geo.size.width))
+            let drawerWidth = drawer == nil
+                ? 0
+                : min(350, max(300, geo.size.width * 0.32))
+            // The drawer participates in layout instead of covering the stage
+            // and the right edge of the timeline. Keeping the complete frame
+            // visible is especially important while placing visual media.
+            let stageWidth = Double(max(200, geo.size.width - drawerWidth))
             let requestedTL = min(max(0, timelineHeight), availH - 9)
             // Below ~24pt the timeline snaps away entirely and the stage keeps
             // the whole area (letterboxed once it hits its aspect width limit).
@@ -71,11 +82,13 @@ struct WideEditor: View {
             let stageBoxH = availH - 9 - tlH
             VStack(spacing: 0) {
                 header
-                ZStack(alignment: .trailing) {
+                HStack(spacing: 0) {
                     VStack(spacing: 0) {
                         StageView(model: model, file: file)
                             .frame(width: CGFloat(stageWidth), height: CGFloat(stageBoxH))
                             .background(Color.black)
+                            .accessibilityElement(children: .contain)
+                            .accessibilityIdentifier("studio-stage")
                             .overlay(alignment: .bottom) {
                                 if showDeck {
                                     PerformanceDeck(model: model)
@@ -92,7 +105,11 @@ struct WideEditor: View {
                                             Image(systemName: "slider.horizontal.3")
                                                 .font(.system(size: 11, weight: .semibold))
                                                 .frame(width: 28, height: 26)
-                                                .background(.ultraThinMaterial, in: Capsule())
+                                                .background(theme.floatingSurface, in: Capsule())
+                                                .overlay(Capsule()
+                                                    .stroke(theme.floatingBorder, lineWidth: 1))
+                                                .shadow(color: .black.opacity(0.22),
+                                                        radius: 6, y: 2)
                                         }
                                         .buttonStyle(.plain)
                                         .help("Show quick controls")
@@ -124,13 +141,13 @@ struct WideEditor: View {
 
                     if drawer != nil {
                         WorkspaceDrawer(model: model, file: file, mode: $drawer)
-                            .frame(width: min(350, max(300, geo.size.width * 0.32)),
+                            .frame(width: drawerWidth,
                                    height: CGFloat(availH))
                             .zIndex(10)
                             .transition(.move(edge: .trailing).combined(with: .opacity))
                     }
                 }
-                .frame(width: CGFloat(stageWidth), height: CGFloat(availH))
+                .frame(width: geo.size.width, height: CGFloat(availH), alignment: .leading)
                 .clipped()
             }
             .background(theme.surface)
@@ -316,6 +333,19 @@ struct TrackInspector: View {
     @FocusState private var nameFocused: Bool
 
     var body: some View {
+        Group {
+            if model.trackExists(kind) {
+                inspectorContent
+            } else {
+                ContentUnavailableView(
+                    "Track removed",
+                    systemImage: "rectangle.stack.badge.minus",
+                    description: Text("Choose another track to continue editing."))
+            }
+        }
+    }
+
+    private var inspectorContent: some View {
         VStack(alignment: .leading, spacing: 14) {
             TextField(namePrompt, text: nameBinding)
                 .textFieldStyle(.plain)
@@ -375,6 +405,7 @@ struct TrackInspector: View {
                 }
                 .accessibilityIdentifier("advanced-disclosure")
             case .audio(let i):
+                VisualLayerControl(model: model, kind: kind)
                 MixSection(model: model, kind: kind)
                 if let file {
                     AudioSection(model: model, file: file, audioTrackIndex: i)
@@ -386,6 +417,7 @@ struct TrackInspector: View {
                 Text("Drop audio, image, GIF, or video onto this media track, or click an empty spot to import.")
                     .font(.caption2).foregroundStyle(.secondary)
             case .image:
+                VisualLayerControl(model: model, kind: kind)
                 ImageCueInspector(model: model)
                 if let file {
                     AssetBankSection(model: model, file: file)
@@ -442,13 +474,14 @@ struct TrackInspector: View {
                             .stroke(Color.red.opacity(0.35), lineWidth: 1))
                 }
                 .buttonStyle(.plain)
+                .accessibilityIdentifier("track-delete")
                 .disabled(isLocked || file?.isMicRecording == true)
                 .confirmationDialog(deleteTitle + "?", isPresented: $confirmDelete,
                                     titleVisibility: .visible) {
                     Button(deleteTitle, role: .destructive) {
                         model.removeTrack(kind)
-                        model.selectedTrackKey = nil
                     }
+                    .accessibilityIdentifier("track-delete-confirm")
                     Button("Cancel", role: .cancel) {}
                 } message: {
                     Text("This removes the track and everything on it. Undo (⌘Z) brings it back.")
@@ -492,6 +525,19 @@ struct TrackInspector: View {
             switch kind {
             case .character, .audio:
                 Button {
+                    model.toggleTrackMute(kind)
+                } label: {
+                    Label(model.isTrackMuted(kind) ? "Muted" : "Mute",
+                          systemImage: model.isTrackMuted(kind)
+                            ? "speaker.slash.circle.fill" : "speaker.slash.circle")
+                        .font(.caption.bold())
+                }
+                .buttonStyle(.bordered)
+                .tint(model.isTrackMuted(kind) ? .orange : nil)
+                .help("Silence this track while its motion and visuals keep playing")
+                .accessibilityIdentifier("track-mute")
+
+                Button {
                     model.toggleTrackSolo(kind)
                 } label: {
                     Label(model.isTrackSoloed(kind) ? "Soloed" : "Solo",
@@ -501,6 +547,8 @@ struct TrackInspector: View {
                 }
                 .buttonStyle(.bordered)
                 .tint(model.isTrackSoloed(kind) ? .yellow : nil)
+                .help("Hear only this track, or this track together with other soloed tracks")
+                .accessibilityIdentifier("track-solo")
             default:
                 EmptyView()
             }
@@ -609,6 +657,30 @@ struct TrackInspector: View {
     }
 }
 
+private struct VisualLayerControl: View {
+    @Bindable var model: StudioModel
+    let kind: TrackRowKind
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("LAYER").font(.caption.bold()).foregroundStyle(.secondary)
+            Picker("Layer", selection: Binding(
+                get: { model.visualLayer(for: kind) ?? .behindCast },
+                set: { model.setVisualLayer($0, for: kind) })) {
+                Text("Behind Cast").tag(VisualLayer.behindCast)
+                Text("In Front of Cast").tag(VisualLayer.inFrontOfCast)
+            }
+            .pickerStyle(.segmented)
+            .accessibilityIdentifier("visual-layer")
+            Text(model.visualLayer(for: kind) == .inFrontOfCast
+                 ? "Foreground props cover characters where they overlap."
+                 : "Scenery stays behind every character.")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+        }
+    }
+}
+
 /// Each track's gutter card: a face (outfit mannequin / type icon) that opens
 /// the track's inspector in a popover. Replaces the old right panel.
 struct TrackCardButton: View {
@@ -645,11 +717,7 @@ struct TrackCardButton: View {
                     .padding(12)
             }
             .frame(width: 320, height: popoverHeight)
-            .background(lightMode ? Color(red: 1, green: 0.99, blue: 0.95)
-                                  : Color(red: 0.13, green: 0.13, blue: 0.16))
-            .presentationBackground(lightMode ? Color(red: 1, green: 0.99, blue: 0.95)
-                                              : Color(red: 0.13, green: 0.13, blue: 0.16))
-            .environment(\.colorScheme, lightMode ? .light : .dark)
+            .studioPresentationSurface(lightMode: lightMode)
         }
     }
 

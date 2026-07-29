@@ -439,6 +439,45 @@ private func writePNG(_ image: CGImage, to url: URL) throws {
     #expect(resolvedTime == 3.25)
 }
 
+@Test func foregroundVisualTracksCompositeOverCharacters() throws {
+    let catalog = try AssetCatalog(assetsRoot: assetsRoot)
+    let sourceContext = makeContext(CGSize(width: 8, height: 8))
+    sourceContext.setFillColor(CGColor(red: 1, green: 0, blue: 0, alpha: 1))
+    sourceContext.fill(CGRect(x: 0, y: 0, width: 8, height: 8))
+    let source = try #require(sourceContext.makeImage())
+    let cue = ImageCue(
+        id: "blanket", assetID: "blanket", start: 0, dur: 2,
+        from: ImagePlacement(x: 0.5, y: 0.55, scale: 0.55))
+
+    func redPixelCount(layer: VisualLayer) throws -> Int {
+        let scene = SceneState(
+            characters: [Character(body: .orange, x: 0.5)],
+            imageTracks: [ImageTrack(id: "prop", name: "Blanket",
+                                     visualLayer: layer, cues: [cue])],
+            lights: [])
+        let context = makeContext(CGSize(width: 240, height: 240))
+        FrameRenderer(assets: catalog).draw(
+            scene: scene, at: 0.5, size: CGSize(width: 240, height: 240),
+            visualAsset: { _, _ in source }, flipped: true, in: context)
+        let image = try #require(context.makeImage())
+        let bytes = try #require(image.dataProvider?.data as Data?)
+        var count = 0
+        for y in 0..<image.height {
+            for x in 0..<image.width {
+                let offset = y * image.bytesPerRow + x * 4
+                if bytes[offset] > 200, bytes[offset + 1] < 80, bytes[offset + 2] < 80 {
+                    count += 1
+                }
+            }
+        }
+        return count
+    }
+
+    let behind = try redPixelCount(layer: .behindCast)
+    let foreground = try redPixelCount(layer: .inFrontOfCast)
+    #expect(foreground > behind + 100)
+}
+
 @Test func mediaMaskTintPivotAndLightShadowRenderTogether() throws {
     let catalog = try AssetCatalog(assetsRoot: assetsRoot)
     let sourceContext = makeContext(CGSize(width: 10, height: 10))

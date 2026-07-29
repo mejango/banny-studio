@@ -267,12 +267,11 @@ public enum ShowExporter {
         let stage = document.stage
         // No clips anywhere → no audio track in the mp4. Starting an engine
         // with an empty node graph crashes offline rendering.
-        let hasSolo = stage.characters.contains { !$0.hidden && $0.solo }
-            || stage.audioTracks.contains { !$0.hidden && $0.solo }
+        let audibility = AudioTrackAudibility(scene: stage)
         let hasClips = !stage.characters
-            .filter { !$0.hidden && (!hasSolo || $0.solo) }.flatMap(\.clips).isEmpty
+            .filter(audibility.includes).flatMap(\.clips).isEmpty
             || !stage.audioTracks
-                .filter { !$0.hidden && (!hasSolo || $0.solo) }.flatMap(\.clips).isEmpty
+                .filter(audibility.includes).flatMap(\.clips).isEmpty
         guard hasClips else { return [] }
         for segment in segments {
             if shouldCancel?() == true { throw ExportError.cancelled }

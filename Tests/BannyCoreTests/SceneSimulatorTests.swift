@@ -6,6 +6,28 @@ private func makeScene(_ character: Character, gravity: Double = 1) -> SceneStat
     SceneState(characters: [character], gravity: gravity)
 }
 
+@Test func mutingCharacterAudioDoesNotChangeItsVisualPerformance() {
+    let events: [PerfEvent] = [
+        .key(t: 0.2, code: .arrowRight, down: true),
+        .key(t: 0.4, code: .keyM, down: true),
+        .key(t: 0.65, code: .keyM, down: false),
+        .key(t: 0.8, code: .arrowRight, down: false),
+    ]
+    let audible = Character(body: .orange, clips: [
+        AudioClip(id: "line", name: "Line", start: 0, dur: 1, srcDur: 1),
+    ], events: events)
+    var muted = audible
+    muted.muted = true
+
+    let audiblePose = SceneSimulator(state: makeScene(audible))
+        .pose(characterIndex: 0, at: 0.5)
+    let mutedPose = SceneSimulator(state: makeScene(muted))
+        .pose(characterIndex: 0, at: 0.5)
+    #expect(mutedPose == audiblePose)
+    #expect(mutedPose.moving)
+    #expect(mutedPose.talking)
+}
+
 @Test(.enabled(if: ep1Exists)) func fullStateMatchesGoldenOnEp1() throws {
     let golden = try loadGolden()
     let ep1 = try loadEp1V1()

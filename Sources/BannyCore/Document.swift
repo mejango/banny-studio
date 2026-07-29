@@ -159,6 +159,13 @@ public struct Asset: Codable, Equatable, Identifiable, Sendable {
     }
 }
 
+/// Which side of the cast a visual track is composited on. The legacy/default
+/// value preserves Studio's original backdrop → media → character order.
+public enum VisualLayer: String, Codable, CaseIterable, Sendable {
+    case behindCast
+    case inFrontOfCast
+}
+
 /// A non-character image on stage: placed, sized, optionally moving over time.
 public struct ImageTrack: Codable, Equatable, Identifiable, Sendable {
     public var id: String
@@ -166,27 +173,34 @@ public struct ImageTrack: Codable, Equatable, Identifiable, Sendable {
     public var hidden: Bool
     /// Locked tracks remain visible but cannot be edited or recorded over.
     public var locked: Bool
+    /// Whether this track behaves as scenery or as a foreground prop/overlay.
+    public var visualLayer: VisualLayer
     public var cues: [ImageCue]
     public var presence: [VisibilityEvent]
 
     public init(id: String, name: String, hidden: Bool = false, locked: Bool = false,
+                visualLayer: VisualLayer = .behindCast,
                 cues: [ImageCue] = [],
                 presence: [VisibilityEvent] = []) {
         self.id = id
         self.name = name
         self.hidden = hidden
         self.locked = locked
+        self.visualLayer = visualLayer
         self.cues = cues
         self.presence = presence
     }
 
-    private enum CodingKeys: String, CodingKey { case id, name, hidden, locked, cues, presence }
+    private enum CodingKeys: String, CodingKey {
+        case id, name, hidden, locked, visualLayer, cues, presence
+    }
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         id = try c.decode(String.self, forKey: .id)
         name = try c.decode(String.self, forKey: .name)
         hidden = try c.decodeIfPresent(Bool.self, forKey: .hidden) ?? false
         locked = try c.decodeIfPresent(Bool.self, forKey: .locked) ?? false
+        visualLayer = try c.decodeIfPresent(VisualLayer.self, forKey: .visualLayer) ?? .behindCast
         cues = try c.decodeIfPresent([ImageCue].self, forKey: .cues) ?? []
         presence = try c.decodeIfPresent([VisibilityEvent].self, forKey: .presence) ?? []
     }
@@ -948,6 +962,8 @@ public struct Character: Equatable, Sendable {
     public var hidden: Bool
     /// Locked tracks remain visible but reject editing and recording gestures.
     public var locked: Bool
+    /// Muted character audio stays silent while motion, captions, and visuals continue.
+    public var muted: Bool
     /// Solo is an audio-monitoring/export state shared by voice and media tracks.
     public var solo: Bool
     /// Timed show/hide toggles (presence on stage over the timeline).
@@ -963,7 +979,7 @@ public struct Character: Equatable, Sendable {
                 speed: Double = 320, rotationSpeed: Double = 90,
                 rotationPivot: MediaPivot? = nil,
                 wobble: Double = 7, hidden: Bool = false, locked: Bool = false,
-                solo: Bool = false,
+                muted: Bool = false, solo: Bool = false,
                 presence: [VisibilityEvent] = []) {
         self.body = body
         self.x = x
@@ -988,6 +1004,7 @@ public struct Character: Equatable, Sendable {
         self.wobble = wobble
         self.hidden = hidden
         self.locked = locked
+        self.muted = muted
         self.solo = solo
         self.presence = presence
     }
@@ -996,7 +1013,8 @@ public struct Character: Equatable, Sendable {
 extension Character: Codable {
     private enum CodingKeys: String, CodingKey {
         case body, x, depth, size, face, baseOutfit, subs, clips, events, reactions,
-             armedGroups, name, trackFx, recStart, speed, rotationSpeed, wobble, hidden, locked, solo, presence,
+             armedGroups, name, trackFx, recStart, speed, rotationSpeed, wobble,
+             hidden, locked, muted, solo, presence,
              voicePitch, voiceSpeed, speechVoice, rotationPivot
     }
 
@@ -1027,6 +1045,7 @@ extension Character: Codable {
         wobble = try c.decodeIfPresent(Double.self, forKey: .wobble) ?? 7
         hidden = try c.decodeIfPresent(Bool.self, forKey: .hidden) ?? false
         locked = try c.decodeIfPresent(Bool.self, forKey: .locked) ?? false
+        muted = try c.decodeIfPresent(Bool.self, forKey: .muted) ?? false
         solo = try c.decodeIfPresent(Bool.self, forKey: .solo) ?? false
         presence = try c.decodeIfPresent([VisibilityEvent].self, forKey: .presence) ?? []
     }
@@ -1059,6 +1078,7 @@ extension Character: Codable {
         try c.encode(wobble, forKey: .wobble)
         try c.encode(hidden, forKey: .hidden)
         try c.encode(locked, forKey: .locked)
+        try c.encode(muted, forKey: .muted)
         try c.encode(solo, forKey: .solo)
         try c.encode(presence, forKey: .presence)
     }
@@ -1281,12 +1301,18 @@ public struct AudioTrack: Codable, Equatable, Sendable {
     public var cues: [ImageCue]
     public var hidden: Bool
     public var locked: Bool
+    /// Applies to image/GIF/video cues; audio is unaffected.
+    public var visualLayer: VisualLayer
+    /// Silences clips while image/video cues on this media track keep playing.
+    public var muted: Bool
     public var solo: Bool
     public var presence: [VisibilityEvent]
 
     public init(id: String, name: String, fx: Fx = .defaultTrack, clips: [AudioClip] = [],
                 cues: [ImageCue] = [], hidden: Bool = false, locked: Bool = false,
-                solo: Bool = false, presence: [VisibilityEvent] = []) {
+                visualLayer: VisualLayer = .behindCast,
+                muted: Bool = false, solo: Bool = false,
+                presence: [VisibilityEvent] = []) {
         self.id = id
         self.name = name
         self.fx = fx
@@ -1294,12 +1320,14 @@ public struct AudioTrack: Codable, Equatable, Sendable {
         self.cues = cues
         self.hidden = hidden
         self.locked = locked
+        self.visualLayer = visualLayer
+        self.muted = muted
         self.solo = solo
         self.presence = presence
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, name, fx, clips, cues, hidden, locked, solo, presence
+        case id, name, fx, clips, cues, hidden, locked, visualLayer, muted, solo, presence
     }
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -1310,6 +1338,8 @@ public struct AudioTrack: Codable, Equatable, Sendable {
         cues = try c.decodeIfPresent([ImageCue].self, forKey: .cues) ?? []
         hidden = try c.decodeIfPresent(Bool.self, forKey: .hidden) ?? false
         locked = try c.decodeIfPresent(Bool.self, forKey: .locked) ?? false
+        visualLayer = try c.decodeIfPresent(VisualLayer.self, forKey: .visualLayer) ?? .behindCast
+        muted = try c.decodeIfPresent(Bool.self, forKey: .muted) ?? false
         solo = try c.decodeIfPresent(Bool.self, forKey: .solo) ?? false
         presence = try c.decodeIfPresent([VisibilityEvent].self, forKey: .presence) ?? []
     }

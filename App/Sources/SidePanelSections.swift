@@ -17,6 +17,7 @@ struct AudioSection: View {
     /// When set, clips land on this standalone audio track instead of a character.
     var audioTrackIndex: Int? = nil
     @State private var importing = false
+    @State private var audioDropTargeted = false
 
     private var target: Int? {
         audioTrackIndex == nil ? (characterIndex ?? model.selection.first) : nil
@@ -33,8 +34,10 @@ struct AudioSection: View {
             MissingMediaRecoverySection(model: model, file: file)
             Text("AUDIO").font(.caption.bold()).foregroundStyle(.secondary)
             HStack(spacing: 8) {
-                Button("＋ Import…") { importing = true }
-                    .font(.caption)
+                Button(target == nil ? "＋ Import audio…" : "＋ Import dialogue…") {
+                    importing = true
+                }
+                .font(.caption)
                 Button {
                     recorder.toggle(model: model, characterIndex: target,
                                     audioTrackIndex: audioTrackIndex)
@@ -77,7 +80,8 @@ struct AudioSection: View {
             } else if !recorder.isRecording {
                 Text(target == nil
                      ? "Mic recording rolls the timeline so you can perform against the show."
-                     : "Mic recording rolls the timeline and adds sample-aligned mouth timing automatically.")
+                     : "Drop or import a voice file here—or record from the mic. "
+                       + "Banny Studio adds editable, sample-aligned M-key mouth timing automatically.")
                     .font(.caption2).foregroundStyle(.secondary)
             }
         }
@@ -91,6 +95,24 @@ struct AudioSection: View {
         .fileImporter(isPresented: $importing, allowedContentTypes: [.audio, .mp3, .mpeg4Audio, .wav]) { result in
             if case .success(let url) = result {
                 model.addAudioClip(from: url, characterIndex: target, audioTrackIndex: audioTrackIndex)
+            }
+        }
+        .contentShape(Rectangle())
+        .dropDestination(for: URL.self) { urls, _ in
+            guard !recorder.isRecording, let url = urls.first else { return false }
+            return model.addAudioClip(
+                from: url,
+                characterIndex: target,
+                audioTrackIndex: audioTrackIndex) != nil
+        } isTargeted: { targeted in
+            audioDropTargeted = targeted
+        }
+        .overlay {
+            if audioDropTargeted {
+                RoundedRectangle(cornerRadius: 8)
+                    .stroke(Color.accentColor, style: StrokeStyle(lineWidth: 2, dash: [5, 3]))
+                    .padding(-4)
+                    .allowsHitTesting(false)
             }
         }
     }
@@ -1074,16 +1096,8 @@ private struct StudioVoicePicker: View {
             }
         }
         .frame(minWidth: 390, idealWidth: 430, minHeight: 420, idealHeight: 520)
-        .foregroundStyle(.primary)
-        .background(pickerSurface)
-        .presentationBackground(pickerSurface)
-        .environment(\.colorScheme, lightMode ? .light : .dark)
+        .studioPresentationSurface(lightMode: lightMode)
         .accessibilityIdentifier("speech-voice-picker")
-    }
-
-    private var pickerSurface: Color {
-        lightMode ? Color(red: 1, green: 0.99, blue: 0.95)
-                  : Color(red: 0.13, green: 0.13, blue: 0.16)
     }
 
     private func voiceBadge(_ text: String) -> some View {

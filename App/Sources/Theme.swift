@@ -19,6 +19,14 @@ struct Theme {
     var mutedText: Color      // ruler numbers, eyes, CC label
     var chipStroke: Color     // caption chip outline
     var playhead: Color
+    /// Opaque surfaces for sheets and popovers. Native translucent materials
+    /// can inherit the Mac's appearance independently of the Studio theme,
+    /// leaving semantic text illegible.
+    var presentationSurface: Color
+    /// Small controls that float over arbitrary stage artwork must provide
+    /// their own contrast rather than sample the pixels behind them.
+    var floatingSurface: Color
+    var floatingBorder: Color
 
     static let dark = Theme(
         header: Color(red: 0.04, green: 0.04, blue: 0.065),
@@ -36,7 +44,10 @@ struct Theme {
         shade: Color.black.opacity(0.55),
         mutedText: Color(white: 0.55),
         chipStroke: Color.black.opacity(0.25),
-        playhead: Color(red: 0.6, green: 1, blue: 0.6))
+        playhead: Color(red: 0.6, green: 1, blue: 0.6),
+        presentationSurface: Color(red: 0.10, green: 0.10, blue: 0.135),
+        floatingSurface: Color(red: 0.075, green: 0.075, blue: 0.105),
+        floatingBorder: Color.white.opacity(0.24))
 
     static let light = Theme(
         header: Color(red: 0.93, green: 0.92, blue: 0.88),
@@ -54,7 +65,38 @@ struct Theme {
         shade: Color.black.opacity(0.22),
         mutedText: Color(white: 0.35),
         chipStroke: Color.black.opacity(0.35),
-        playhead: Color(red: 0, green: 0.5, blue: 0.14))
+        playhead: Color(red: 0, green: 0.5, blue: 0.14),
+        presentationSurface: Color(red: 1, green: 0.99, blue: 0.95),
+        floatingSurface: Color(red: 0.97, green: 0.96, blue: 0.92),
+        floatingBorder: Color.black.opacity(0.24))
+
+    static func studio(lightMode: Bool) -> Theme {
+        lightMode ? .light : .dark
+    }
+}
+
+/// Gives every custom presentation the same opaque, high-contrast surface.
+/// `preferredColorScheme` also updates the native presentation host (and its
+/// controls), while `environment` keeps previews and tests deterministic.
+private struct StudioPresentationSurface: ViewModifier {
+    let lightMode: Bool
+
+    private var theme: Theme { .studio(lightMode: lightMode) }
+
+    func body(content: Content) -> some View {
+        content
+            .foregroundStyle(Color.primary)
+            .background(theme.presentationSurface)
+            .presentationBackground(theme.presentationSurface)
+            .environment(\.colorScheme, lightMode ? .light : .dark)
+            .preferredColorScheme(lightMode ? .light : .dark)
+    }
+}
+
+extension View {
+    func studioPresentationSurface(lightMode: Bool) -> some View {
+        modifier(StudioPresentationSurface(lightMode: lightMode))
+    }
 }
 
 /// Sun/moon toggle for the header.

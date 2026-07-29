@@ -80,13 +80,22 @@ public struct FrameRenderer: Sendable {
         }
         let lights = scene.activeLights(at: t)
 
-        // Image cues (between backdrop and characters) — image tracks and the
-        // image cues living on media (audio) tracks.
+        // Image cues can act as scenery or foreground props. Existing shows
+        // decode to `behindCast`; foreground media is drawn after the cast.
+        var visualTracks: [(hidden: Bool, presence: [VisibilityEvent],
+                            layer: VisualLayer, cues: [ImageCue])] = []
         if imageAsset != nil || visualAsset != nil {
-            var visualTracks: [(hidden: Bool, presence: [VisibilityEvent], cues: [ImageCue])] =
-                scene.imageTracks.map { ($0.hidden, $0.presence, $0.cues) }
-            visualTracks += scene.audioTracks.map { ($0.hidden, $0.presence, $0.cues) }
-            for track in visualTracks where !track.hidden && track.presence.isPresent(at: t) {
+            visualTracks = scene.imageTracks.map {
+                ($0.hidden, $0.presence, $0.visualLayer, $0.cues)
+            }
+            visualTracks += scene.audioTracks.map {
+                ($0.hidden, $0.presence, $0.visualLayer, $0.cues)
+            }
+        }
+        func drawVisualTracks(on layer: VisualLayer) {
+            for track in visualTracks
+                where track.layer == layer && !track.hidden
+                    && track.presence.isPresent(at: t) {
                 for cue in track.cues where t >= cue.start && t < cue.start + cue.dur {
                     guard let img = visualAsset?(cue, t) ?? imageAsset?(cue.assetID) else { continue }
                     let p = cue.placement(at: t)
@@ -95,6 +104,7 @@ public struct FrameRenderer: Sendable {
                 }
             }
         }
+        drawVisualTracks(on: .behindCast)
 
         // Poses + placements for every character, painter-sorted by depth.
         var entries: [(index: Int, pose: CharacterPose, placement: StageLayout.Placement)] = []
@@ -134,6 +144,7 @@ public struct FrameRenderer: Sendable {
         for e in entries.sorted(by: { $0.placement.zIndex < $1.placement.zIndex }) {
             drawCharacter(scene.characters[e.index], pose: e.pose, placement: e.placement, in: ctx)
         }
+        drawVisualTracks(on: .inFrontOfCast)
         ctx.restoreGState() // camera off — captions render in screen space
 
         // Captions gate on track visibility only — a presence-hidden character

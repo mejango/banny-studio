@@ -141,9 +141,16 @@ caption to one readable thought and do not hard-code line breaks for one aspect.
 Leave it empty to ship the whole timeline. `banny ship --range FROM TO`
 temporarily overrides it without changing the project.
 
-Respect `hidden`, `locked`, `solo`, and timed `presence` state. Treat a locked
-track as read-only unless the user explicitly asks to unlock or replace it.
-Avoid editing the same project simultaneously in Studio and the CLI.
+Respect `hidden`, `locked`, `muted`, `solo`, and timed `presence` state.
+`muted` silences a character or media track's audio while its motion, captions,
+mouth timing, and visual cues continue; `solo` restricts audio to soloed tracks.
+Do not normally set both on one track (Mute wins if a hand-edited project does).
+For image tracks and visual cues on media tracks, `visualLayer` is either
+`behindCast` (the backward-compatible default) or `inFrontOfCast`. Use the
+foreground layer for props and overlays that must cover characters, such as a
+blanket, desk, doorway, or transition panel.
+Treat a locked track as read-only unless the user explicitly asks to unlock or
+replace it. Avoid editing the same project simultaneously in Studio and the CLI.
 
 ## Atomic JSON changes
 

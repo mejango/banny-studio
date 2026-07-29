@@ -446,6 +446,7 @@ struct StudioTimelineView: View {
             }
         }
         .background(theme.surface)
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("studio-timeline")
         .onChange(of: neededGutterWidth) { _, needed in
             if needed > laneLabelWidthStore {
@@ -665,18 +666,27 @@ struct StudioTimelineView: View {
     /// background cue, and a visual elsewhere gets a new visual track.
     private func handleFileDrop(urls: [URL], location: CGPoint) -> Bool {
         guard let url = urls.first else { return false }
-        let t = max(0, (time(forX: location.x) * 10).rounded() / 10)
+        // The gutter has no time axis: dropping onto a track card means "at
+        // the playhead." Dropping in the lanes preserves the precise x-time.
+        let t = location.x < 0
+            ? model.time
+            : max(0, (time(forX: location.x) * 10).rounded() / 10)
         // Audio files land as clips, not bank assets.
-        if ["mp3", "m4a", "wav", "aac", "aif", "aiff", "caf"].contains(url.pathExtension.lowercased()) {
+        let ext = url.pathExtension.lowercased()
+        let knownAudio = ["mp3", "m4a", "wav", "aac", "aif", "aiff", "caf"]
+            .contains(ext)
+        let declaredAudio = UTType(filenameExtension: ext)?.conforms(to: .audio) == true
+        if knownAudio || declaredAudio {
             switch row(at: location.y) {
             case .audio(let i):
-                model.addAudioClip(from: url, characterIndex: nil, audioTrackIndex: i, at: t)
+                return model.addAudioClip(
+                    from: url, characterIndex: nil, audioTrackIndex: i, at: t) != nil
             case .character(let i):
-                model.addAudioClip(from: url, characterIndex: i, audioTrackIndex: nil, at: t)
+                return model.addAudioClip(
+                    from: url, characterIndex: i, audioTrackIndex: nil, at: t) != nil
             default:
                 return false
             }
-            return true
         }
         guard let asset = model.addAsset(from: url) else { return false }
         switch row(at: location.y) {
@@ -834,12 +844,33 @@ struct StudioTimelineView: View {
                      anchor: .trailing)
         }
         .overlay(alignment: .topTrailing) {
-            // The Export action lives on its row, sticky to the divider.
-            if showShip, let file {
-                ShipButton(model: model, file: file, compact: true)
-                    .padding(.trailing, 8)
-                    .frame(height: exportRowH)
+            // Range editing and export live on the selected-time row.
+            HStack(spacing: 4) {
+                if model.exportRange != nil {
+                    Menu {
+                        rangeEditCommands
+                    } label: {
+                        Label("Range", systemImage: "scissors")
+                            .font(.system(size: 9, weight: .semibold))
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 1)
+                            .background(Color.primary.opacity(0.09), in: Capsule())
+                            .overlay(Capsule().stroke(Color.primary.opacity(0.3), lineWidth: 1))
+                    }
+                    .menuStyle(.button)
+                    .buttonStyle(.plain)
+                    .menuIndicator(.hidden)
+                    .fixedSize()
+                    .disabled(model.recording || file?.isMicRecording == true)
+                    .help("Keep or remove clip content in the marked time range")
+                    .accessibilityIdentifier("range-edit-menu")
+                }
+                if showShip, let file {
+                    ShipButton(model: model, file: file, compact: true)
+                }
             }
+            .padding(.trailing, 8)
+            .frame(height: exportRowH)
         }
         .overlay(alignment: .bottomLeading) {
             Menu {
@@ -907,6 +938,10 @@ struct StudioTimelineView: View {
             let point = hoverHeaderPoint ?? CGPoint(x: 0, y: rulerTop)
             let markerTime = (time(forX: point.x + scrollOffset.x) * 10).rounded() / 10
             if point.y < exportRowH, exportRangeContains(markerTime) {
+                Menu("Edit Clip Content") {
+                    rangeEditCommands
+                }
+                Divider()
                 Button("Delete Export Range", role: .destructive) {
                     deleteExportRange()
                 }
@@ -1198,10 +1233,16 @@ struct StudioTimelineView: View {
                                 .foregroundStyle(Color.orange),
                              at: CGPoint(x: size.width - 34, y: y + presenceStripH / 2))
                 }
+                if model.isTrackMuted(kind(of: row)) {
+                    ctx.draw(Text("M").font(.system(size: 8, weight: .heavy))
+                                .foregroundStyle(Color.orange),
+                             at: CGPoint(x: size.width - 47, y: y + presenceStripH / 2))
+                }
                 if model.isTrackSoloed(kind(of: row)) {
                     ctx.draw(Text("S").font(.system(size: 8, weight: .heavy))
                                 .foregroundStyle(Color.yellow),
-                             at: CGPoint(x: size.width - 47, y: y + presenceStripH / 2))
+                             at: CGPoint(x: size.width - (model.isTrackMuted(kind(of: row)) ? 58 : 47),
+                                         y: y + presenceStripH / 2))
                 }
                 if case .character = row {
                     ctx.draw(Text(Image(systemName: "tshirt"))
@@ -1258,12 +1299,40 @@ struct StudioTimelineView: View {
                     model.toggleTrackLock(kind(of: row))
                 }
                 if case .character = row {
+                    Button(model.isTrackMuted(kind(of: row)) ? "Unmute Track" : "Mute Track") {
+                        model.toggleTrackMute(kind(of: row))
+                    }
                     Button(model.isTrackSoloed(kind(of: row)) ? "Unsolo Track" : "Solo Track") {
                         model.toggleTrackSolo(kind(of: row))
                     }
                 } else if case .audio = row {
+                    Button(model.isTrackMuted(kind(of: row)) ? "Unmute Track" : "Mute Track") {
+                        model.toggleTrackMute(kind(of: row))
+                    }
                     Button(model.isTrackSoloed(kind(of: row)) ? "Unsolo Track" : "Solo Track") {
                         model.toggleTrackSolo(kind(of: row))
+                    }
+                }
+                if let layer = model.visualLayer(for: kind(of: row)) {
+                    Menu("Layer") {
+                        Button {
+                            model.setVisualLayer(.behindCast, for: kind(of: row))
+                        } label: {
+                            if layer == .behindCast {
+                                Label("Behind Cast", systemImage: "checkmark")
+                            } else {
+                                Text("Behind Cast")
+                            }
+                        }
+                        Button {
+                            model.setVisualLayer(.inFrontOfCast, for: kind(of: row))
+                        } label: {
+                            if layer == .inFrontOfCast {
+                                Label("In Front of Cast", systemImage: "checkmark")
+                            } else {
+                                Text("In Front of Cast")
+                            }
+                        }
                     }
                 }
                 Divider()
@@ -1414,11 +1483,7 @@ struct StudioTimelineView: View {
                                         .padding(12)
                                     }
                                     .frame(width: 300, height: 430)
-                                    .background(lightMode ? Color(red: 1, green: 0.99, blue: 0.95)
-                                                          : Color(red: 0.13, green: 0.13, blue: 0.16))
-                                    .presentationBackground(lightMode ? Color(red: 1, green: 0.99, blue: 0.95)
-                                                                      : Color(red: 0.13, green: 0.13, blue: 0.16))
-                                    .environment(\.colorScheme, lightMode ? .light : .dark)
+                                    .studioPresentationSurface(lightMode: lightMode)
                                 }
                         }
                         if let ma = mediaAddAt {
@@ -1462,6 +1527,7 @@ struct StudioTimelineView: View {
                                     }
                                     .padding(12)
                                     .frame(width: 240)
+                                    .studioPresentationSurface(lightMode: lightMode)
                                     .onDisappear { presentPendingMediaImport() }
                                 }
                         }
@@ -1477,11 +1543,7 @@ struct StudioTimelineView: View {
                                             .padding(12)
                                     }
                                     .frame(width: 300, height: 360)
-                                    .background(lightMode ? Color(red: 1, green: 0.99, blue: 0.95)
-                                                          : Color(red: 0.13, green: 0.13, blue: 0.16))
-                                    .presentationBackground(lightMode ? Color(red: 1, green: 0.99, blue: 0.95)
-                                                                      : Color(red: 0.13, green: 0.13, blue: 0.16))
-                                    .environment(\.colorScheme, lightMode ? .light : .dark)
+                                    .studioPresentationSurface(lightMode: lightMode)
                                 }
                         }
     }
@@ -1793,7 +1855,7 @@ struct StudioTimelineView: View {
                          at: CGPoint(x: (x0 + x1) / 2, y: y + exportRowH / 2))
             }
         } else {
-            ctx.draw(Text("drag here to mark an export range — empty ships the whole show")
+            ctx.draw(Text("drag to select a time range — use it for export or clip edits")
                         .font(.system(size: 8)).foregroundStyle(theme.mutedText.opacity(0.8)),
                      at: CGPoint(x: scrollOffset.x + 10, y: y + exportRowH / 2), anchor: .leading)
         }
@@ -2593,6 +2655,16 @@ struct StudioTimelineView: View {
            model.isTrackLocked(kind(of: row)) {
             return
         }
+        // Every draggable timeline item participates in edge scrolling. This
+        // must happen before the specialized handlers below: clips, fades,
+        // reactions, cues, and mouth timing all return early after applying
+        // their edit.
+        let moved = max(
+            value.translation.width.magnitude,
+            value.translation.height.magnitude) > 3
+        if active || moved {
+            updateAutoScroll(pointerContentX: value.location.x)
+        }
 
         if let fade = draggingFade {
             let pointerTime = time(forX: value.location.x)
@@ -2675,7 +2747,6 @@ struct StudioTimelineView: View {
                 TimelineMath.resizeMark(r.mark, leading: r.leading, to: t, in: r.baseEvents)
             return
         }
-        updateAutoScroll(pointerContentX: value.location.x)
         if marquee != nil {
             marquee = (marquee!.start, value.location)
             return
@@ -3784,6 +3855,36 @@ struct StudioTimelineView: View {
         model.registerUndoSnapshot(label: "Delete Export Range")
         model.exportRange = nil
         exportRangeSelected = false
+    }
+
+    @ViewBuilder
+    private var rangeEditCommands: some View {
+        Menu("Selected Track(s)") {
+            Button("Keep Only Content in Range") {
+                applyRangeEdit(.keep, scope: .selectedTracks)
+            }
+            Button("Remove Content in Range") {
+                applyRangeEdit(.remove, scope: .selectedTracks)
+            }
+        }
+        .disabled(model.selectedTrackKind == nil)
+
+        Menu("All Tracks") {
+            Button("Keep Only Content in Range") {
+                applyRangeEdit(.keep, scope: .allTracks)
+            }
+            Button("Remove Content in Range") {
+                applyRangeEdit(.remove, scope: .allTracks)
+            }
+        }
+        Divider()
+        Text("Non-ripple: performance keys and markers stay in place")
+    }
+
+    private func applyRangeEdit(_ operation: TimelineRangeOperation,
+                                scope: TimelineRangeScope) {
+        guard let range = model.exportRange else { return }
+        _ = model.editClipContent(in: range, operation: operation, scope: scope)
     }
 
     private func exportRangeContains(_ time: Double) -> Bool {

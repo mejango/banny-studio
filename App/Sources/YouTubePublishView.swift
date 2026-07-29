@@ -71,6 +71,7 @@ struct YouTubePublishView: View {
     let suggestedTitle: String
 
     @Environment(\.dismiss) private var dismiss
+    @AppStorage("studioLightMode") private var lightMode = false
     @State private var account = YouTubeAccount()
     @State private var title: String
     @State private var videoDescription = ""
@@ -128,6 +129,7 @@ struct YouTubePublishView: View {
         #else
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         #endif
+        .studioPresentationSurface(lightMode: lightMode)
         .interactiveDismissDisabled(isPublishing)
         .task {
             guard account.isConnected, account.channel == nil else { return }

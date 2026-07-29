@@ -18,6 +18,11 @@ struct MouthCueSelection: Equatable {
     var cueIndex: Int
 }
 
+enum TimelineRangeScope: Equatable {
+    case selectedTracks
+    case allTracks
+}
+
 /// Ephemeral lip sync for inspector voice previews. It deliberately lives
 /// outside the document: previewing never edits clips, moves the playhead, or
 /// creates undo history.
@@ -2074,20 +2079,80 @@ final class StudioModel {
     }
 
     func removeCharacter(at index: Int) {
-        guard file?.isMicRecording != true,
+        guard !recording, file?.isMicRecording != true,
               scene.characters.indices.contains(index),
               !scene.characters[index].locked else { return }
+        let previousSelection = selection
+        let selectedCharacterTrack = selectedTrackKey.flatMap { key -> Int? in
+            guard key.hasPrefix("c-") else { return nil }
+            return Int(key.dropFirst(2))
+        }
         registerUndoSnapshot(label: "Remove Character")
         scene.characters.remove(at: index)
+        clearFreeform()
+        recTargets = []
+        recPunched = [:]
+        selectedMarks = []
+        selectedClips = []
+        selectedOutfitEvent = nil
+        selectedMotionEvent = nil
         selectedReaction = nil
         selectedMouthCue = nil
+        speechMouthPreview = nil
+        speechMouthPreviewCleanupTask?.cancel()
         // Character row keys are index-based; keep the display order aligned.
         scene.rowOrder = scene.rowOrder.compactMap { key in
             guard key.hasPrefix("c-"), let j = Int(key.dropFirst(2)) else { return key }
             if j == index { return nil }
             return j > index ? "c-\(j - 1)" : key
         }
-        selection = scene.characters.isEmpty ? [] : [min(index, scene.characters.count - 1)]
+        markClipboard = markClipboard.compactMap { mark in
+            guard mark.character != index else { return nil }
+            var remapped = mark
+            if remapped.character > index { remapped.character -= 1 }
+            return remapped
+        }
+        clipClipboard = clipClipboard.compactMap { owner, clip in
+            guard owner.hasPrefix("c"), let character = Int(owner.dropFirst()) else {
+                return (owner, clip)
+            }
+            guard character != index else { return nil }
+            return ("c\(character > index ? character - 1 : character)", clip)
+        }
+        if let clipboard = reactionClipboard {
+            if clipboard.character == index {
+                reactionClipboard = nil
+            } else if clipboard.character > index {
+                reactionClipboard = (clipboard.character - 1, clipboard.block)
+            }
+        }
+        if let request = inspectorRequest, request.hasPrefix("c-"),
+           let character = Int(request.dropFirst(2)) {
+            if character == index {
+                inspectorRequest = nil
+            } else if character > index {
+                inspectorRequest = "c-\(character - 1)"
+            }
+        }
+        var remappedSelection = Set(previousSelection.compactMap { selected -> Int? in
+            if selected == index { return nil }
+            return selected > index ? selected - 1 : selected
+        })
+        if previousSelection.contains(index), remappedSelection.isEmpty,
+           !scene.characters.isEmpty {
+            remappedSelection = [min(index, scene.characters.count - 1)]
+        }
+        selection = remappedSelection
+        lastSelectedCharacterIndex = remappedSelection.sorted().first
+        if let selectedCharacterTrack {
+            if selectedCharacterTrack == index {
+                selectedTrackKey = selection.sorted().first.map { "c-\($0)" }
+                    ?? scene.backgroundTracks.first?.id
+            } else if selectedCharacterTrack > index {
+                selectedTrackKey = "c-\(selectedCharacterTrack - 1)"
+            }
+        }
+        resyncAudioIfPlaying()
     }
 
     /// Edits the base (t=0) outfit regardless of where the playhead is.
@@ -2307,15 +2372,22 @@ final class StudioModel {
 
     func removeTrack(_ row: TrackRowKind) {
         guard file?.isMicRecording != true, !isTrackLocked(row) else { return }
+        if case .character(let i) = row {
+            removeCharacter(at: i)
+            return
+        }
+        guard trackExists(row) else { return }
+        let removedKey: String
+        switch row {
+        case .audio(let i): removedKey = scene.audioTracks[i].id
+        case .image(let i): removedKey = scene.imageTracks[i].id
+        case .light(let i): removedKey = scene.lightTracks[i].id
+        case .background, .character: return
+        }
         registerUndoSnapshot(label: "Delete Track")
         switch row {
-        case .character(let i):
-            guard scene.characters.indices.contains(i) else { return }
-            scene.characters.remove(at: i)
-            selection = scene.characters.isEmpty ? [] : [min(i, scene.characters.count - 1)]
-            selectedMarks = []
-            selectedReaction = nil
-            selectedMouthCue = nil
+        case .character:
+            return
         case .audio(let i):
             guard scene.audioTracks.indices.contains(i) else { return }
             scene.audioTracks.remove(at: i)
@@ -2328,6 +2400,13 @@ final class StudioModel {
         case .background:
             break // the background track is permanent
         }
+        scene.rowOrder.removeAll { $0 == removedKey }
+        if selectedTrackKey == removedKey {
+            selectedTrackKey = scene.backgroundTracks.first?.id
+        }
+        if inspectorRequest == removedKey { inspectorRequest = nil }
+        reconcileTimelineSelectionAfterRangeEdit()
+        resyncAudioIfPlaying()
     }
 
     func addAudioTrack() {
@@ -2417,6 +2496,16 @@ final class StudioModel {
         }
     }
 
+    func trackExists(_ kind: TrackRowKind) -> Bool {
+        switch kind {
+        case .character(let i): return scene.characters.indices.contains(i)
+        case .audio(let i): return scene.audioTracks.indices.contains(i)
+        case .image(let i): return scene.imageTracks.indices.contains(i)
+        case .light(let i): return scene.lightTracks.indices.contains(i)
+        case .background(let i): return scene.backgroundTracks.indices.contains(i)
+        }
+    }
+
     func toggleTrackLock(_ kind: TrackRowKind) {
         guard !recording, file?.isMicRecording != true else { return }
         switch kind {
@@ -2451,16 +2540,72 @@ final class StudioModel {
         }
     }
 
+    func isTrackMuted(_ kind: TrackRowKind) -> Bool {
+        switch kind {
+        case .character(let i): return scene.characters[safe: i]?.muted ?? false
+        case .audio(let i): return scene.audioTracks[safe: i]?.muted ?? false
+        default: return false
+        }
+    }
+
+    func visualLayer(for kind: TrackRowKind) -> VisualLayer? {
+        switch kind {
+        case .audio(let i): return scene.audioTracks[safe: i]?.visualLayer
+        case .image(let i): return scene.imageTracks[safe: i]?.visualLayer
+        default: return nil
+        }
+    }
+
+    func setVisualLayer(_ layer: VisualLayer, for kind: TrackRowKind) {
+        guard !recording, file?.isMicRecording != true, !isTrackLocked(kind) else { return }
+        switch kind {
+        case .audio(let i):
+            guard scene.audioTracks.indices.contains(i),
+                  scene.audioTracks[i].visualLayer != layer else { return }
+            registerUndoSnapshot(label: "Change Visual Layer")
+            scene.audioTracks[i].visualLayer = layer
+        case .image(let i):
+            guard scene.imageTracks.indices.contains(i),
+                  scene.imageTracks[i].visualLayer != layer else { return }
+            registerUndoSnapshot(label: "Change Visual Layer")
+            scene.imageTracks[i].visualLayer = layer
+        default:
+            return
+        }
+    }
+
+    /// Mute is deliberately audio-only: performance events, captions, mouth
+    /// timing, and visual cues continue to resolve while the timeline plays.
+    func toggleTrackMute(_ kind: TrackRowKind) {
+        switch kind {
+        case .character(let i):
+            guard scene.characters.indices.contains(i) else { return }
+            registerUndoSnapshot(label: scene.characters[i].muted ? "Unmute Track" : "Mute Track")
+            scene.characters[i].muted.toggle()
+            if scene.characters[i].muted { scene.characters[i].solo = false }
+        case .audio(let i):
+            guard scene.audioTracks.indices.contains(i) else { return }
+            registerUndoSnapshot(label: scene.audioTracks[i].muted ? "Unmute Track" : "Mute Track")
+            scene.audioTracks[i].muted.toggle()
+            if scene.audioTracks[i].muted { scene.audioTracks[i].solo = false }
+        default:
+            return
+        }
+        resyncAudioIfPlaying()
+    }
+
     func toggleTrackSolo(_ kind: TrackRowKind) {
         switch kind {
         case .character(let i):
             guard scene.characters.indices.contains(i) else { return }
             registerUndoSnapshot(label: scene.characters[i].solo ? "Unsolo Track" : "Solo Track")
             scene.characters[i].solo.toggle()
+            if scene.characters[i].solo { scene.characters[i].muted = false }
         case .audio(let i):
             guard scene.audioTracks.indices.contains(i) else { return }
             registerUndoSnapshot(label: scene.audioTracks[i].solo ? "Unsolo Track" : "Solo Track")
             scene.audioTracks[i].solo.toggle()
+            if scene.audioTracks[i].solo { scene.audioTracks[i].muted = false }
         default:
             return
         }
@@ -2520,6 +2665,92 @@ final class StudioModel {
                 document.show = [ShowSegment(name: "export", from: r.from, to: r.to)]
             } else {
                 document.show = []
+            }
+        }
+    }
+
+    /// Non-ripple range editing for clip-shaped content. Stateful performance
+    /// and automation remain untouched rather than being approximated.
+    @discardableResult
+    func editClipContent(
+        in range: (from: Double, to: Double),
+        operation: TimelineRangeOperation,
+        scope: TimelineRangeScope
+    ) -> Bool {
+        guard !recording, file?.isMicRecording != true else { return false }
+        let targets = rangeTargets(scope: scope)
+        guard !targets.isEmpty else { return false }
+        let snapshot = scene
+        let result = TimelineRangeEditor.apply(
+            operation,
+            from: range.from,
+            to: range.to,
+            targets: targets,
+            scene: &document.stage,
+            makeID: ShowDocumentFile.newID)
+        guard result.changed else { return false }
+
+        for clone in result.audioClones {
+            if let media = file?.audio[clone.sourceID] {
+                file?.audio[clone.cloneID] = media
+            }
+        }
+        registerUndoSnapshot(
+            snapshot,
+            label: operation == .keep ? "Keep Range" : "Remove Range")
+        reconcileTimelineSelectionAfterRangeEdit()
+        backgroundRevision += 1
+        resyncAudioIfPlaying()
+        return true
+    }
+
+    private func rangeTargets(scope: TimelineRangeScope) -> Set<TimelineTrackTarget> {
+        if scope == .selectedTracks {
+            guard let selectedTrackKind else { return [] }
+            if case .character = selectedTrackKind {
+                let selectedCharacters = selection.filter(scene.characters.indices.contains)
+                if !selectedCharacters.isEmpty {
+                    return Set(selectedCharacters.map(TimelineTrackTarget.character))
+                }
+            }
+            switch selectedTrackKind {
+            case .character(let i): return [.character(i)]
+            case .audio(let i): return [.audio(i)]
+            case .image(let i): return [.image(i)]
+            case .light(let i): return [.light(i)]
+            case .background(let i): return [.background(i)]
+            }
+        }
+        return Set(scene.characters.indices.map(TimelineTrackTarget.character))
+            .union(scene.audioTracks.indices.map(TimelineTrackTarget.audio))
+            .union(scene.imageTracks.indices.map(TimelineTrackTarget.image))
+            .union(scene.lightTracks.indices.map(TimelineTrackTarget.light))
+            .union(scene.backgroundTracks.indices.map(TimelineTrackTarget.background))
+    }
+
+    private func reconcileTimelineSelectionAfterRangeEdit() {
+        let clipIDs = Set(scene.characters.flatMap(\.clips).map(\.id)
+            + scene.audioTracks.flatMap(\.clips).map(\.id))
+        selectedClips.formIntersection(clipIDs)
+        let imageIDs = Set(scene.imageTracks.flatMap(\.cues).map(\.id)
+            + scene.audioTracks.flatMap(\.cues).map(\.id))
+        if selectedImageCue.map({ !imageIDs.contains($0) }) == true {
+            selectedImageCue = nil
+        }
+        let lightIDs = Set(scene.lightTracks.flatMap(\.cues).map(\.id))
+        if selectedLightCue.map({ !lightIDs.contains($0) }) == true {
+            selectedLightCue = nil
+        }
+        let backgroundIDs = Set(scene.backgroundTracks.flatMap(\.cues).map(\.id))
+        if selectedBackgroundCue.map({ !backgroundIDs.contains($0) }) == true {
+            selectedBackgroundCue = nil
+        }
+        selectedBackgroundCues.formIntersection(backgroundIDs)
+        if let mouth = selectedMouthCue {
+            let clipExists = scene.characters[safe: mouth.character]?
+                .clips.contains(where: { $0.id == mouth.clipID }) == true
+            if !clipExists {
+                selectedMouthCue = nil
             }
         }
     }

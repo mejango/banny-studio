@@ -3,6 +3,33 @@ import AVFoundation
 import AudioToolbox
 import BannyCore
 
+/// One source of truth for realtime and exported track monitoring.
+///
+/// Hidden tracks never participate. Solo narrows playback to soloed tracks,
+/// while Mute always wins for the individual track. Studio prevents both flags
+/// being enabled together, but deterministic precedence also protects projects
+/// edited through JSON or older automation.
+struct AudioTrackAudibility {
+    let hasSolo: Bool
+
+    init(scene: SceneState) {
+        hasSolo = scene.characters.contains { !$0.hidden && $0.solo }
+            || scene.audioTracks.contains { !$0.hidden && $0.solo }
+    }
+
+    func includes(hidden: Bool, muted: Bool, solo: Bool) -> Bool {
+        !hidden && !muted && (!hasSolo || solo)
+    }
+
+    func includes(_ character: Character) -> Bool {
+        includes(hidden: character.hidden, muted: character.muted, solo: character.solo)
+    }
+
+    func includes(_ track: AudioTrack) -> Bool {
+        includes(hidden: track.hidden, muted: track.muted, solo: track.solo)
+    }
+}
+
 /// Builds the studio's audio graph — the AVAudioEngine port of the web's
 /// per-clip mix plus the speech recipe chain. Generated voices follow
 /// `pitch → compression → tone → character → delay/double → space`; imported
@@ -127,16 +154,15 @@ public final class AudioGraph {
                                       delay: delay, reverb: reverb, file: file))
         }
 
-        let hasSolo = scene.characters.contains { !$0.hidden && $0.solo }
-            || scene.audioTracks.contains { !$0.hidden && $0.solo }
+        let audibility = AudioTrackAudibility(scene: scene)
         for (i, c) in scene.characters.enumerated()
-        where !c.hidden && (!hasSolo || c.solo) {
+        where audibility.includes(c) {
             for clip in c.clips {
                 try wire(clip, owner: "c\(i)", ownerFx: c.trackFx,
                          characterIndex: i, voiceRecipe: c.speechVoice.recipe)
             }
         }
-        for track in scene.audioTracks where !track.hidden && (!hasSolo || track.solo) {
+        for track in scene.audioTracks where audibility.includes(track) {
             for clip in track.clips {
                 try wire(clip, owner: track.id, ownerFx: track.fx,
                          characterIndex: nil, voiceRecipe: nil)
@@ -182,7 +208,16 @@ public final class AudioGraph {
     /// offline rendering calls it before every short render chunk.
     public func updateLevels(timelineTime: Double) {
         for node in clipNodes {
-            node.mixer.outputVolume = Float(node.clip.level(at: timelineTime))
+            // AVAudioPlayerNode already gates sound to the scheduled segment.
+            // Prime clips that have not started at their exact edge level
+            // instead of muting them until the next UI/render tick. Otherwise
+            // an ordinary no-fade dialogue clip loses up to one visual frame
+            // from its head, which is audible as clipped consonants/staccato
+            // playback even though the offline export is sample-aligned.
+            let edgeAwareTime = min(
+                node.clip.start + node.clip.dur,
+                max(node.clip.start, timelineTime))
+            node.mixer.outputVolume = Float(node.clip.level(at: edgeAwareTime))
         }
     }
 

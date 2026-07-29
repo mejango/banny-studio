@@ -296,11 +296,11 @@ struct StageView: View {
         highlight.fill(Path(ellipseIn: CGRect(x: -3, y: -3, width: 6, height: 6)),
                        with: .color(accent))
         if isRecordedCue {
-            context.draw(Text("REC · DRAG TO MOVE")
-                            .font(.system(size: 9, weight: .bold))
-                            .foregroundStyle(Color.white),
-                         at: CGPoint(x: frame.minX + p.x * W,
-                                     y: frame.minY + p.y * H - 16))
+            drawStageBadge(context: context,
+                           text: "REC · DRAG TO MOVE",
+                           center: CGPoint(x: frame.minX + p.x * W,
+                                           y: frame.minY + p.y * H - 18),
+                           accent: .red)
         }
     }
 
@@ -328,10 +328,31 @@ struct StageView: View {
                                            width: 8, height: 8))
         context.fill(center, with: .color(recording ? .red : .yellow))
         context.stroke(center, with: .color(.black), lineWidth: 1)
-        context.draw(Text(String(format: "☀ %.0f%%", state.intensity * 100))
-                        .font(.system(size: 9, weight: .bold))
-                        .foregroundStyle(.black),
-                     at: CGPoint(x: p.x, y: p.y - r - 8))
+        drawStageBadge(context: context,
+                       text: String(format: "☀ %.0f%%", state.intensity * 100),
+                       center: CGPoint(x: p.x, y: p.y - r - 11),
+                       accent: recording ? .red : .yellow)
+    }
+
+    /// Editor annotations sit over user artwork, so neither the Studio theme
+    /// nor a guessed black/white label is sufficient. The dark backing and
+    /// light glyphs form a contrast pair independent of the current frame.
+    private func drawStageBadge(context: GraphicsContext, text: String,
+                                center: CGPoint, accent: Color) {
+        let resolved = context.resolve(
+            Text(text)
+                .font(.system(size: 9, weight: .bold))
+                .foregroundStyle(Color.white)
+        )
+        let measured = resolved.measure(in: CGSize(width: 240, height: 24))
+        let rect = CGRect(x: center.x - measured.width / 2 - 5,
+                          y: center.y - measured.height / 2 - 3,
+                          width: measured.width + 10,
+                          height: measured.height + 6)
+        let bubble = Path(roundedRect: rect, cornerRadius: 4)
+        context.fill(bubble, with: .color(Color.black.opacity(0.78)))
+        context.stroke(bubble, with: .color(accent.opacity(0.9)), lineWidth: 1)
+        context.draw(resolved, at: center, anchor: .center)
     }
 
     /// Stage drag has strict track ownership. Once a track is selected, a drag

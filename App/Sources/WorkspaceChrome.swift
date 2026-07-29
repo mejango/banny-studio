@@ -149,6 +149,7 @@ struct WorkspacePanelButton: View {
 /// view while the user is concentrating on the stage.
 struct WorkspaceTransport: View {
     @Bindable var model: StudioModel
+    @AppStorage("studioLightMode") private var lightMode = false
     @State private var showingPerformanceKeys = false
 
     var body: some View {
@@ -204,6 +205,7 @@ struct WorkspaceTransport: View {
             PerformanceKeyGuide(model: model)
                 .padding(14)
                 .frame(width: 360)
+                .studioPresentationSurface(lightMode: lightMode)
         }
     }
 
@@ -470,6 +472,9 @@ struct ContextSmartBar: View {
     @Bindable var model: StudioModel
     @Binding var drawer: WorkspaceDrawerMode?
     let onDismiss: () -> Void
+    @AppStorage("studioLightMode") private var lightMode = false
+
+    private var theme: Theme { .studio(lightMode: lightMode) }
 
     var body: some View {
         if let kind = model.selectedTrackKind {
@@ -492,9 +497,10 @@ struct ContextSmartBar: View {
             }
             .padding(.horizontal, 10)
             .padding(.vertical, 7)
-            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 10))
+            .background(theme.floatingSurface,
+                        in: RoundedRectangle(cornerRadius: 10))
             .overlay(RoundedRectangle(cornerRadius: 10)
-                .stroke(Color.white.opacity(0.18), lineWidth: 1))
+                .stroke(theme.floatingBorder, lineWidth: 1))
             .shadow(color: .black.opacity(0.3), radius: 14, y: 5)
             .accessibilityIdentifier("context-smart-bar")
         }
@@ -779,6 +785,7 @@ struct WorkspaceDrawer: View {
         .overlay(alignment: .leading) { Divider() }
         .shadow(color: .black.opacity(0.34), radius: 18, x: -5)
         .environment(\.colorScheme, lightMode ? .light : .dark)
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("workspace-drawer")
         #if os(macOS)
         .onExitCommand(perform: close)
@@ -864,6 +871,7 @@ private struct WorkspaceBrowser: View {
             }
             .padding(.horizontal, 10)
             .padding(.bottom, 10)
+            .accessibilityElement(children: .contain)
             .accessibilityIdentifier("browser-\(section.rawValue.lowercased())")
         }
         .onChange(of: section) { _, _ in query = "" }
@@ -1087,6 +1095,7 @@ private struct TimelineMarkerRow: View {
 private struct CastBrowser: View {
     @Bindable var model: StudioModel
     let query: String
+    @State private var pendingRemoval: Int?
 
     private var indices: [Int] {
         model.scene.characters.indices.filter { index in
@@ -1105,6 +1114,7 @@ private struct CastBrowser: View {
                 Menu {
                     ForEach(BannyCore.Body.allCases, id: \.self) { body in
                         Button(body.rawValue.capitalized) { addCharacter(body) }
+                            .accessibilityIdentifier("cast-add-\(body.rawValue)")
                     }
                 } label: {
                     Label("Add", systemImage: "plus")
@@ -1114,6 +1124,7 @@ private struct CastBrowser: View {
                 .buttonStyle(.borderless)
                 .menuIndicator(.hidden)
                 .disabled(model.scene.characters.count >= 10)
+                .accessibilityIdentifier("cast-add")
             }
 
             if indices.isEmpty {
@@ -1125,33 +1136,74 @@ private struct CastBrowser: View {
 
             ForEach(indices, id: \.self) { index in
                 let character = model.scene.characters[index]
-                Button { select(index) } label: {
-                    HStack(spacing: 10) {
-                        OutfitCard(character: character)
-                            .frame(width: 30, height: 54)
-                            .clipShape(RoundedRectangle(cornerRadius: 4))
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(character.name.isEmpty ? "Banny \((index + 1) % 10)" : character.name)
-                                .font(.caption.bold())
-                            Text(character.body.rawValue.capitalized
-                                 + " · \(character.reactions.count) reaction\(character.reactions.count == 1 ? "" : "s")")
-                                .font(.caption2).foregroundStyle(.secondary)
+                HStack(spacing: 0) {
+                    Button { select(index) } label: {
+                        HStack(spacing: 10) {
+                            OutfitCard(character: character)
+                                .frame(width: 30, height: 54)
+                                .clipShape(RoundedRectangle(cornerRadius: 4))
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(characterName(at: index))
+                                    .font(.caption.bold())
+                                Text(character.body.rawValue.capitalized
+                                     + " · \(character.reactions.count) reaction\(character.reactions.count == 1 ? "" : "s")")
+                                    .font(.caption2).foregroundStyle(.secondary)
+                            }
+                            Spacer()
+                            if model.selection.contains(index) {
+                                Image(systemName: "checkmark.circle.fill").foregroundStyle(.orange)
+                            }
                         }
-                        Spacer()
-                        if model.selection.contains(index) {
-                            Image(systemName: "checkmark.circle.fill").foregroundStyle(.orange)
-                        }
+                        .padding(7)
+                        .contentShape(Rectangle())
                     }
-                    .padding(7)
-                    .background(model.selection.contains(index) ? Color.orange.opacity(0.12)
-                                                                 : Color.primary.opacity(0.045),
-                                in: RoundedRectangle(cornerRadius: 8))
-                    .overlay(RoundedRectangle(cornerRadius: 8)
-                        .stroke(model.selection.contains(index) ? Color.orange.opacity(0.55)
-                                                               : Color.primary.opacity(0.1), lineWidth: 1))
+                    .buttonStyle(.plain)
+                    .accessibilityIdentifier("cast-card-\(index)")
+
+                    Menu {
+                        Button(role: .destructive) {
+                            pendingRemoval = index
+                        } label: {
+                            Label("Remove Character…", systemImage: "trash")
+                        }
+                        .disabled(character.locked || model.recording
+                                  || model.file?.isMicRecording == true)
+                        .accessibilityIdentifier("cast-remove-\(index)")
+                    } label: {
+                        Image(systemName: "ellipsis")
+                            .font(.caption.bold())
+                            .frame(width: 32, height: 36)
+                            .contentShape(Rectangle())
+                    }
+                    .padding(.trailing, 6)
+                    .menuStyle(.button)
+                    .buttonStyle(.borderless)
+                    .menuIndicator(.hidden)
+                    .help(character.locked ? "Unlock this character before removing it"
+                                           : "Character actions")
+                    .accessibilityIdentifier("cast-actions-\(index)")
                 }
-                .buttonStyle(.plain)
+                .background(model.selection.contains(index) ? Color.orange.opacity(0.12)
+                                                             : Color.primary.opacity(0.045),
+                            in: RoundedRectangle(cornerRadius: 8))
+                .overlay(RoundedRectangle(cornerRadius: 8)
+                    .stroke(model.selection.contains(index) ? Color.orange.opacity(0.55)
+                                                           : Color.primary.opacity(0.1), lineWidth: 1))
             }
+        }
+        .confirmationDialog("Remove \(pendingRemoval.map(characterName(at:)) ?? "character")?",
+                            isPresented: Binding(
+                                get: { pendingRemoval != nil },
+                                set: { if !$0 { pendingRemoval = nil } }),
+                            titleVisibility: .visible) {
+            Button("Remove Character", role: .destructive) {
+                guard let index = pendingRemoval else { return }
+                pendingRemoval = nil
+                model.removeCharacter(at: index)
+            }
+            Button("Cancel", role: .cancel) { pendingRemoval = nil }
+        } message: {
+            Text("This removes the character and everything on its timeline. Undo (⌘Z) brings it back.")
         }
     }
 
@@ -1163,5 +1215,10 @@ private struct CastBrowser: View {
     private func addCharacter(_ body: BannyCore.Body) {
         model.addCharacter(body: body)
         if let index = model.selection.first { model.selectedTrackKey = "c-\(index)" }
+    }
+
+    private func characterName(at index: Int) -> String {
+        guard let character = model.scene.characters[safe: index] else { return "character" }
+        return character.name.isEmpty ? "Banny \((index + 1) % 10)" : character.name
     }
 }

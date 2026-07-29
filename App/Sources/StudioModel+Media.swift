@@ -13,21 +13,26 @@ extension StudioModel {
 
     /// Imports an audio file as a clip at the playhead on a character's track,
     /// a specific audio track, or the first audio track.
+    ///
+    /// Audio placed on a character is dialogue: it stays dry imported media
+    /// (voice-recipe effects are reserved for generated speech), then receives
+    /// editable, sample-aligned virtual M-key presses in the background.
+    @discardableResult
     func addAudioClip(from url: URL, characterIndex: Int?, audioTrackIndex: Int? = nil,
-                      at startTime: Double? = nil) {
+                      at startTime: Double? = nil) -> String? {
         let time = startTime ?? self.time
         if let i = characterIndex {
-            guard scene.characters[safe: i]?.locked == false else { return }
+            guard scene.characters[safe: i]?.locked == false else { return nil }
         }
         if let i = audioTrackIndex {
-            guard scene.audioTracks[safe: i]?.locked == false else { return }
+            guard scene.audioTracks[safe: i]?.locked == false else { return nil }
         }
         let scoped = url.startAccessingSecurityScopedResource()
         defer { if scoped { url.stopAccessingSecurityScopedResource() } }
         guard let data = try? Data(contentsOf: url),
-              let avFile = try? AVAudioFile(forReading: url) else { return }
+              let avFile = try? AVAudioFile(forReading: url) else { return nil }
         let dur = Double(avFile.length) / avFile.processingFormat.sampleRate
-        guard dur > 0 else { return }
+        guard dur > 0 else { return nil }
 
         registerUndoSnapshot(label: "Add Audio")
         let id = ShowDocumentFile.newID()
@@ -46,6 +51,15 @@ extension StudioModel {
                 scene.audioTracks[scene.audioTracks.count - 1].clips.append(clip)
             }
         }
+        if let characterIndex {
+            Task { @MainActor [weak self] in
+                // Import succeeds even when a file is silent or cannot be
+                // analyzed; the clip inspector keeps manual Analyze available.
+                try? await self?.analyzeClipMouth(
+                    characterIndex: characterIndex, clipID: id)
+            }
+        }
+        return id
     }
 
     /// Registers a finished mic recording as a clip at `startTime`.

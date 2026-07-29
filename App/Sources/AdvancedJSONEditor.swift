@@ -60,6 +60,7 @@ private struct AdvancedJSONEditor: View {
     let characterIndex: Int
 
     @Environment(\.dismiss) private var dismiss
+    @AppStorage("studioLightMode") private var lightMode = false
     @State private var scope: Scope = .character
     @State private var text = ""
     @State private var baseline = ""
@@ -161,6 +162,7 @@ private struct AdvancedJSONEditor: View {
         #else
         .presentationDetents([.large])
         #endif
+        .studioPresentationSurface(lightMode: lightMode)
         .interactiveDismissDisabled(dirty)
         .onAppear {
             loadScope()

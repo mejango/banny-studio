@@ -26,15 +26,17 @@ import Testing
                 recStart: StartPose(x: 0.3, depth: 0, face: 1, spin: 42, zoom: 1.35),
                 speed: 280, rotationSpeed: 72,
                 rotationPivot: MediaPivot(x: 0.25, y: 0.6),
-                locked: true, solo: true)],
+                locked: true, muted: true, solo: true)],
             reactionLibrary: [ReactionDefinition(id: "shock", name: "Shock", dur: 2,
                                                  events: [
                                                     .key(t: 0, code: .slash, down: true),
                                                     .outfit(t: 0.3, slot: 12, name: "chef-hat"),
                                                     .key(t: 2, code: .slash, down: false),
                                                  ])],
-            audioTracks: [AudioTrack(id: "t1", name: "SAGE")],
-            imageTracks: [ImageTrack(id: "it", name: "Props", cues: [
+            audioTracks: [AudioTrack(id: "t1", name: "SAGE",
+                                     visualLayer: .inFrontOfCast, muted: true)],
+            imageTracks: [ImageTrack(id: "it", name: "Props",
+                                     visualLayer: .inFrontOfCast, cues: [
                 ImageCue(id: "ic", assetID: "a1", start: 0, dur: 3,
                          from: ImagePlacement(), to: ImagePlacement(x: 0.9, y: 0.1, scale: 0.5),
                          speed: 7.2, rotationSpeed: 3.4,
@@ -88,7 +90,19 @@ import Testing
     #expect(character.rotationPivot == nil)
     #expect(character.reactions.isEmpty)
     #expect(!character.locked)
+    #expect(!character.muted)
     #expect(!character.solo)
+
+    let audioTrack = try JSONDecoder().decode(
+        AudioTrack.self,
+        from: Data(#"{"id":"audio"}"#.utf8))
+    let imageTrack = try JSONDecoder().decode(
+        ImageTrack.self,
+        from: Data(#"{"id":"images","name":"Images"}"#.utf8))
+    #expect(audioTrack.visualLayer == .behindCast)
+    #expect(imageTrack.visualLayer == .behindCast)
+    #expect(!audioTrack.muted)
+    #expect(!audioTrack.solo)
 
     let oldClip = try JSONDecoder().decode(
         AudioClip.self,

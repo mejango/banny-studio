@@ -48,13 +48,25 @@ struct HoldButton: View {
     var big = false
 
     @State private var held = false
+    @AppStorage("studioLightMode") private var lightMode = false
+
+    private var theme: Theme { .studio(lightMode: lightMode) }
+    private var shape: RoundedRectangle { RoundedRectangle(cornerRadius: 10) }
 
     var body: some View {
         Text(label)
             .font(.system(size: big ? 17 : 12, weight: .bold, design: .rounded))
             .frame(width: big ? 150 : 64, height: big ? 64 : 44)
-            .background(held ? color : color.opacity(0.25), in: RoundedRectangle(cornerRadius: 10))
-            .foregroundStyle(held ? .black : .primary)
+            .background(held ? color : theme.floatingSurface, in: shape)
+            .overlay {
+                if !held {
+                    shape.fill(color.opacity(lightMode ? 0.13 : 0.20))
+                }
+            }
+            .overlay(shape.stroke(held ? color : theme.floatingBorder,
+                                  lineWidth: held ? 2 : 1))
+            .foregroundStyle(held ? Color.black.opacity(0.88) : Color.primary)
+            .shadow(color: .black.opacity(0.22), radius: 6, y: 2)
             .gesture(DragGesture(minimumDistance: 0)
                 .onChanged { _ in
                     guard !held else { return }
@@ -77,12 +89,18 @@ struct HoldButton: View {
 struct WalkStick: View {
     @Bindable var model: StudioModel
     @State private var offset: CGSize = .zero
+    @AppStorage("studioLightMode") private var lightMode = false
     private let radius: CGFloat = 62
+    private var theme: Theme { .studio(lightMode: lightMode) }
 
     var body: some View {
         ZStack {
-            Circle().fill(.gray.opacity(0.15)).frame(width: radius * 2, height: radius * 2)
-            Circle().fill(.gray.opacity(held.isEmpty ? 0.35 : 0.7))
+            Circle()
+                .fill(theme.floatingSurface)
+                .overlay(Circle().stroke(theme.floatingBorder, lineWidth: 1))
+                .shadow(color: .black.opacity(0.22), radius: 7, y: 2)
+                .frame(width: radius * 2, height: radius * 2)
+            Circle().fill(Color.primary.opacity(held.isEmpty ? 0.32 : 0.72))
                 .frame(width: 54, height: 54)
                 .offset(offset)
         }

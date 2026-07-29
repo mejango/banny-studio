@@ -465,6 +465,7 @@ let showSchemaJSON = #"""
         "wobble": {"type": "number"},
         "hidden": {"type": "boolean"},
         "locked": {"type": "boolean"},
+        "muted": {"type": "boolean"},
         "solo": {"type": "boolean"},
         "presence": {"type": "array", "items": {"$ref": "#/$defs/presence"}}
       }
@@ -481,6 +482,8 @@ let showSchemaJSON = #"""
         "cues": {"type": "array", "items": {"$ref": "#/$defs/imageCue"}},
         "hidden": {"type": "boolean"},
         "locked": {"type": "boolean"},
+        "visualLayer": {"enum": ["behindCast", "inFrontOfCast"]},
+        "muted": {"type": "boolean"},
         "solo": {"type": "boolean"},
         "presence": {"type": "array", "items": {"$ref": "#/$defs/presence"}}
       }
@@ -494,6 +497,7 @@ let showSchemaJSON = #"""
         "name": {"type": "string"},
         "hidden": {"type": "boolean"},
         "locked": {"type": "boolean"},
+        "visualLayer": {"enum": ["behindCast", "inFrontOfCast"]},
         "cues": {"type": "array", "items": {"$ref": "#/$defs/imageCue"}},
         "presence": {"type": "array", "items": {"$ref": "#/$defs/presence"}}
       }

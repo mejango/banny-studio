@@ -79,14 +79,16 @@ struct WardrobePanel: View {
                 slotGrid(title: "Eyes", selected: outfit[5] ?? "default", allowNone: false,
                          crop: Self.cropRegion(forSlot: 5),
                          items: ["default", "eyeliner", "fierce", "glassy", "surprised", "introspective"].map {
-                             ($0, $0, SharedAssets.catalog.eyesImage(option: $0, expression: .open, body: body_))
+                             ($0, $0, SharedAssets.catalog.eyesThumbnail(
+                                option: $0, expression: .open, body: body_))
                          }) { name in
                     apply(slot: 5, name: name == "default" ? nil : name)
                 }
                 slotGrid(title: "Mouth", selected: outfit[7] ?? "default", allowNone: false,
                          crop: Self.cropRegion(forSlot: 7),
                          items: ["default", "lipstick", "gapteeth", "open"].map {
-                             ($0, $0, SharedAssets.catalog.mouthImage(option: $0, state: .closed, body: body_))
+                             ($0, $0, SharedAssets.catalog.mouthThumbnail(
+                                option: $0, state: .closed, body: body_))
                          }) { name in
                     apply(slot: 7, name: name == "default" ? nil : name)
                 }
@@ -96,7 +98,8 @@ struct WardrobePanel: View {
                         slotGrid(title: slotName(slot), selected: outfit[slot] ?? "",
                                  allowNone: true, crop: Self.cropRegion(forSlot: slot),
                                  items: items.map {
-                                     ($0.name, $0.label, SharedAssets.catalog.outfitImage($0.name, body: body_))
+                                     ($0.name, $0.label, SharedAssets.catalog.outfitThumbnail(
+                                        $0.name, body: body_))
                                  }) { name in
                             apply(slot: slot, name: name.isEmpty ? nil : name)
                         }
@@ -265,4 +268,3 @@ struct OutfitCard: View {
         .clipped()
     }
 }
-
