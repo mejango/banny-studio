@@ -13,6 +13,9 @@ struct WardrobePanel: View {
     var eventTime: Double? = nil
 
     @State private var wardrobeExpanded = false
+    @State private var customLibrary = CustomOutfitLibrary.shared
+    @State private var creatingOutfit = false
+    @State private var managingOutfits = false
 
     private static let outfitSlots = [2, 3, 4, 6, 8, 9, 10, 11, 12, 13]
     private let columns = Array(repeating: GridItem(.flexible(), spacing: 0), count: 3)
@@ -38,6 +41,7 @@ struct WardrobePanel: View {
     var body: some View {
         let outfit = currentOutfit
         let body_ = model.scene.characters[safe: characterIndex]?.body ?? .orange
+        let _ = customLibrary.outfits.count
         VStack(alignment: .leading, spacing: 10) {
             Button {
                 withAnimation(.easeInOut(duration: 0.16)) {
@@ -74,8 +78,28 @@ struct WardrobePanel: View {
             }
             .buttonStyle(.plain)
             .accessibilityLabel(wardrobeExpanded ? "Collapse wardrobe" : "Expand wardrobe")
+            .accessibilityIdentifier("wardrobe-toggle")
 
             if wardrobeExpanded {
+                HStack(spacing: 7) {
+                    Button {
+                        creatingOutfit = true
+                    } label: {
+                        Label("Create Outfit", systemImage: "paintbrush.pointed")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(.orange)
+                    .accessibilityIdentifier("create-outfit")
+
+                    Button {
+                        managingOutfits = true
+                    } label: {
+                        Label("My Outfits", systemImage: "square.grid.2x2")
+                    }
+                    .buttonStyle(.bordered)
+                }
+
                 slotGrid(title: "Eyes", selected: outfit[5] ?? "default", allowNone: false,
                          crop: Self.cropRegion(forSlot: 5),
                          items: ["default", "eyeliner", "fierce", "glassy", "surprised", "introspective"].map {
@@ -107,6 +131,20 @@ struct WardrobePanel: View {
                 }
             }
         }
+        .sheet(isPresented: $creatingOutfit) {
+            OutfitStudio(bodyStyle: body_) { saved in
+                model.file?.attachCustomOutfit(saved)
+                apply(slot: saved.manifest.category.rawValue, name: saved.assetName)
+                creatingOutfit = false
+            }
+        }
+        .sheet(isPresented: $managingOutfits) {
+            CustomOutfitManager(bodyStyle: body_) { selected in
+                model.file?.attachCustomOutfit(selected)
+                apply(slot: selected.manifest.category.rawValue, name: selected.assetName)
+                managingOutfits = false
+            }
+        }
     }
 
     private var currentOutfit: [Int: String] {
@@ -118,6 +156,9 @@ struct WardrobePanel: View {
     }
 
     private func apply(slot: Int, name: String?) {
+        if let name, let custom = customLibrary.bundle(named: name) {
+            model.file?.attachCustomOutfit(custom)
+        }
         // Already wearing it — a change to the same thing is a no-op.
         guard currentOutfit[slot] != name else { return }
         if let t = eventTime {

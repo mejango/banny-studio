@@ -100,6 +100,73 @@ final class SmokeTests: XCTestCase {
     }
 
     @MainActor
+    func testCustomOutfitStudioOpensFromWardrobe() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["-ApplePersistenceIgnoreState", "YES"]
+        app.launch()
+        if !app.windows.firstMatch.waitForExistence(timeout: 3) {
+            app.typeKey("n", modifierFlags: .command)
+        }
+        app.typeKey("n", modifierFlags: .command)
+
+        let window = app.windows.firstMatch
+        let trackCard = window.buttons["track-card-c-0"]
+        XCTAssertTrue(trackCard.waitForExistence(timeout: 10), "character track card missing")
+        trackCard.click()
+
+        let dialogue = window.disclosureTriangles
+            .matching(identifier: "dialogue-disclosure")
+            .matching(NSPredicate(format: "label == %@", "DIALOGUE & VOICE"))
+            .firstMatch
+        let dialogueFallback = window.buttons
+            .matching(identifier: "dialogue-disclosure")
+            .matching(NSPredicate(format: "label == %@", "DIALOGUE & VOICE"))
+            .firstMatch
+        XCTAssertTrue(dialogue.waitForExistence(timeout: 5) || dialogueFallback.exists,
+                      "character inspector missing")
+        if dialogue.exists { dialogue.click() } else { dialogueFallback.click() }
+
+        let wardrobe = app.descendants(matching: .any)["wardrobe-toggle"]
+        XCTAssertTrue(wardrobe.waitForExistence(timeout: 5), "wardrobe control missing")
+        if !wardrobe.isHittable {
+            let scrollViews = window.scrollViews
+            XCTAssertGreaterThan(scrollViews.count, 0, "inspector scroll view missing")
+            scrollViews.element(boundBy: scrollViews.count - 1).swipeUp()
+        }
+        wardrobe.click()
+
+        let create = app.descendants(matching: .any)["create-outfit"]
+        XCTAssertTrue(create.waitForExistence(timeout: 5), "Create Outfit control missing")
+        create.click()
+
+        XCTAssertTrue(app.textFields["outfit-name"].waitForExistence(timeout: 5),
+                      "outfit editor did not open")
+        XCTAssertTrue(app.descendants(matching: .any)["outfit-category"].exists,
+                      "category picker missing")
+        XCTAssertTrue(app.descendants(matching: .any)["outfit-pixel-canvas"].exists,
+                      "pixel canvas missing")
+        XCTAssertTrue(app.buttons["outfit-section-tool"].exists,
+                      "contiguous pixel-section tool missing")
+        XCTAssertTrue(app.checkBoxes["outfit-show-mannequin"].exists,
+                      "mannequin guide toggle missing")
+        let copyExisting = app.buttons["copy-existing-outfit"]
+        XCTAssertTrue(copyExisting.exists, "Copy Existing Outfit control missing")
+        copyExisting.click()
+        XCTAssertTrue(app.staticTexts["Copy Existing Outfit"]
+            .waitForExistence(timeout: 5), "existing outfit picker did not open")
+        XCTAssertTrue(app.buttons["Doc Coat"].waitForExistence(timeout: 5),
+                      "built-in outfits are not available as copy sources")
+        app.typeKey(.escape, modifierFlags: [])
+        XCTAssertTrue(app.descendants(matching: .any)["outfit-pixel-canvas"]
+            .waitForExistence(timeout: 5), "copy picker did not dismiss")
+
+        let shot = XCTAttachment(screenshot: app.screenshot())
+        shot.name = "custom-outfit-studio"
+        shot.lifetime = .keepAlways
+        add(shot)
+    }
+
+    @MainActor
     func testCharacterMuteAndSoloAreVisibleAndMutuallyExclusive() throws {
         let app = XCUIApplication()
         app.launchArguments = ["-ApplePersistenceIgnoreState", "YES"]

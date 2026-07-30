@@ -65,6 +65,13 @@ public final class AssetCatalog: @unchecked Sendable {
     let catalog: CatalogFile
     private let pngDirectory: URL
     private var cache: [String: CGImage] = [:]
+    private struct CustomEntry {
+        var slot: Int
+        var label: String
+        var image: CGImage
+        var selectable: Bool
+    }
+    private var customOutfits: [String: CustomEntry] = [:]
     private let lock = NSLock()
 
     public init(catalogURL: URL, pngDirectory: URL) throws {
@@ -89,7 +96,10 @@ public final class AssetCatalog: @unchecked Sendable {
     }
 
     public func outfitSlot(_ name: String) -> Int? {
-        catalog.outfits[name]?.slot
+        lock.lock()
+        let custom = customOutfits[name]?.slot
+        lock.unlock()
+        return custom ?? catalog.outfits[name]?.slot
     }
 
     /// Whether `name` is a real selectable eye option. Rendering falls back to
@@ -104,14 +114,22 @@ public final class AssetCatalog: @unchecked Sendable {
     }
 
     public func outfitImage(_ name: String, body: Body) -> CGImage? {
-        catalog.outfits[name]?.ref.file(for: body).flatMap(image(named:))
+        lock.lock()
+        let custom = customOutfits[name]?.image
+        lock.unlock()
+        if let custom { return custom }
+        return catalog.outfits[name]?.ref.file(for: body).flatMap(image(named:))
     }
 
     /// A picker-sized copy of an outfit part. Wardrobe grids can contain every
     /// catalog entry at once; decoding their 1600×1600 render sources eagerly
     /// consumes hundreds of megabytes and eventually makes ImageIO return nil.
     public func outfitThumbnail(_ name: String, body: Body) -> CGImage? {
-        catalog.outfits[name]?.ref.file(for: body).flatMap(thumbnail(named:))
+        lock.lock()
+        let custom = customOutfits[name]?.image
+        lock.unlock()
+        if let custom { return custom }
+        return catalog.outfits[name]?.ref.file(for: body).flatMap(thumbnail(named:))
     }
 
     public func necklaceImage(body: Body) -> CGImage? {
@@ -164,13 +182,69 @@ public final class AssetCatalog: @unchecked Sendable {
     }
 
     /// Total outfit count (test/diagnostic).
-    public var outfitCount: Int { catalog.outfits.count }
+    public var outfitCount: Int {
+        lock.lock()
+        let customCount = customOutfits.count
+        lock.unlock()
+        return catalog.outfits.count + customCount
+    }
 
     /// All outfit names for a slot, for pickers.
     public func outfits(inSlot slot: Int) -> [(name: String, label: String)] {
-        catalog.outfits.filter { $0.value.slot == slot }
+        let bundled = catalog.outfits.filter { $0.value.slot == slot }
             .map { ($0.key, $0.value.label) }
-            .sorted { $0.label < $1.label }
+        lock.lock()
+        let custom = customOutfits.compactMap { name, entry in
+            entry.slot == slot && entry.selectable ? (name, entry.label) : nil
+        }
+        lock.unlock()
+        return (bundled + custom).sorted { $0.1.localizedCaseInsensitiveCompare($1.1) == .orderedAscending }
+    }
+
+    /// Adds a writable user or project outfit to this catalog. Custom entries
+    /// are body-independent overlays and intentionally shadow no bundled name:
+    /// their UUID-backed asset names make collisions vanishingly unlikely.
+    @discardableResult
+    public func registerCustomOutfit(
+        name: String,
+        label: String,
+        slot: Int,
+        pngData: Data
+    ) -> Bool {
+        guard let source = CGImageSourceCreateWithData(pngData as CFData, nil),
+              let image = CGImageSourceCreateImageAtIndex(source, 0, nil) else {
+            return false
+        }
+        lock.lock()
+        customOutfits[name] = CustomEntry(
+            slot: slot,
+            label: label,
+            image: image,
+            selectable: true
+        )
+        lock.unlock()
+        return true
+    }
+
+    public func hasCustomOutfit(_ name: String) -> Bool {
+        lock.lock()
+        let result = customOutfits[name] != nil
+        lock.unlock()
+        return result
+    }
+
+    public func unregisterCustomOutfit(_ name: String) {
+        lock.lock()
+        customOutfits.removeValue(forKey: name)
+        lock.unlock()
+    }
+
+    /// Removes a deleted library item from wardrobe pickers without breaking
+    /// an open project that is still rendering its embedded copy.
+    public func hideCustomOutfitFromPicker(_ name: String) {
+        lock.lock()
+        customOutfits[name]?.selectable = false
+        lock.unlock()
     }
 
     // MARK: - Image cache

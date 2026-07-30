@@ -106,7 +106,16 @@ enum SharedAssets {
         guard let root = Bundle.main.url(forResource: "BannyAssets", withExtension: nil) else {
             fatalError("Baked assets missing from bundle")
         }
-        return try! AssetCatalog(assetsRoot: root)
+        let catalog = try! AssetCatalog(assetsRoot: root)
+        for outfit in CustomOutfitStorage.loadAll() {
+            _ = catalog.registerCustomOutfit(
+                name: outfit.assetName,
+                label: outfit.manifest.name,
+                slot: outfit.manifest.category.rawValue,
+                pngData: outfit.pngData
+            )
+        }
+        return catalog
     }()
 }
 

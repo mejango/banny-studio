@@ -1,4 +1,7 @@
 import XCTest
+import CoreGraphics
+import ImageIO
+import UniformTypeIdentifiers
 import BannyCore
 @testable import BannyRender
 
@@ -48,5 +51,49 @@ final class CatalogSummaryTests: XCTestCase {
                     "\(option) mouth has no \(body.rawValue) thumbnail")
             }
         }
+    }
+
+    func testCustomOutfitRegistrationJoinsNormalCatalogResolution() throws {
+        let catalog = try AssetCatalog(assetsRoot: Self.assetsRoot)
+        var bytes: [UInt8] = [
+            255, 0, 0, 255, 0, 0, 0, 0,
+            0, 0, 0, 0, 255, 0, 0, 255,
+        ]
+        let image = try XCTUnwrap(bytes.withUnsafeMutableBytes { raw in
+            CGContext(
+                data: raw.baseAddress,
+                width: 2,
+                height: 2,
+                bitsPerComponent: 8,
+                bytesPerRow: 8,
+                space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+            )?.makeImage()
+        })
+        let data = NSMutableData()
+        let destination = try XCTUnwrap(CGImageDestinationCreateWithData(
+            data,
+            UTType.png.identifier as CFString,
+            1,
+            nil
+        ))
+        CGImageDestinationAddImage(destination, image, nil)
+        XCTAssertTrue(CGImageDestinationFinalize(destination))
+
+        XCTAssertTrue(catalog.registerCustomOutfit(
+            name: "custom-test",
+            label: "Test Jacket",
+            slot: OutfitCategory.suitTop.rawValue,
+            pngData: data as Data
+        ))
+        XCTAssertEqual(catalog.outfitSlot("custom-test"), OutfitCategory.suitTop.rawValue)
+        XCTAssertNotNil(catalog.outfitImage("custom-test", body: .alien))
+        XCTAssertTrue(catalog.outfits(inSlot: OutfitCategory.suitTop.rawValue)
+            .contains { $0.name == "custom-test" && $0.label == "Test Jacket" })
+        catalog.hideCustomOutfitFromPicker("custom-test")
+        XCTAssertFalse(catalog.outfits(inSlot: OutfitCategory.suitTop.rawValue)
+            .contains { $0.name == "custom-test" })
+        XCTAssertNotNil(catalog.outfitImage("custom-test", body: .alien),
+                        "open projects must retain their decoded image")
     }
 }

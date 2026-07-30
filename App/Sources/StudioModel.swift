@@ -2157,6 +2157,7 @@ final class StudioModel {
 
     /// Edits the base (t=0) outfit regardless of where the playhead is.
     func setBaseOutfit(characterIndex: Int, slot: Int, name: String?) {
+        attachCustomOutfitIfNeeded(name)
         guard scene.characters.indices.contains(characterIndex),
               !scene.characters[characterIndex].locked else { return }
         registerUndoSnapshot(label: "Outfit")
@@ -2167,6 +2168,7 @@ final class StudioModel {
 
     /// Timed wardrobe change at an explicit time (the lane's wardrobe strip).
     func setOutfitEvent(characterIndex: Int, slot: Int, name: String?, at t: Double) {
+        attachCustomOutfitIfNeeded(name)
         guard scene.characters.indices.contains(characterIndex),
               !scene.characters[characterIndex].locked else { return }
         registerUndoSnapshot(label: "Outfit Change")
@@ -2178,6 +2180,7 @@ final class StudioModel {
     }
 
     func setOutfit(characterIndex: Int, slot: Int, name: String?) {
+        attachCustomOutfitIfNeeded(name)
         guard scene.characters.indices.contains(characterIndex),
               !scene.characters[characterIndex].locked else { return }
         registerUndoSnapshot(label: "Outfit")
@@ -2192,6 +2195,12 @@ final class StudioModel {
             c.events.insert(ev, at: insertAt)
         }
         scene.characters[characterIndex] = c
+    }
+
+    private func attachCustomOutfitIfNeeded(_ name: String?) {
+        guard let name,
+              let outfit = CustomOutfitLibrary.shared.bundle(named: name) else { return }
+        file?.attachCustomOutfit(outfit)
     }
 
     // MARK: - Tracks

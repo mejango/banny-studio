@@ -33,6 +33,7 @@ final class ShowDocumentFile: ReferenceFileDocument {
         let document: ShowDocument
         let audio: [String: (data: Data, ext: String)]
         let assetsMedia: [String: (data: Data, ext: String)]
+        let customOutfits: [String: CustomOutfitBundle]
         let checkpoints: [ShowCheckpoint]
     }
 
@@ -57,6 +58,11 @@ final class ShowDocumentFile: ReferenceFileDocument {
     }
     var assetsMedia: [String: (data: Data, ext: String)] {
         didSet { updateMediaSnapshot() }
+    }
+    /// Local outfits referenced by this project, embedded so the show remains
+    /// portable even when another Mac has no matching library item installed.
+    private(set) var customOutfits: [String: CustomOutfitBundle] {
+        didSet { updateCustomOutfitSnapshot() }
     }
     private(set) var checkpoints: [ShowCheckpoint] {
         didSet { updateCheckpointSnapshot() }
@@ -101,8 +107,10 @@ final class ShowDocumentFile: ReferenceFileDocument {
         self.initialDocument = doc
         self.audio = [:]
         self.assetsMedia = [:]
+        self.customOutfits = [:]
         self.checkpoints = []
         self.packageSnapshot = PackageSnapshot(document: doc, audio: [:], assetsMedia: [:],
+                                               customOutfits: [:],
                                                checkpoints: [])
     }
 
@@ -110,10 +118,12 @@ final class ShowDocumentFile: ReferenceFileDocument {
         self.initialDocument = imported.document
         self.audio = imported.audioFiles
         self.assetsMedia = imported.backgroundFiles
+        self.customOutfits = [:]
         self.checkpoints = []
         self.packageSnapshot = PackageSnapshot(document: imported.document,
                                                audio: imported.audioFiles,
                                                assetsMedia: imported.backgroundFiles,
+                                               customOutfits: [:],
                                                checkpoints: [])
     }
 
@@ -144,11 +154,35 @@ final class ShowDocumentFile: ReferenceFileDocument {
         var assets = media(in: "bg")
         assets.merge(media(in: "assets")) { _, new in new }
         self.assetsMedia = assets
+        let embeddedOutfits = Self.outfits(in: wrapper.fileWrappers?["outfits"])
+        self.customOutfits = embeddedOutfits
         self.checkpoints = Self.checkpoints(in: wrapper.fileWrappers?["checkpoints"])
         self.initialDocument = doc
         self.packageSnapshot = PackageSnapshot(document: doc, audio: self.audio,
                                                assetsMedia: assets,
+                                               customOutfits: embeddedOutfits,
                                                checkpoints: self.checkpoints)
+        for outfit in embeddedOutfits.values {
+            _ = SharedAssets.catalog.registerCustomOutfit(
+                name: outfit.assetName,
+                label: outfit.manifest.name,
+                slot: outfit.manifest.category.rawValue,
+                pngData: outfit.pngData
+            )
+        }
+    }
+
+    private static func outfits(in wrapper: FileWrapper?) -> [String: CustomOutfitBundle] {
+        var result: [String: CustomOutfitBundle] = [:]
+        for (name, child) in wrapper?.fileWrappers ?? [:]
+        where name.hasSuffix(".bannyoutfit") {
+            guard let data = child.regularFileContents,
+                  let decoded = try? JSONDecoder().decode(CustomOutfitBundle.self, from: data),
+                  let outfit = try? decoded.validated()
+            else { continue }
+            result[outfit.assetName] = outfit
+        }
+        return result
     }
 
     private static func checkpoints(in wrapper: FileWrapper?) -> [ShowCheckpoint] {
@@ -185,6 +219,7 @@ final class ShowDocumentFile: ReferenceFileDocument {
         try packageWrapper(for: PackageSnapshot(document: model.document,
                                                 audio: audio,
                                                 assetsMedia: assetsMedia,
+                                                customOutfits: customOutfits,
                                                 checkpoints: checkpoints))
     }
 
@@ -208,6 +243,17 @@ final class ShowDocumentFile: ReferenceFileDocument {
         }
         folder("audio", snapshot.audio)
         folder("assets", snapshot.assetsMedia)
+        if !snapshot.customOutfits.isEmpty {
+            var children: [String: FileWrapper] = [:]
+            for outfit in snapshot.customOutfits.values {
+                let data = try encoder.encode(outfit)
+                children["\(outfit.manifest.id).bannyoutfit"] =
+                    FileWrapper(regularFileWithContents: data)
+            }
+            let dir = FileWrapper(directoryWithFileWrappers: children)
+            dir.preferredFilename = "outfits"
+            root.addFileWrapper(dir)
+        }
         if !snapshot.checkpoints.isEmpty {
             var children: [String: FileWrapper] = [:]
             for checkpoint in snapshot.checkpoints {
@@ -228,6 +274,7 @@ final class ShowDocumentFile: ReferenceFileDocument {
         packageSnapshot = PackageSnapshot(document: document,
                                           audio: packageSnapshot.audio,
                                           assetsMedia: packageSnapshot.assetsMedia,
+                                          customOutfits: packageSnapshot.customOutfits,
                                           checkpoints: packageSnapshot.checkpoints)
         snapshotLock.unlock()
         signalDocumentChange()
@@ -238,6 +285,18 @@ final class ShowDocumentFile: ReferenceFileDocument {
         packageSnapshot = PackageSnapshot(document: packageSnapshot.document,
                                           audio: audio,
                                           assetsMedia: assetsMedia,
+                                          customOutfits: packageSnapshot.customOutfits,
+                                          checkpoints: packageSnapshot.checkpoints)
+        snapshotLock.unlock()
+        signalDocumentChange()
+    }
+
+    private func updateCustomOutfitSnapshot() {
+        snapshotLock.lock()
+        packageSnapshot = PackageSnapshot(document: packageSnapshot.document,
+                                          audio: packageSnapshot.audio,
+                                          assetsMedia: packageSnapshot.assetsMedia,
+                                          customOutfits: customOutfits,
                                           checkpoints: packageSnapshot.checkpoints)
         snapshotLock.unlock()
         signalDocumentChange()
@@ -248,6 +307,7 @@ final class ShowDocumentFile: ReferenceFileDocument {
         packageSnapshot = PackageSnapshot(document: packageSnapshot.document,
                                           audio: packageSnapshot.audio,
                                           assetsMedia: packageSnapshot.assetsMedia,
+                                          customOutfits: packageSnapshot.customOutfits,
                                           checkpoints: checkpoints)
         snapshotLock.unlock()
         signalDocumentChange()
@@ -260,6 +320,13 @@ final class ShowDocumentFile: ReferenceFileDocument {
         DispatchQueue.main.async {
             publisher.send()
         }
+    }
+
+    /// Copies a local outfit into this project's package the first time it is
+    /// used. Subsequent library edits do not silently change an existing show;
+    /// choosing the outfit again refreshes the embedded snapshot.
+    func attachCustomOutfit(_ outfit: CustomOutfitBundle) {
+        customOutfits[outfit.assetName] = outfit
     }
 
     @MainActor
