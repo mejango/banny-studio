@@ -226,7 +226,7 @@ struct CustomOutfitManager: View {
     }
 }
 
-private struct OutfitMannequinCard: View {
+struct OutfitMannequinCard: View {
     let outfit: CustomOutfitBundle
     let bodyStyle: Body
 

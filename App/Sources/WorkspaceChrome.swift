@@ -741,43 +741,27 @@ struct WorkspaceDrawer: View {
             drawerSurface
 
             VStack(spacing: 0) {
-                HStack(spacing: 8) {
-                    Picker("Workspace panel", selection: activeMode) {
-                        ForEach(WorkspaceDrawerMode.allCases) { item in
-                            Label(item.rawValue, systemImage: item.symbol).tag(item)
-                        }
-                    }
-                    .pickerStyle(.segmented)
-                    .labelsHidden()
-                    Button { close() } label: {
-                        Image(systemName: "xmark")
-                            .font(.system(size: 10, weight: .bold))
-                            .frame(width: 24, height: 24)
-                    }
-                    .buttonStyle(.plain)
-                    .help("Close panel")
-                    .accessibilityLabel("Close panel")
-                }
-                .padding(10)
-                .background(Color.primary.opacity(0.04))
-
-                Divider()
-
                 switch mode ?? .browse {
                 case .browse:
-                    WorkspaceBrowser(model: model, file: file)
+                    WorkspaceBrowser(model: model, file: file, onClose: close)
                 case .inspect:
-                    ScrollView {
-                        if let kind = model.selectedTrackKind {
-                            TrackInspector(model: model, file: file, kind: kind)
-                                .padding(12)
-                        } else {
-                            ContentUnavailableView(
-                                "Nothing selected",
-                                systemImage: "slider.horizontal.3",
-                                description: Text("Select a track or item to edit it."))
-                                .padding(.top, 60)
+                    ZStack(alignment: .topTrailing) {
+                        ScrollView {
+                            if let kind = model.selectedTrackKind {
+                                TrackInspector(model: model, file: file, kind: kind)
+                                    .padding(12)
+                                    .padding(.top, 24)
+                            } else {
+                                ContentUnavailableView(
+                                    "Nothing selected",
+                                    systemImage: "slider.horizontal.3",
+                                    description: Text("Select a track or item to edit it."))
+                                    .padding(.top, 60)
+                            }
                         }
+
+                        closeButton
+                            .padding(10)
                     }
                 }
             }
@@ -797,8 +781,15 @@ struct WorkspaceDrawer: View {
                   : Color(red: 0.09, green: 0.09, blue: 0.125)
     }
 
-    private var activeMode: Binding<WorkspaceDrawerMode> {
-        Binding(get: { mode ?? .browse }, set: { mode = $0 })
+    private var closeButton: some View {
+        Button { close() } label: {
+            Image(systemName: "xmark")
+                .font(.system(size: 10, weight: .bold))
+                .frame(width: 24, height: 24)
+        }
+        .buttonStyle(.plain)
+        .help("Close panel")
+        .accessibilityLabel("Close panel")
     }
 
     private func close() {
@@ -809,6 +800,7 @@ struct WorkspaceDrawer: View {
 private enum WorkspaceBrowserSection: String, CaseIterable, Identifiable {
     case cast = "Cast"
     case reactions = "Reactions"
+    case outfits = "Outfits"
     case media = "Media"
     case sets = "Sets"
     case outline = "Outline"
@@ -818,6 +810,7 @@ private enum WorkspaceBrowserSection: String, CaseIterable, Identifiable {
         switch self {
         case .cast: return "person.2"
         case .reactions: return "sparkles"
+        case .outfits: return "tshirt"
         case .media: return "photo.on.rectangle.angled"
         case .sets: return "rectangle.inset.filled"
         case .outline: return "list.bullet.indent"
@@ -828,21 +821,37 @@ private enum WorkspaceBrowserSection: String, CaseIterable, Identifiable {
 private struct WorkspaceBrowser: View {
     @Bindable var model: StudioModel
     let file: ShowDocumentFile
+    let onClose: () -> Void
     @State private var section = WorkspaceBrowserSection.cast
     @State private var query = ""
 
     var body: some View {
         VStack(spacing: 0) {
-            Picker("Library", selection: $section) {
-                ForEach(WorkspaceBrowserSection.allCases) { item in
-                    Label(item.rawValue, systemImage: item.symbol).tag(item)
+            HStack(spacing: 8) {
+                Picker("Library", selection: $section) {
+                    ForEach(WorkspaceBrowserSection.allCases) { item in
+                        Label(item.rawValue, systemImage: item.symbol)
+                            .tag(item)
+                            .accessibilityIdentifier(
+                                "browser-section-\(item.rawValue.lowercased())"
+                            )
+                    }
                 }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .accessibilityIdentifier("browser-sections")
+
+                Button(action: onClose) {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 10, weight: .bold))
+                        .frame(width: 24, height: 24)
+                }
+                .buttonStyle(.plain)
+                .help("Close panel")
+                .accessibilityLabel("Close panel")
             }
-            .pickerStyle(.segmented)
-            .labelsHidden()
             .padding(.horizontal, 10)
             .padding(.top, 10)
-            .accessibilityIdentifier("browser-sections")
 
             TextField(searchPrompt, text: $query)
                 .textFieldStyle(.roundedBorder)
@@ -861,6 +870,8 @@ private struct WorkspaceBrowser: View {
                     } else {
                         browserEmpty("Select a character", symbol: "person.crop.circle")
                     }
+                case .outfits:
+                    OutfitLibrarySection(model: model, query: query)
                 case .media:
                     AssetBankSection(model: model, file: file, query: query)
                 case .sets:
@@ -881,6 +892,7 @@ private struct WorkspaceBrowser: View {
         switch section {
         case .cast: return "Search cast"
         case .reactions: return "Search reactions"
+        case .outfits: return "Search my outfits"
         case .media: return "Search project media"
         case .sets: return "Search backdrops"
         case .outline: return "Search markers and sections"
@@ -894,6 +906,132 @@ private struct WorkspaceBrowser: View {
         }
         .frame(maxWidth: .infinity)
         .padding(.top, 40)
+    }
+}
+
+private struct OutfitLibrarySection: View {
+    @Bindable var model: StudioModel
+    let query: String
+
+    @State private var library = CustomOutfitLibrary.shared
+    @State private var creating = false
+    @State private var managing = false
+    @State private var editing: CustomOutfitBundle?
+
+    private var bodyStyle: Body {
+        guard let index = model.selection.first,
+              let character = model.scene.characters[safe: index] else {
+            return .orange
+        }
+        return character.body
+    }
+
+    private var outfits: [CustomOutfitBundle] {
+        guard !query.isEmpty else { return library.outfits }
+        return library.outfits.filter {
+            $0.manifest.name.localizedCaseInsensitiveContains(query)
+                || $0.manifest.category.displayName.localizedCaseInsensitiveContains(query)
+        }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Text("MY OUTFITS")
+                    .font(.caption.bold())
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Button {
+                    creating = true
+                } label: {
+                    Label("Create", systemImage: "plus")
+                }
+                .buttonStyle(.borderless)
+                .accessibilityIdentifier("browse-create-outfit")
+            }
+
+            Text("Design and manage outfits here. To put one on, select a Banny and open Inspect → Wardrobe.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            if library.outfits.isEmpty {
+                ContentUnavailableView {
+                    Label("Make Your First Outfit", systemImage: "paintbrush.pointed")
+                } description: {
+                    Text("Paint on a Banny mannequin, copy an existing outfit, or start from an image.")
+                } actions: {
+                    Button("Create Outfit") { creating = true }
+                        .buttonStyle(.borderedProminent)
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 20)
+            } else if outfits.isEmpty {
+                ContentUnavailableView.search(text: query)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 20)
+            } else {
+                LazyVGrid(
+                    columns: [GridItem(.adaptive(minimum: 118), spacing: 8)],
+                    spacing: 8
+                ) {
+                    ForEach(outfits, id: \.manifest.id) { outfit in
+                        Button {
+                            editing = outfit
+                        } label: {
+                            VStack(alignment: .leading, spacing: 6) {
+                                OutfitMannequinCard(outfit: outfit, bodyStyle: bodyStyle)
+                                    .aspectRatio(1, contentMode: .fit)
+                                    .clipShape(RoundedRectangle(cornerRadius: 7))
+
+                                Text(outfit.manifest.name)
+                                    .font(.caption.bold())
+                                    .foregroundStyle(.primary)
+                                    .lineLimit(1)
+                                Label(
+                                    outfit.manifest.category.displayName,
+                                    systemImage: outfit.manifest.category.iconName
+                                )
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                            }
+                            .padding(8)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .background(
+                                Color.primary.opacity(0.055),
+                                in: RoundedRectangle(cornerRadius: 9)
+                            )
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("Edit \(outfit.manifest.name)")
+                    }
+                }
+            }
+
+            Button {
+                managing = true
+            } label: {
+                Label("Manage, Import, or Export Outfits…", systemImage: "tray.full")
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.bordered)
+            .accessibilityIdentifier("browse-manage-outfits")
+        }
+        .padding(.top, 2)
+        .sheet(isPresented: $creating) {
+            OutfitStudio(bodyStyle: bodyStyle) { _ in
+                creating = false
+            }
+        }
+        .sheet(isPresented: $managing) {
+            CustomOutfitManager(bodyStyle: bodyStyle)
+        }
+        .sheet(item: $editing) { outfit in
+            OutfitStudio(bodyStyle: bodyStyle, editing: outfit) { _ in
+                editing = nil
+            }
+        }
     }
 }
 

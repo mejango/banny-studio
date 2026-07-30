@@ -1,3 +1,4 @@
+import Foundation
 import SwiftUI
 import UniformTypeIdentifiers
 #if os(macOS)
@@ -38,6 +39,8 @@ struct BannyStudioApp: App {
         .commands {
             CommandGroup(after: .newItem) {
                 ImportProjectCommand()
+                Divider()
+                AppUpdateCommand()
             }
             CommandGroup(after: .help) {
                 Button("Set up CLI & AI Skill…") {
@@ -159,6 +162,136 @@ struct ImportProjectCommand: View {
                                                        set: { if !$0 { importError = nil } })) {
                 Button("OK") { importError = nil }
             } message: { Text(importError ?? "") }
+    }
+}
+
+/// Mac App Store apps cannot replace their own signed bundle. This command
+/// checks Apple's live listing, then hands the install to the App Store.
+struct AppUpdateCommand: View {
+    @State private var checking = false
+    @State private var result: AppUpdateResult?
+
+    var body: some View {
+        Button(checking ? "Checking for Updates…" : "Check for Updates…") {
+            checkForUpdates()
+        }
+        .disabled(checking)
+        .accessibilityIdentifier("check-for-updates")
+        .alert(
+            result?.title ?? "Software Update",
+            isPresented: Binding(
+                get: { result != nil },
+                set: { if !$0 { result = nil } }
+            )
+        ) {
+            if let updateURL = result?.updateURL {
+                Button("Update in App Store") {
+                    NSWorkspace.shared.open(updateURL)
+                    result = nil
+                }
+            }
+            Button("OK", role: .cancel) { result = nil }
+        } message: {
+            Text(result?.message ?? "")
+        }
+    }
+
+    private func checkForUpdates() {
+        checking = true
+        Task {
+            defer { checking = false }
+            do {
+                let listing = try await AppStoreUpdateService.latestListing()
+                let current = AppStoreUpdateService.installedVersion
+                if AppStoreUpdateService.isNewer(listing.version, than: current) {
+                    result = AppUpdateResult(
+                        title: "Banny Studio \(listing.version) Is Available",
+                        message: "You’re using version \(current). The App Store can install the latest version now.",
+                        updateURL: AppStoreUpdateService.updateURL
+                    )
+                } else {
+                    result = AppUpdateResult(
+                        title: "Banny Studio Is Up to Date",
+                        message: "Version \(current) is the latest available version.",
+                        updateURL: nil
+                    )
+                }
+            } catch {
+                result = AppUpdateResult(
+                    title: "Couldn’t Check for Updates",
+                    message: "Check your internet connection and try again.\n\n\(error.localizedDescription)",
+                    updateURL: nil
+                )
+            }
+        }
+    }
+}
+
+private struct AppUpdateResult {
+    let title: String
+    let message: String
+    let updateURL: URL?
+}
+
+enum AppStoreUpdateService {
+    static let appID = "6788916305"
+    static let bundleID = "com.banny.BannyStudio"
+
+    static var installedVersion: String {
+        Bundle.main.object(
+            forInfoDictionaryKey: "CFBundleShortVersionString"
+        ) as? String ?? "Unknown"
+    }
+
+    static var updateURL: URL {
+        URL(string: "macappstore://itunes.apple.com/app/id\(appID)")!
+    }
+
+    static func latestListing() async throws -> Listing {
+        var components = URLComponents(string: "https://itunes.apple.com/lookup")!
+        var items = [URLQueryItem(name: "bundleId", value: bundleID)]
+        if let country = Locale.current.region?.identifier.lowercased() {
+            items.append(URLQueryItem(name: "country", value: country))
+        }
+        components.queryItems = items
+
+        guard let url = components.url else { throw UpdateError.invalidURL }
+        let (data, response) = try await URLSession.shared.data(from: url)
+        guard let http = response as? HTTPURLResponse,
+              (200 ..< 300).contains(http.statusCode) else {
+            throw UpdateError.badResponse
+        }
+        let lookup = try JSONDecoder().decode(LookupResponse.self, from: data)
+        guard let listing = lookup.results.first else {
+            throw UpdateError.appNotFound
+        }
+        return listing
+    }
+
+    static func isNewer(_ candidate: String, than installed: String) -> Bool {
+        candidate.compare(installed, options: .numeric) == .orderedDescending
+    }
+
+    struct Listing: Decodable {
+        let version: String
+    }
+
+    private struct LookupResponse: Decodable {
+        let results: [Listing]
+    }
+
+    private enum UpdateError: LocalizedError {
+        case invalidURL
+        case badResponse
+        case appNotFound
+
+        var errorDescription: String? {
+            switch self {
+            case .invalidURL: return "The update service URL is invalid."
+            case .badResponse: return "Apple’s update service didn’t respond."
+            case .appNotFound: return "Banny Studio wasn’t found in the App Store."
+            }
+        }
     }
 }
 

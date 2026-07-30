@@ -31,6 +31,19 @@ final class SmokeTests: XCTestCase {
 
     #if os(macOS)
     @MainActor
+    func testFileMenuOffersUpdateCheck() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["-ApplePersistenceIgnoreState", "YES"]
+        app.launch()
+
+        let fileMenu = app.menuBars.menuBarItems["File"]
+        XCTAssertTrue(fileMenu.waitForExistence(timeout: 10), "File menu missing")
+        fileMenu.click()
+        XCTAssertTrue(app.menuItems["Check for Updates…"].waitForExistence(timeout: 3),
+                      "Check for Updates command missing from File")
+    }
+
+    @MainActor
     func testAdvancedJSONEditorOpensFromCharacterInspector() throws {
         let app = XCUIApplication()
         app.launchArguments = ["-ApplePersistenceIgnoreState", "YES"]
@@ -80,6 +93,18 @@ final class SmokeTests: XCTestCase {
         XCTAssertTrue(app.descendants(matching: .any)["browser-cast"]
             .waitForExistence(timeout: 5),
                       "Cast browser missing")
+
+        let outfits = app.descendants(matching: .any)["browser-section-outfits"]
+        XCTAssertTrue(outfits.waitForExistence(timeout: 5),
+                      "Top-level Outfits destination missing")
+        outfits.click()
+        XCTAssertTrue(app.descendants(matching: .any)["browser-outfits"]
+            .waitForExistence(timeout: 5),
+                      "Outfit library did not open")
+        XCTAssertTrue(app.buttons["browse-create-outfit"].exists,
+                      "Create Outfit action missing from Browse")
+        XCTAssertTrue(app.buttons["browse-manage-outfits"].exists,
+                      "Outfit management action missing from Browse")
 
         let inspect = app.buttons["workspace-inspect"]
         XCTAssertTrue(inspect.exists, "Inspect control missing")
@@ -145,6 +170,12 @@ final class SmokeTests: XCTestCase {
                       "category picker missing")
         XCTAssertTrue(app.descendants(matching: .any)["outfit-pixel-canvas"].exists,
                       "pixel canvas missing")
+        XCTAssertTrue(app.buttons["outfit-zoom-in"].exists,
+                      "precision zoom-in control missing")
+        XCTAssertTrue(app.buttons["outfit-zoom-out"].exists,
+                      "precision zoom-out control missing")
+        XCTAssertTrue(app.buttons["outfit-zoom-fit"].exists,
+                      "fit-canvas control missing")
         XCTAssertTrue(app.buttons["outfit-section-tool"].exists,
                       "contiguous pixel-section tool missing")
         XCTAssertTrue(app.checkBoxes["outfit-show-mannequin"].exists,

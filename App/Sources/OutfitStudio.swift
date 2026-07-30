@@ -421,6 +421,8 @@ struct OutfitStudio: View {
     @State private var starterImage: CGImage?
     @State private var choosingSourceOutfit = false
     @State private var showMannequin = true
+    @State private var canvasZoom: CGFloat = 1
+    @State private var canvasZoomGestureStart: CGFloat?
     @State private var pendingGridSize: Int?
     @State private var errorMessage: String?
     @State private var draftTask: Task<Void, Never>?
@@ -726,18 +728,88 @@ struct OutfitStudio: View {
     }
 
     private var designArea: some View {
-        VStack(spacing: 8) {
-            Text("Paint directly on the mannequin")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            PixelDesignSurface(
-                canvas: canvas,
-                bodyStyle: bodyStyle,
-                showMannequin: showMannequin
+        GeometryReader { geometry in
+            let fittedSide = max(
+                160,
+                min(geometry.size.width - 32, geometry.size.height - 70)
             )
-                .aspectRatio(1, contentMode: .fit)
-                .padding(16)
-                .accessibilityIdentifier("outfit-pixel-canvas")
+
+            VStack(spacing: 0) {
+                HStack(spacing: 8) {
+                    Text("Paint directly on the mannequin")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    Button {
+                        canvasZoom = max(0.5, canvasZoom / 1.5)
+                    } label: {
+                        Image(systemName: "minus.magnifyingglass")
+                    }
+                    .disabled(canvasZoom <= 0.5)
+                    .accessibilityLabel("Zoom out")
+                    .accessibilityIdentifier("outfit-zoom-out")
+
+                    Text("\(Int((canvasZoom * 100).rounded()))%")
+                        .font(.caption.monospacedDigit())
+                        .frame(minWidth: 42)
+                        .accessibilityIdentifier("outfit-zoom-level")
+
+                    Button {
+                        canvasZoom = min(8, canvasZoom * 1.5)
+                    } label: {
+                        Image(systemName: "plus.magnifyingglass")
+                    }
+                    .disabled(canvasZoom >= 8)
+                    .accessibilityLabel("Zoom in")
+                    .accessibilityIdentifier("outfit-zoom-in")
+
+                    Button("Fit") {
+                        canvasZoom = 1
+                    }
+                    .font(.caption)
+                    .disabled(abs(canvasZoom - 1) < 0.001)
+                    .accessibilityIdentifier("outfit-zoom-fit")
+                }
+                .buttonStyle(.borderless)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 8)
+
+                ScrollView([.horizontal, .vertical]) {
+                    PixelDesignSurface(
+                        canvas: canvas,
+                        bodyStyle: bodyStyle,
+                        showMannequin: showMannequin
+                    )
+                    .frame(
+                        width: fittedSide * canvasZoom,
+                        height: fittedSide * canvasZoom
+                    )
+                    .padding(16)
+                    .accessibilityIdentifier("outfit-pixel-canvas")
+                }
+                .defaultScrollAnchor(.center)
+                .scrollIndicators(.visible)
+                .simultaneousGesture(
+                    MagnificationGesture()
+                        .onChanged { magnification in
+                            if canvasZoomGestureStart == nil {
+                                canvasZoomGestureStart = canvasZoom
+                            }
+                            canvasZoom = min(
+                                8,
+                                max(
+                                    0.5,
+                                    (canvasZoomGestureStart ?? canvasZoom)
+                                        * magnification
+                                )
+                            )
+                        }
+                        .onEnded { _ in
+                            canvasZoomGestureStart = nil
+                        }
+                )
+                .help("Pinch to zoom. Scroll to move around the enlarged canvas.")
+            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Color.primary.opacity(0.025))
@@ -1165,6 +1237,7 @@ private struct OutfitImageStarter: View {
     @State private var scale = 1.0
     @State private var offsetX = 0.0
     @State private var offsetY = 0.0
+    @State private var rotation = 0.0
     @State private var paletteSize = 16
     @State private var alphaThreshold = 0.18
     @State private var dither = false
@@ -1175,32 +1248,54 @@ private struct OutfitImageStarter: View {
                 VStack {
                     StarterPlacementPreview(
                         image: image,
-                        scale: scale,
-                        offsetX: offsetX,
-                        offsetY: offsetY,
+                        scale: $scale,
+                        offsetX: $offsetX,
+                        offsetY: $offsetY,
+                        rotation: $rotation,
                         bodyStyle: bodyStyle,
                         category: category
                     )
                     .aspectRatio(1, contentMode: .fit)
                     .padding()
+                    Text("Drag to position. Pinch to resize. Rotate with a trackpad gesture or the controls.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal)
+                        .padding(.bottom)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 Divider()
                 Form {
                     Section("Placement") {
                         LabeledContent("Size") {
-                            Slider(value: $scale, in: 0.1...3)
+                            HStack {
+                                Slider(value: $scale, in: 0.1...6)
+                                    .accessibilityIdentifier("starter-image-scale")
+                                Text("\(Int((scale * 100).rounded()))%")
+                                    .font(.caption.monospacedDigit())
+                                    .frame(width: 42, alignment: .trailing)
+                            }
                         }
                         LabeledContent("Horizontal") {
-                            Slider(value: $offsetX, in: -200...200)
+                            Slider(value: $offsetX, in: -400...400)
                         }
                         LabeledContent("Vertical") {
-                            Slider(value: $offsetY, in: -200...200)
+                            Slider(value: $offsetY, in: -400...400)
+                        }
+                        LabeledContent("Rotation") {
+                            HStack {
+                                Slider(value: $rotation, in: -180...180)
+                                    .accessibilityIdentifier("starter-image-rotation")
+                                Text("\(Int(rotation.rounded()))°")
+                                    .font(.caption.monospacedDigit())
+                                    .frame(width: 38, alignment: .trailing)
+                            }
                         }
                         Button("Reset Placement") {
                             scale = 1
                             offsetX = 0
                             offsetY = 0
+                            rotation = 0
                         }
                     }
                     Section("Pixel processing") {
@@ -1231,6 +1326,7 @@ private struct OutfitImageStarter: View {
                             scale: scale,
                             offsetX: offsetX,
                             offsetY: offsetY,
+                            rotation: rotation,
                             paletteSize: paletteSize,
                             alphaThreshold: alphaThreshold,
                             dither: dither
@@ -1247,34 +1343,117 @@ private struct OutfitImageStarter: View {
 
 private struct StarterPlacementPreview: View {
     let image: CGImage
-    let scale: Double
-    let offsetX: Double
-    let offsetY: Double
+    @Binding var scale: Double
+    @Binding var offsetX: Double
+    @Binding var offsetY: Double
+    @Binding var rotation: Double
     let bodyStyle: Body
     let category: OutfitCategory
 
+    @State private var dragStart: CGSize?
+    @State private var scaleStart: Double?
+    @State private var rotationStart: Double?
+
     var body: some View {
-        Canvas { context, size in
-            context.fill(Path(CGRect(origin: .zero, size: size)),
-                         with: .color(Color(red: 0.98, green: 0.97, blue: 0.92)))
-            var ghost = context
-            ghost.opacity = 0.22
-            drawBasicMannequin(
-                in: &ghost,
-                box: CGRect(origin: .zero, size: size),
-                bodyStyle: bodyStyle
+        GeometryReader { geometry in
+            Canvas { context, size in
+                context.fill(Path(CGRect(origin: .zero, size: size)),
+                             with: .color(Color(red: 0.98, green: 0.97, blue: 0.92)))
+                var ghost = context
+                ghost.opacity = 0.22
+                drawBasicMannequin(
+                    in: &ghost,
+                    box: CGRect(origin: .zero, size: size),
+                    bodyStyle: bodyStyle
+                )
+                let fit = min(
+                    size.width / CGFloat(image.width),
+                    size.height / CGFloat(image.height)
+                )
+                let width = CGFloat(image.width) * fit * scale
+                let height = CGFloat(image.height) * fit * scale
+                let center = CGPoint(
+                    x: size.width / 2 + CGFloat(offsetX) / 400 * size.width,
+                    y: size.height / 2 + CGFloat(offsetY) / 400 * size.height
+                )
+                var placed = context
+                placed.translateBy(x: center.x, y: center.y)
+                placed.rotate(by: .degrees(rotation))
+                placed.draw(
+                    Image(decorative: image, scale: 1),
+                    in: CGRect(x: -width / 2, y: -height / 2,
+                               width: width, height: height)
+                )
+            }
+            .contentShape(Rectangle())
+            .gesture(
+                DragGesture()
+                    .onChanged { value in
+                        if dragStart == nil {
+                            dragStart = CGSize(
+                                width: CGFloat(offsetX),
+                                height: CGFloat(offsetY)
+                            )
+                        }
+                        let start = dragStart ?? .zero
+                        offsetX = min(
+                            400,
+                            max(
+                                -400,
+                                Double(start.width)
+                                    + Double(value.translation.width
+                                             / max(1, geometry.size.width) * 400)
+                            )
+                        )
+                        offsetY = min(
+                            400,
+                            max(
+                                -400,
+                                Double(start.height)
+                                    + Double(value.translation.height
+                                             / max(1, geometry.size.height) * 400)
+                            )
+                        )
+                    }
+                    .onEnded { _ in dragStart = nil }
             )
-            let fit = min(size.width / CGFloat(image.width), size.height / CGFloat(image.height))
-            let width = CGFloat(image.width) * fit * scale
-            let height = CGFloat(image.height) * fit * scale
-            let rect = CGRect(
-                x: (size.width - width) / 2 + CGFloat(offsetX) / 400 * size.width,
-                y: (size.height - height) / 2 + CGFloat(offsetY) / 400 * size.height,
-                width: width,
-                height: height
+            .simultaneousGesture(
+                MagnificationGesture()
+                    .onChanged { magnification in
+                        if scaleStart == nil { scaleStart = scale }
+                        scale = min(
+                            6,
+                            max(
+                                0.1,
+                                (scaleStart ?? scale) * Double(magnification)
+                            )
+                        )
+                    }
+                    .onEnded { _ in scaleStart = nil }
             )
-            context.draw(Image(decorative: image, scale: 1), in: rect)
+            .simultaneousGesture(
+                RotationGesture()
+                    .onChanged { angle in
+                        if rotationStart == nil { rotationStart = rotation }
+                        rotation = normalizedDegrees(
+                            (rotationStart ?? rotation) + angle.degrees
+                        )
+                    }
+                    .onEnded { _ in rotationStart = nil }
+            )
+            .overlay {
+                RoundedRectangle(cornerRadius: 8)
+                    .stroke(Color.primary.opacity(0.22), lineWidth: 1)
+            }
+            .accessibilityIdentifier("starter-image-placement")
         }
+    }
+
+    private func normalizedDegrees(_ degrees: Double) -> Double {
+        var value = degrees.truncatingRemainder(dividingBy: 360)
+        if value > 180 { value -= 360 }
+        if value < -180 { value += 360 }
+        return value
     }
 }
 
@@ -1285,6 +1464,7 @@ private enum OutfitImageProcessor {
         scale: Double,
         offsetX: Double,
         offsetY: Double,
+        rotation: Double,
         paletteSize: Int,
         alphaThreshold: Double,
         dither: Bool
@@ -1305,13 +1485,21 @@ private enum OutfitImageProcessor {
                       CGFloat(gridSize) / CGFloat(image.height))
         let width = CGFloat(image.width) * fit * scale
         let height = CGFloat(image.height) * fit * scale
-        let rect = CGRect(
-            x: (CGFloat(gridSize) - width) / 2 + CGFloat(offsetX) / 400 * CGFloat(gridSize),
-            y: (CGFloat(gridSize) - height) / 2 + CGFloat(offsetY) / 400 * CGFloat(gridSize),
-            width: width,
-            height: height
+        let center = CGPoint(
+            x: CGFloat(gridSize) / 2
+                + CGFloat(offsetX) / 400 * CGFloat(gridSize),
+            y: CGFloat(gridSize) / 2
+                + CGFloat(offsetY) / 400 * CGFloat(gridSize)
         )
-        context.draw(image, in: rect)
+        context.saveGState()
+        context.translateBy(x: center.x, y: center.y)
+        context.rotate(by: CGFloat(rotation * .pi / 180))
+        context.draw(
+            image,
+            in: CGRect(x: -width / 2, y: -height / 2,
+                       width: width, height: height)
+        )
+        context.restoreGState()
 
         let threshold = UInt8(max(0, min(255, Int(alphaThreshold * 255))))
         var samples: [(Double, Double, Double)] = []
