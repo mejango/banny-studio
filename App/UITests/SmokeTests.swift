@@ -185,11 +185,23 @@ final class SmokeTests: XCTestCase {
         copyExisting.click()
         XCTAssertTrue(app.staticTexts["Copy Existing Outfit"]
             .waitForExistence(timeout: 5), "existing outfit picker did not open")
-        XCTAssertTrue(app.buttons["Doc Coat"].waitForExistence(timeout: 5),
+        let docCoat = app.buttons["Doc Coat"]
+        XCTAssertTrue(docCoat.waitForExistence(timeout: 5),
                       "built-in outfits are not available as copy sources")
-        app.typeKey(.escape, modifierFlags: [])
+        docCoat.click()
+        XCTAssertTrue(app.staticTexts["Place Copied Outfit"]
+            .waitForExistence(timeout: 5), "copied outfit placement did not open")
+        XCTAssertTrue(app.descendants(matching: .any)["starter-image-placement"].exists,
+                      "copied outfit cannot be positioned directly")
+        XCTAssertTrue(app.descendants(matching: .any)["starter-image-scale"].exists,
+                      "copied outfit size control missing")
+        XCTAssertTrue(app.descendants(matching: .any)["starter-image-rotation"].exists,
+                      "copied outfit rotation control missing")
+        let placeCopy = app.buttons["starter-apply"]
+        XCTAssertTrue(placeCopy.exists, "copied outfit placement cannot be applied")
+        placeCopy.click()
         XCTAssertTrue(app.descendants(matching: .any)["outfit-pixel-canvas"]
-            .waitForExistence(timeout: 5), "copy picker did not dismiss")
+            .waitForExistence(timeout: 5), "placed copy did not return to the pixel editor")
 
         let shot = XCTAttachment(screenshot: app.screenshot())
         shot.name = "custom-outfit-studio"

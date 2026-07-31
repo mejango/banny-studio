@@ -206,6 +206,20 @@ private final class PixelOutfitCanvas {
         selectedPixels.removeAll()
     }
 
+    func replacePixels(_ replacement: [UInt32], gridSize newSize: Int) {
+        guard CustomOutfitManifest.supportedGridSizes.contains(newSize),
+              replacement.count == newSize * newSize else { return }
+        if gridSize == newSize {
+            replacePixels(replacement)
+        } else {
+            undoStack.removeAll()
+            redoStack.removeAll()
+            gridSize = newSize
+            pixels = replacement
+            selectedPixels.removeAll()
+        }
+    }
+
     func replaceFromImage(_ image: CGImage, gridSize newSize: Int) {
         guard CustomOutfitManifest.supportedGridSizes.contains(newSize),
               let replacement = Self.rgbaPixels(image: image, size: newSize)
@@ -509,9 +523,10 @@ struct OutfitStudio: View {
         ) {
             OutfitCopyPicker(
                 bodyStyle: bodyStyle,
+                initialCategory: category,
                 restrictedCategory: original?.manifest.category
-            ) { source in
-                copyExistingOutfit(source)
+            ) { source, pixels in
+                copyExistingOutfit(source, pixels: pixels)
                 choosingSourceOutfit = false
             }
         }
@@ -879,9 +894,12 @@ struct OutfitStudio: View {
         }
     }
 
-    private func copyExistingOutfit(_ source: OutfitCopySource) {
+    private func copyExistingOutfit(
+        _ source: OutfitCopySource,
+        pixels: [UInt32]
+    ) {
         category = source.category
-        canvas.replaceFromImage(source.image, gridSize: source.preferredGridSize)
+        canvas.replacePixels(pixels, gridSize: source.preferredGridSize)
         let cleanName = name.trimmingCharacters(in: .whitespacesAndNewlines)
         if cleanName.isEmpty || cleanName == "My Outfit" {
             name = "\(source.label) Remix"
@@ -899,7 +917,8 @@ struct OutfitStudio: View {
     }
 }
 
-private struct OutfitCopySource {
+private struct OutfitCopySource: Identifiable {
+    let id = UUID()
     let label: String
     let category: OutfitCategory
     let image: CGImage
@@ -915,20 +934,22 @@ private struct OutfitCopyPicker: View {
 
     let bodyStyle: Body
     let restrictedCategory: OutfitCategory?
-    let onChoose: (OutfitCopySource) -> Void
+    let onChoose: (OutfitCopySource, [UInt32]) -> Void
 
     @Environment(\.dismiss) private var dismiss
     @State private var category: OutfitCategory
+    @State private var sourceToPlace: OutfitCopySource?
 
     init(
         bodyStyle: Body,
+        initialCategory: OutfitCategory,
         restrictedCategory: OutfitCategory?,
-        onChoose: @escaping (OutfitCopySource) -> Void
+        onChoose: @escaping (OutfitCopySource, [UInt32]) -> Void
     ) {
         self.bodyStyle = bodyStyle
         self.restrictedCategory = restrictedCategory
         self.onChoose = onChoose
-        _category = State(initialValue: restrictedCategory ?? .suitTop)
+        _category = State(initialValue: restrictedCategory ?? initialCategory)
     }
 
     var body: some View {
@@ -1010,6 +1031,18 @@ private struct OutfitCopyPicker: View {
         }
         .accessibilityIdentifier("outfit-copy-picker")
         .frame(minWidth: pickerMinimumWidth, minHeight: pickerMinimumHeight)
+        .sheet(item: $sourceToPlace) { source in
+            OutfitImageStarter(
+                image: source.image,
+                gridSize: source.preferredGridSize,
+                bodyStyle: bodyStyle,
+                category: source.category,
+                preserveSourcePixels: true
+            ) { pixels in
+                onChoose(source, pixels)
+                sourceToPlace = nil
+            }
+        }
     }
 
     private var choices: [Choice] {
@@ -1025,13 +1058,12 @@ private struct OutfitCopyPicker: View {
         let gridSize = CustomOutfitLibrary.shared
             .bundle(named: choice.name)?
             .manifest.gridSize ?? 100
-        onChoose(OutfitCopySource(
+        sourceToPlace = OutfitCopySource(
             label: choice.label,
             category: category,
             image: image,
             preferredGridSize: gridSize
-        ))
-        dismiss()
+        )
     }
 
     private var pickerMinimumWidth: CGFloat {
@@ -1231,6 +1263,7 @@ private struct OutfitImageStarter: View {
     let gridSize: Int
     let bodyStyle: Body
     let category: OutfitCategory
+    var preserveSourcePixels = false
     let apply: ([UInt32]) -> Void
 
     @Environment(\.dismiss) private var dismiss
@@ -1298,42 +1331,61 @@ private struct OutfitImageStarter: View {
                             rotation = 0
                         }
                     }
-                    Section("Pixel processing") {
-                        Stepper("Palette: \(paletteSize) colors",
-                                value: $paletteSize, in: 4...32, step: 4)
-                        LabeledContent("Transparency") {
-                            Slider(value: $alphaThreshold, in: 0...0.9)
+                    if preserveSourcePixels {
+                        Section("Copied pixels") {
+                            Text("The source outfit’s colors and transparency are preserved. After placing it, every pixel remains editable on the canvas.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
                         }
-                        Toggle("Ordered dithering", isOn: $dither)
-                        Text("The image is reduced to the \(gridSize)×\(gridSize) outfit grid. You can edit every resulting pixel afterward.")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
+                    } else {
+                        Section("Pixel processing") {
+                            Stepper("Palette: \(paletteSize) colors",
+                                    value: $paletteSize, in: 4...32, step: 4)
+                            LabeledContent("Transparency") {
+                                Slider(value: $alphaThreshold, in: 0...0.9)
+                            }
+                            Toggle("Ordered dithering", isOn: $dither)
+                            Text("The image is reduced to the \(gridSize)×\(gridSize) outfit grid. You can edit every resulting pixel afterward.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
                     }
                 }
                 .formStyle(.grouped)
                 .frame(width: 320)
             }
-            .navigationTitle("Image Starter")
+            .navigationTitle(preserveSourcePixels ? "Place Copied Outfit" : "Image Starter")
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { dismiss() }
                 }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Make Pixel Starter") {
-                        apply(OutfitImageProcessor.process(
-                            image,
-                            gridSize: gridSize,
-                            scale: scale,
-                            offsetX: offsetX,
-                            offsetY: offsetY,
-                            rotation: rotation,
-                            paletteSize: paletteSize,
-                            alphaThreshold: alphaThreshold,
-                            dither: dither
-                        ))
+                    Button(preserveSourcePixels ? "Place Copy" : "Make Pixel Starter") {
+                        let pixels = preserveSourcePixels
+                            ? OutfitImageProcessor.placeCopy(
+                                image,
+                                gridSize: gridSize,
+                                scale: scale,
+                                offsetX: offsetX,
+                                offsetY: offsetY,
+                                rotation: rotation
+                            )
+                            : OutfitImageProcessor.process(
+                                image,
+                                gridSize: gridSize,
+                                scale: scale,
+                                offsetX: offsetX,
+                                offsetY: offsetY,
+                                rotation: rotation,
+                                paletteSize: paletteSize,
+                                alphaThreshold: alphaThreshold,
+                                dither: dither
+                            )
+                        apply(pixels)
                         dismiss()
                     }
                     .buttonStyle(.borderedProminent)
+                    .accessibilityIdentifier("starter-apply")
                 }
             }
         }
@@ -1458,6 +1510,51 @@ private struct StarterPlacementPreview: View {
 }
 
 private enum OutfitImageProcessor {
+    static func placeCopy(
+        _ image: CGImage,
+        gridSize: Int,
+        scale: Double,
+        offsetX: Double,
+        offsetY: Double,
+        rotation: Double
+    ) -> [UInt32] {
+        let count = gridSize * gridSize
+        var bytes = [UInt8](repeating: 0, count: count * 4)
+        guard let context = CGContext(
+            data: &bytes,
+            width: gridSize,
+            height: gridSize,
+            bitsPerComponent: 8,
+            bytesPerRow: gridSize * 4,
+            space: CGColorSpace(name: CGColorSpace.sRGB)!,
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ) else { return [UInt32](repeating: 0, count: count) }
+        context.interpolationQuality = .none
+        let fit = min(CGFloat(gridSize) / CGFloat(image.width),
+                      CGFloat(gridSize) / CGFloat(image.height))
+        let width = CGFloat(image.width) * fit * scale
+        let height = CGFloat(image.height) * fit * scale
+        let center = CGPoint(
+            x: CGFloat(gridSize) / 2
+                + CGFloat(offsetX) / 400 * CGFloat(gridSize),
+            y: CGFloat(gridSize) / 2
+                + CGFloat(offsetY) / 400 * CGFloat(gridSize)
+        )
+        context.translateBy(x: center.x, y: center.y)
+        context.rotate(by: CGFloat(rotation * .pi / 180))
+        context.draw(
+            image,
+            in: CGRect(x: -width / 2, y: -height / 2,
+                       width: width, height: height)
+        )
+        return stride(from: 0, to: bytes.count, by: 4).map { index in
+            UInt32(bytes[index]) << 24
+                | UInt32(bytes[index + 1]) << 16
+                | UInt32(bytes[index + 2]) << 8
+                | UInt32(bytes[index + 3])
+        }
+    }
+
     static func process(
         _ image: CGImage,
         gridSize: Int,
