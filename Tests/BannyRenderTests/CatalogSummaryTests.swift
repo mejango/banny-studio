@@ -103,11 +103,21 @@ final class CatalogSummaryTests: XCTestCase {
             pngData: data as Data
         ))
         XCTAssertTrue(catalog.hasEyeOption("custom-eyes"))
-        XCTAssertNotNil(catalog.eyesImage(
+        let customEyesOpen = try XCTUnwrap(catalog.eyesImage(
+            option: "custom-eyes",
+            expression: .open,
+            body: .orange
+        ))
+        let customEyesClosed = try XCTUnwrap(catalog.eyesImage(
             option: "custom-eyes",
             expression: .closed,
             body: .orange
-        ), "custom eyes should replace every animated expression frame")
+        ))
+        XCTAssertNotEqual(
+            customEyesOpen.dataProvider?.data as Data?,
+            customEyesClosed.dataProvider?.data as Data?,
+            "custom eyes should derive a distinct blink frame"
+        )
 
         XCTAssertTrue(catalog.registerCustomOutfit(
             name: "custom-mouth",
@@ -116,10 +126,20 @@ final class CatalogSummaryTests: XCTestCase {
             pngData: data as Data
         ))
         XCTAssertTrue(catalog.hasMouthOption("custom-mouth"))
-        XCTAssertNotNil(catalog.mouthImage(
+        let customMouthClosed = try XCTUnwrap(catalog.mouthImage(
+            option: "custom-mouth",
+            state: .closed,
+            body: .orange
+        ))
+        let customMouthOpen = try XCTUnwrap(catalog.mouthImage(
             option: "custom-mouth",
             state: .open,
             body: .orange
-        ), "custom mouths should replace every speaking frame")
+        ))
+        XCTAssertNotEqual(
+            customMouthClosed.dataProvider?.data as Data?,
+            customMouthOpen.dataProvider?.data as Data?,
+            "custom mouths should derive a distinct speaking frame"
+        )
     }
 }

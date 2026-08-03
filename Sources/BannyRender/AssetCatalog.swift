@@ -69,14 +69,24 @@ public final class AssetCatalog: @unchecked Sendable {
         var slot: Int
         var label: String
         var images: [CGImage]
+        var blinkImages: [CGImage]
+        var openMouthImages: [CGImage]
+        var tightMouthImages: [CGImage]
         var frameDelay: Double
         var selectable: Bool
 
-        func image(at time: Double) -> CGImage {
-            guard images.count > 1 else { return images[0] }
-            let index = Int(floor(max(0, time) / frameDelay)) % images.count
-            return images[index]
+        func image(from candidates: [CGImage]? = nil, at time: Double) -> CGImage {
+            let frames = candidates ?? images
+            guard frames.count > 1 else { return frames[0] }
+            let index = Int(floor(max(0, time) / frameDelay)) % frames.count
+            return frames[index]
         }
+    }
+    private enum CustomFaceState {
+        case base
+        case blink
+        case mouthOpen
+        case mouthTight
     }
     private var customOutfits: [String: CustomEntry] = [:]
     private let lock = NSLock()
@@ -146,7 +156,13 @@ public final class AssetCatalog: @unchecked Sendable {
     /// Eye layer for an expression: open art, the option's blink art, or a shared brow frame.
     public func eyesImage(option: String, expression: EyeExpression, body: Body,
                           at time: Double = 0) -> CGImage? {
-        if let custom = customImage(named: option, slot: 5, at: time) { return custom }
+        let customState: CustomFaceState = expression == .closed ? .blink : .base
+        if let custom = customImage(
+            named: option,
+            slot: OutfitCategory.eyes.rawValue,
+            state: customState,
+            at: time
+        ) { return custom }
         return eyesRef(option: option, expression: expression)?
             .file(for: body).flatMap(image(named:))
     }
@@ -169,7 +185,17 @@ public final class AssetCatalog: @unchecked Sendable {
 
     public func mouthImage(option: String, state: MouthState, body: Body,
                            at time: Double = 0) -> CGImage? {
-        if let custom = customImage(named: option, slot: 7, at: time) { return custom }
+        let customState: CustomFaceState = switch state {
+        case .closed: .base
+        case .open: .mouthOpen
+        case .tight: .mouthTight
+        }
+        if let custom = customImage(
+            named: option,
+            slot: OutfitCategory.mouth.rawValue,
+            state: customState,
+            at: time
+        ) { return custom }
         return mouthRef(option: option, state: state)?
             .file(for: body).flatMap(image(named:))
     }
@@ -181,11 +207,22 @@ public final class AssetCatalog: @unchecked Sendable {
             .file(for: body).flatMap(thumbnail(named:))
     }
 
-    private func customImage(named name: String, slot: Int, at time: Double = 0) -> CGImage? {
+    private func customImage(
+        named name: String,
+        slot: Int,
+        state: CustomFaceState = .base,
+        at time: Double = 0
+    ) -> CGImage? {
         lock.lock()
         defer { lock.unlock() }
         guard let entry = customOutfits[name], entry.slot == slot else { return nil }
-        return entry.image(at: time)
+        let frames: [CGImage] = switch state {
+        case .base: entry.images
+        case .blink: entry.blinkImages
+        case .mouthOpen: entry.openMouthImages
+        case .mouthTight: entry.tightMouthImages
+        }
+        return entry.image(from: frames, at: time)
     }
 
     public func shadowImage() -> CGImage? {
@@ -246,6 +283,15 @@ public final class AssetCatalog: @unchecked Sendable {
             slot: slot,
             label: label,
             images: images,
+            blinkImages: slot == OutfitCategory.eyes.rawValue
+                ? images.map { Self.faceVariant($0, kind: .blink) }
+                : images,
+            openMouthImages: slot == OutfitCategory.mouth.rawValue
+                ? images.map { Self.faceVariant($0, kind: .mouthOpen) }
+                : images,
+            tightMouthImages: slot == OutfitCategory.mouth.rawValue
+                ? images.map { Self.faceVariant($0, kind: .mouthTight) }
+                : images,
             frameDelay: max(0.04, min(2, frameDelay)),
             selectable: true
         )
@@ -272,6 +318,106 @@ public final class AssetCatalog: @unchecked Sendable {
         lock.lock()
         customOutfits[name]?.selectable = false
         lock.unlock()
+    }
+
+    private enum FaceVariantKind {
+        case blink
+        case mouthOpen
+        case mouthTight
+    }
+
+    /// Custom face art is authored as an ordinary transparent layer. Derive
+    /// lightweight pose variants from its painted bounds so a one-frame asset
+    /// still participates in the performance controls. Every animation frame
+    /// gets its own variant, preserving the user's loop timing.
+    private static func faceVariant(_ image: CGImage, kind: FaceVariantKind) -> CGImage {
+        let width = image.width
+        let height = image.height
+        guard width > 0, height > 0 else { return image }
+        var bytes = [UInt8](repeating: 0, count: width * height * 4)
+        guard let scan = CGContext(
+            data: &bytes,
+            width: width,
+            height: height,
+            bitsPerComponent: 8,
+            bytesPerRow: width * 4,
+            space: CGColorSpace(name: CGColorSpace.sRGB)!,
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ) else { return image }
+        scan.interpolationQuality = .none
+        scan.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+
+        var minX = width
+        var minY = height
+        var maxX = -1
+        var maxY = -1
+        for y in 0..<height {
+            for x in 0..<width where bytes[(y * width + x) * 4 + 3] > 0 {
+                minX = min(minX, x)
+                minY = min(minY, y)
+                maxX = max(maxX, x)
+                maxY = max(maxY, y)
+            }
+        }
+        guard maxX >= minX, maxY >= minY,
+              let painted = image.cropping(to: CGRect(
+                x: minX,
+                y: minY,
+                width: maxX - minX + 1,
+                height: maxY - minY + 1
+              )),
+              let output = CGContext(
+                data: nil,
+                width: width,
+                height: height,
+                bitsPerComponent: 8,
+                bytesPerRow: width * 4,
+                space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+              ) else { return image }
+
+        output.interpolationQuality = .none
+        let bounds = CGRect(
+            x: minX,
+            y: minY,
+            width: maxX - minX + 1,
+            height: maxY - minY + 1
+        )
+        let centerY = bounds.midY
+        switch kind {
+        case .blink:
+            let lineHeight = max(1, (bounds.height * 0.16).rounded())
+            output.draw(painted, in: CGRect(
+                x: bounds.minX,
+                y: centerY - lineHeight / 2,
+                width: bounds.width,
+                height: lineHeight
+            ))
+        case .mouthOpen:
+            let lipHeight = max(1, (bounds.height * 0.58).rounded())
+            let separation = max(1, (bounds.height * 0.30).rounded())
+            output.draw(painted, in: CGRect(
+                x: bounds.minX,
+                y: centerY - separation - lipHeight / 2,
+                width: bounds.width,
+                height: lipHeight
+            ))
+            output.draw(painted, in: CGRect(
+                x: bounds.minX,
+                y: centerY + separation - lipHeight / 2,
+                width: bounds.width,
+                height: lipHeight
+            ))
+        case .mouthTight:
+            let lineHeight = max(1, (bounds.height * 0.45).rounded())
+            output.draw(painted, in: CGRect(
+                x: bounds.minX,
+                y: centerY - lineHeight / 2,
+                width: bounds.width,
+                height: lineHeight
+            ))
+        }
+        return output.makeImage() ?? image
     }
 
     // MARK: - Image cache

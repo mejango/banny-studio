@@ -1,8 +1,8 @@
 import Foundation
 
-/// Contract-compatible wardrobe categories. Custom eyes and mouths use one
-/// static image for every animation state, which makes pixel-authored face
-/// replacements predictable while preserving the resolver's layer semantics.
+/// Contract-compatible wardrobe categories. Custom eyes and mouths retain the
+/// same performance semantics as their built-in counterparts: eye art blinks,
+/// and mouth art responds to talking states.
 public enum OutfitCategory: Int, Codable, CaseIterable, Identifiable, Sendable {
     case backside = 2
     case necklace = 3
@@ -45,11 +45,11 @@ public enum OutfitCategory: Int, Codable, CaseIterable, Identifiable, Sendable {
         case .head:
             "Replaces the whole head and hides the face, glasses, and head-top items."
         case .eyes:
-            "Replaces the Banny’s default eyes and stays static across expressions."
+            "Replaces the Banny’s default eyes and still blinks during performances."
         case .glasses:
             "Draws above the eyes and below the mouth."
         case .mouth:
-            "Replaces the Banny’s default mouth and stays static while speaking."
+            "Replaces the Banny’s default mouth and still opens for M-key and speech timing."
         case .legs:
             "Draws over the body and face, before clothing."
         case .suit:

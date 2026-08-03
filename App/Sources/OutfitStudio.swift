@@ -65,6 +65,20 @@ private enum PixelTool: String, CaseIterable, Identifiable {
         case .section: "square.dashed"
         }
     }
+    var instruction: String {
+        switch self {
+        case .brush:
+            "Click or drag to paint with the chosen color, opacity, and brush size."
+        case .eraser:
+            "Click or drag to remove pixels and reveal the layers underneath."
+        case .fill:
+            "Click a pixel to recolor its entire connected region."
+        case .eyedropper:
+            "Click a painted pixel to pick its color and opacity, then return to Brush."
+        case .section:
+            "Click or drag to select pixels; Shift adds and double-click selects a same-color region."
+        }
+    }
 }
 
 private struct PixelDoubleClickSnapshot {
@@ -621,10 +635,14 @@ private final class PixelOutfitCanvas {
         guard pixels.count == size * size else { return nil }
         var bytes = [UInt8](repeating: 0, count: pixels.count * 4)
         for (index, value) in pixels.enumerated() {
-            bytes[index * 4] = UInt8((value >> 24) & 0xff)
-            bytes[index * 4 + 1] = UInt8((value >> 16) & 0xff)
-            bytes[index * 4 + 2] = UInt8((value >> 8) & 0xff)
-            bytes[index * 4 + 3] = UInt8(value & 0xff)
+            let alpha = UInt32(value & 0xff)
+            // PixelOutfitCanvas stores straight RGBA so the chosen paint color
+            // is stable as opacity changes. Core Graphics expects premultiplied
+            // channels for this bitmap layout.
+            bytes[index * 4] = UInt8((((value >> 24) & 0xff) * alpha + 127) / 255)
+            bytes[index * 4 + 1] = UInt8((((value >> 16) & 0xff) * alpha + 127) / 255)
+            bytes[index * 4 + 2] = UInt8((((value >> 8) & 0xff) * alpha + 127) / 255)
+            bytes[index * 4 + 3] = UInt8(alpha)
         }
         return bytes.withUnsafeMutableBytes { raw in
             guard let context = CGContext(
@@ -659,10 +677,14 @@ private final class PixelOutfitCanvas {
         context.interpolationQuality = .none
         context.draw(image, in: CGRect(x: 0, y: 0, width: size, height: size))
         return stride(from: 0, to: bytes.count, by: 4).map { index in
-            UInt32(bytes[index]) << 24
-                | UInt32(bytes[index + 1]) << 16
-                | UInt32(bytes[index + 2]) << 8
-                | UInt32(bytes[index + 3])
+            let alpha = UInt32(bytes[index + 3])
+            guard alpha > 0 else { return 0 }
+            // CGContext returns premultiplied channels; convert back to the
+            // straight RGBA representation used by the paint tools.
+            let red = min(255, (UInt32(bytes[index]) * 255 + alpha / 2) / alpha)
+            let green = min(255, (UInt32(bytes[index + 1]) * 255 + alpha / 2) / alpha)
+            let blue = min(255, (UInt32(bytes[index + 2]) * 255 + alpha / 2) / alpha)
+            return red << 24 | green << 16 | blue << 8 | alpha
         }
     }
 }
@@ -947,14 +969,36 @@ struct OutfitStudio: View {
                                 Label(tool.title, systemImage: tool.icon)
                                     .frame(maxWidth: .infinity)
                             }
-                            .buttonStyle(.bordered)
-                            .tint(canvas.tool == tool ? .orange : nil)
+                            .buttonStyle(.borderedProminent)
+                            .tint(canvas.tool == tool
+                                  ? .orange
+                                  : Color.secondary.opacity(0.35))
+                            .foregroundStyle(canvas.tool == tool ? .black : .primary)
+                            .accessibilityAddTraits(canvas.tool == tool ? .isSelected : [])
                             .accessibilityIdentifier(
                                 tool == .section ? "outfit-section-tool" : "outfit-\(tool.rawValue)-tool"
                             )
                         }
                     }
-                    ColorPicker("Paint color", selection: colorBinding, supportsOpacity: false)
+                    Text(canvas.tool.instruction)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .accessibilityIdentifier("outfit-tool-instruction")
+                    ColorPicker("Paint color", selection: colorBinding, supportsOpacity: true)
+                    VStack(alignment: .leading, spacing: 4) {
+                        HStack {
+                            Text("Opacity")
+                            Spacer()
+                            Text("\(paintOpacityPercent)%")
+                                .foregroundStyle(.secondary)
+                                .monospacedDigit()
+                        }
+                        Slider(value: paintOpacityBinding, in: 0...1, step: 0.01)
+                            .accessibilityLabel("Paint opacity")
+                            .accessibilityValue("\(paintOpacityPercent) percent")
+                            .accessibilityIdentifier("outfit-paint-opacity")
+                    }
                     Stepper("Brush size: \(canvas.brushSize)",
                             value: $canvas.brushSize, in: 1...8)
                     if canvas.hasSelection {
@@ -1247,6 +1291,20 @@ struct OutfitStudio: View {
             get: { Color(rgba: canvas.paintColor) },
             set: { canvas.paintColor = $0.rgbaValue }
         )
+    }
+
+    private var paintOpacityBinding: Binding<Double> {
+        Binding(
+            get: { Double(canvas.paintColor & 0xff) / 255 },
+            set: { opacity in
+                let alpha = UInt32(max(0, min(255, Int((opacity * 255).rounded()))))
+                canvas.paintColor = (canvas.paintColor & 0xffffff00) | alpha
+            }
+        )
+    }
+
+    private var paintOpacityPercent: Int {
+        Int((paintOpacityBinding.wrappedValue * 100).rounded())
     }
 
     private var outfitFrameStrip: some View {
