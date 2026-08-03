@@ -1013,9 +1013,9 @@ private struct OutfitLibrarySection: View {
                 managing = true
             } label: {
                 Label("Manage, Import, or Export Outfits…", systemImage: "tray.full")
-                    .frame(maxWidth: .infinity)
             }
             .buttonStyle(.bordered)
+            .frame(maxWidth: .infinity, alignment: .leading)
             .accessibilityIdentifier("browse-manage-outfits")
         }
         .padding(.top, 2)

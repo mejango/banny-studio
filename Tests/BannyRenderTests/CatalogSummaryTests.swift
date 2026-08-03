@@ -95,5 +95,31 @@ final class CatalogSummaryTests: XCTestCase {
             .contains { $0.name == "custom-test" })
         XCTAssertNotNil(catalog.outfitImage("custom-test", body: .alien),
                         "open projects must retain their decoded image")
+
+        XCTAssertTrue(catalog.registerCustomOutfit(
+            name: "custom-eyes",
+            label: "Static Eyes",
+            slot: OutfitCategory.eyes.rawValue,
+            pngData: data as Data
+        ))
+        XCTAssertTrue(catalog.hasEyeOption("custom-eyes"))
+        XCTAssertNotNil(catalog.eyesImage(
+            option: "custom-eyes",
+            expression: .closed,
+            body: .orange
+        ), "custom eyes should replace every animated expression frame")
+
+        XCTAssertTrue(catalog.registerCustomOutfit(
+            name: "custom-mouth",
+            label: "Static Mouth",
+            slot: OutfitCategory.mouth.rawValue,
+            pngData: data as Data
+        ))
+        XCTAssertTrue(catalog.hasMouthOption("custom-mouth"))
+        XCTAssertNotNil(catalog.mouthImage(
+            option: "custom-mouth",
+            state: .open,
+            body: .orange
+        ), "custom mouths should replace every speaking frame")
     }
 }

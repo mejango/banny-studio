@@ -57,6 +57,10 @@ struct KeyCaptureView: NSViewRepresentable {
                     // Only the capture view in the focused document acts; every
                     // other open document's monitor passes the event through.
                     guard let self, let win = self.view?.window, win.isKeyWindow else { return event }
+                    // Modal editors such as Create Outfit own their keyboard
+                    // commands. Never let the underlying timeline swallow
+                    // standard shortcuts while a sheet is open.
+                    guard win.attachedSheet == nil else { return event }
                     return self.route(event: event, model: model) ? nil : event
                 }
             }

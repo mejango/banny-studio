@@ -222,6 +222,19 @@ extension StudioModel {
         addBackgroundCueApplyingAutoFrame(assetID: asset.id, assetName: asset.name)
     }
 
+    /// Adds a locally-authored looping GIF to the project and immediately cues
+    /// it as a background. The bytes are embedded in the show package.
+    func addCustomBackground(_ background: CustomBackgroundBundle) {
+        guard scene.backgroundTracks.first?.locked != true,
+              let asset = addAsset(
+                data: background.gifData,
+                ext: "gif",
+                name: background.manifest.name
+              )
+        else { return }
+        addBackgroundCueApplyingAutoFrame(assetID: asset.id, assetName: asset.name)
+    }
+
     /// addBackgroundCue plus the first-backdrop frame snap (see
     /// Settings.autoFrame): a square backdrop on an untouched project makes
     /// the whole project square.

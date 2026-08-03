@@ -125,6 +125,45 @@ final class SmokeTests: XCTestCase {
     }
 
     @MainActor
+    func testCustomBackgroundStudioOpensFromSets() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["-ApplePersistenceIgnoreState", "YES"]
+        app.launch()
+        if !app.windows.firstMatch.waitForExistence(timeout: 3) {
+            app.typeKey("n", modifierFlags: .command)
+        }
+
+        let browse = app.buttons["workspace-browse"]
+        XCTAssertTrue(browse.waitForExistence(timeout: 10), "Browse control missing")
+        browse.click()
+        let sets = app.descendants(matching: .any)["browser-section-sets"]
+        XCTAssertTrue(sets.waitForExistence(timeout: 5), "Sets destination missing")
+        sets.click()
+
+        let create = app.buttons["create-background"]
+        XCTAssertTrue(create.waitForExistence(timeout: 5), "Create Background missing")
+        XCTAssertTrue(app.buttons["manage-backgrounds"].exists,
+                      "background import/export management missing")
+        create.click()
+
+        XCTAssertTrue(app.textFields["background-name"].waitForExistence(timeout: 5),
+                      "background editor did not open")
+        XCTAssertTrue(app.descendants(matching: .any)["background-paint-canvas"].exists,
+                      "background paint canvas missing")
+        XCTAssertTrue(app.descendants(matching: .any)["background-frame-strip"].exists,
+                      "background frame strip missing")
+        XCTAssertTrue(app.descendants(matching: .any)["background-frame-delay"].exists,
+                      "background loop tempo control missing")
+        XCTAssertFalse(app.buttons["background-save"].isEnabled,
+                       "unnamed background should not save")
+        let addFrame = app.descendants(matching: .any)["background-add-frame"]
+        XCTAssertTrue(addFrame.exists, "add background frame control missing")
+        addFrame.click()
+        XCTAssertTrue(app.staticTexts["2 of 5 frames • loops forever"]
+            .waitForExistence(timeout: 3), "second background frame was not added")
+    }
+
+    @MainActor
     func testCustomOutfitStudioOpensFromWardrobe() throws {
         let app = XCUIApplication()
         app.launchArguments = ["-ApplePersistenceIgnoreState", "YES"]
@@ -164,8 +203,17 @@ final class SmokeTests: XCTestCase {
         XCTAssertTrue(create.waitForExistence(timeout: 5), "Create Outfit control missing")
         create.click()
 
-        XCTAssertTrue(app.textFields["outfit-name"].waitForExistence(timeout: 5),
+        let outfitName = app.textFields["outfit-name"]
+        XCTAssertTrue(outfitName.waitForExistence(timeout: 5),
                       "outfit editor did not open")
+        let initialName = outfitName.value as? String
+        XCTAssertTrue(initialName == "" || initialName == "Outfit name",
+                      "new outfit unexpectedly restored the name \(initialName ?? "nil")")
+        let clearCanvas = app.buttons["outfit-clear-canvas"]
+        XCTAssertTrue(clearCanvas.exists, "Clear Canvas control missing")
+        XCTAssertFalse(clearCanvas.isEnabled, "new outfit unexpectedly restored artwork")
+        XCTAssertFalse(app.buttons["outfit-save"].isEnabled,
+                       "blank new outfit should not be saveable")
         XCTAssertTrue(app.descendants(matching: .any)["outfit-category"].exists,
                       "category picker missing")
         XCTAssertTrue(app.descendants(matching: .any)["outfit-pixel-canvas"].exists,
@@ -180,6 +228,14 @@ final class SmokeTests: XCTestCase {
                       "contiguous pixel-section tool missing")
         XCTAssertTrue(app.checkBoxes["outfit-show-mannequin"].exists,
                       "mannequin guide toggle missing")
+        XCTAssertTrue(app.descendants(matching: .any)["outfit-mannequin-body"].exists,
+                      "mannequin body picker missing")
+        XCTAssertTrue(app.descendants(matching: .any)["outfit-frame-strip"].exists,
+                      "animated outfit frame strip missing")
+        XCTAssertTrue(app.descendants(matching: .any)["outfit-frame-delay"].exists,
+                      "outfit loop tempo control missing")
+        XCTAssertTrue(app.descendants(matching: .any)["outfit-mannequin-wardrobe"].exists,
+                      "compatible mannequin wardrobe controls missing")
         let copyExisting = app.buttons["copy-existing-outfit"]
         XCTAssertTrue(copyExisting.exists, "Copy Existing Outfit control missing")
         copyExisting.click()
@@ -200,8 +256,47 @@ final class SmokeTests: XCTestCase {
         let placeCopy = app.buttons["starter-apply"]
         XCTAssertTrue(placeCopy.exists, "copied outfit placement cannot be applied")
         placeCopy.click()
-        XCTAssertTrue(app.descendants(matching: .any)["outfit-pixel-canvas"]
-            .waitForExistence(timeout: 5), "placed copy did not return to the pixel editor")
+        let pixelCanvas = app.descendants(matching: .any)["outfit-pixel-canvas"]
+        XCTAssertTrue(pixelCanvas.waitForExistence(timeout: 5),
+                      "placed copy did not return to the pixel editor")
+        XCTAssertTrue(clearCanvas.isEnabled, "placed outfit did not populate the canvas")
+
+        // Doc Coat's centerline is transparent; target its painted left panel.
+        pixelCanvas.coordinate(withNormalizedOffset: CGVector(dx: 0.39, dy: 0.5))
+            .doubleClick()
+        XCTAssertTrue(app.descendants(matching: .any)["outfit-selection-count"]
+            .waitForExistence(timeout: 3),
+                      "double-click did not select a connected same-color region")
+
+        pixelCanvas.coordinate(withNormalizedOffset: CGVector(dx: 0.15, dy: 0.15)).click()
+        app.typeKey("z", modifierFlags: .command)
+        XCTAssertTrue(clearCanvas.isEnabled, "Command-Z did not undo a painted pixel")
+        app.typeKey("z", modifierFlags: .command)
+        XCTAssertFalse(clearCanvas.isEnabled, "Command-Z did not undo the copied outfit")
+        XCTAssertTrue(app.buttons["outfit-redo"].isEnabled,
+                      "undo did not create redo history")
+        app.typeKey("z", modifierFlags: [.command, .shift])
+        XCTAssertTrue(clearCanvas.isEnabled, "Shift-Command-Z did not restore the outfit")
+
+        app.buttons["outfit-section-tool"].click()
+        let selectionStart = pixelCanvas.coordinate(
+            withNormalizedOffset: CGVector(dx: 0.37, dy: 0.38)
+        )
+        let selectionEnd = pixelCanvas.coordinate(
+            withNormalizedOffset: CGVector(dx: 0.63, dy: 0.72)
+        )
+        selectionStart.press(forDuration: 0.1, thenDragTo: selectionEnd)
+        XCTAssertTrue(app.descendants(matching: .any)["outfit-selection-count"]
+            .waitForExistence(timeout: 3), "range drag did not select painted pixels")
+        app.typeKey(.rightArrow, modifierFlags: [])
+        XCTAssertTrue(app.buttons["outfit-undo"].isEnabled,
+                      "arrow key did not move the selected pixels")
+        app.typeKey("c", modifierFlags: .command)
+        XCTAssertTrue(app.buttons["outfit-paste-pixels"].isEnabled,
+                      "Command-C did not copy the selected pixel range")
+        app.typeKey("p", modifierFlags: .command)
+        XCTAssertTrue(app.descendants(matching: .any)["outfit-selection-count"].exists,
+                      "Command-P did not paste and select the copied pixel range")
 
         let shot = XCTAttachment(screenshot: app.screenshot())
         shot.name = "custom-outfit-studio"

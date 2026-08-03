@@ -67,11 +67,27 @@ private enum PixelTool: String, CaseIterable, Identifiable {
     }
 }
 
+private struct PixelDoubleClickSnapshot {
+    var pixels: [UInt32]
+    var selection: Set<Int>
+}
+
 @MainActor
 @Observable
 private final class PixelOutfitCanvas {
     private(set) var gridSize: Int
-    var pixels: [UInt32]
+    private(set) var frames: [[UInt32]]
+    var activeFrame = 0 {
+        didSet {
+            undoStack.removeAll()
+            redoStack.removeAll()
+            selectedPixels.removeAll()
+        }
+    }
+    var pixels: [UInt32] {
+        get { frames[activeFrame] }
+        set { frames[activeFrame] = newValue }
+    }
     var tool: PixelTool = .brush
     var brushSize = 1
     var paintColor: UInt32 = 0x111111ff
@@ -81,29 +97,51 @@ private final class PixelOutfitCanvas {
     private var redoStack: [[UInt32]] = []
     private var strokeStart: [UInt32]?
     private var lastPaintPoint: (x: Int, y: Int)?
+    private var selectionBeforeRange: Set<Int> = []
+    private struct PixelClipboard {
+        var entries: [(x: Int, y: Int, color: UInt32)]
+        var sourceOrigin: PixelGridPoint
+        var width: Int
+        var height: Int
+    }
+    private var selectionClipboard: PixelClipboard?
+    private var selectionDragOriginal: [UInt32]?
+    private var selectionDragSource: Set<Int> = []
+    private var selectionDragCopies = false
 
-    init(gridSize: Int = 100, pixels: [UInt32]? = nil) {
+    init(
+        gridSize: Int = 100,
+        pixels: [UInt32]? = nil,
+        frames: [[UInt32]]? = nil
+    ) {
         self.gridSize = gridSize
         let expected = gridSize * gridSize
-        self.pixels = pixels?.count == expected
-            ? pixels!
-            : [UInt32](repeating: 0, count: expected)
+        let validFrames = frames?.prefix(5).filter { $0.count == expected }
+        if let validFrames, !validFrames.isEmpty {
+            self.frames = Array(validFrames)
+        } else {
+            self.frames = [pixels?.count == expected
+                ? pixels!
+                : [UInt32](repeating: 0, count: expected)]
+        }
     }
 
     convenience init(outfit: CustomOutfitBundle?) {
-        guard let outfit,
-              let image = Self.decodePNG(outfit.pngData),
-              let pixels = Self.rgbaPixels(image: image, size: outfit.manifest.gridSize)
-        else {
+        guard let outfit else {
             self.init()
             return
         }
-        self.init(gridSize: outfit.manifest.gridSize, pixels: pixels)
+        let frames = outfit.frames.compactMap { data -> [UInt32]? in
+            guard let image = Self.decodePNG(data) else { return nil }
+            return Self.rgbaPixels(image: image, size: outfit.manifest.gridSize)
+        }
+        self.init(gridSize: outfit.manifest.gridSize, frames: frames)
     }
 
     var canUndo: Bool { !undoStack.isEmpty }
     var canRedo: Bool { !redoStack.isEmpty }
-    var isEmpty: Bool { !pixels.contains { ($0 & 0xff) > 0 } }
+    var canPasteSelection: Bool { selectionClipboard != nil }
+    var isEmpty: Bool { frames.allSatisfy { !$0.contains { ($0 & 0xff) > 0 } } }
     var hasSelection: Bool { !selectedPixels.isEmpty }
 
     func beginStroke() {
@@ -146,13 +184,7 @@ private final class PixelOutfitCanvas {
             selectedPixels.removeAll()
             tool = .brush
         case .section:
-            guard lastPaintPoint == nil else { return }
-            lastPaintPoint = (x, y)
-            selectConnectedSection(
-                x: x,
-                y: y,
-                addingToSelection: addingToSelection
-            )
+            selectPixel(atX: x, y: y, addingToSelection: addingToSelection)
         }
     }
 
@@ -181,18 +213,19 @@ private final class PixelOutfitCanvas {
     func resize(to newSize: Int) {
         guard newSize != gridSize,
               CustomOutfitManifest.supportedGridSizes.contains(newSize) else { return }
-        let old = pixels
         let oldSize = gridSize
-        var resized = [UInt32](repeating: 0, count: newSize * newSize)
-        for y in 0..<newSize {
-            for x in 0..<newSize {
-                let ox = min(oldSize - 1, x * oldSize / newSize)
-                let oy = min(oldSize - 1, y * oldSize / newSize)
-                resized[y * newSize + x] = old[oy * oldSize + ox]
+        frames = frames.map { old in
+            var resized = [UInt32](repeating: 0, count: newSize * newSize)
+            for y in 0..<newSize {
+                for x in 0..<newSize {
+                    let ox = min(oldSize - 1, x * oldSize / newSize)
+                    let oy = min(oldSize - 1, y * oldSize / newSize)
+                    resized[y * newSize + x] = old[oy * oldSize + ox]
+                }
             }
+            return resized
         }
         gridSize = newSize
-        pixels = resized
         undoStack.removeAll()
         redoStack.removeAll()
         selectedPixels.removeAll()
@@ -215,7 +248,8 @@ private final class PixelOutfitCanvas {
             undoStack.removeAll()
             redoStack.removeAll()
             gridSize = newSize
-            pixels = replacement
+            frames = [replacement]
+            activeFrame = 0
             selectedPixels.removeAll()
         }
     }
@@ -230,7 +264,8 @@ private final class PixelOutfitCanvas {
             undoStack.removeAll()
             redoStack.removeAll()
             gridSize = newSize
-            pixels = replacement
+            frames = [replacement]
+            activeFrame = 0
             selectedPixels.removeAll()
         }
     }
@@ -245,12 +280,228 @@ private final class PixelOutfitCanvas {
         }
     }
 
+    func beginRangeSelection(addingToSelection: Bool) {
+        selectionBeforeRange = addingToSelection ? selectedPixels : []
+    }
+
+    func updateRangeSelection(
+        fromX startX: Int,
+        y startY: Int,
+        toX endX: Int,
+        y endY: Int
+    ) {
+        let minX = max(0, min(startX, endX))
+        let maxX = min(gridSize - 1, max(startX, endX))
+        let minY = max(0, min(startY, endY))
+        let maxY = min(gridSize - 1, max(startY, endY))
+        guard minX <= maxX, minY <= maxY else { return }
+        var selection = selectionBeforeRange
+        for y in minY...maxY {
+            for x in minX...maxX {
+                let index = y * gridSize + x
+                if pixels[index] & 0xff > 0 { selection.insert(index) }
+            }
+        }
+        selectedPixels = selection
+    }
+
+    func finishRangeSelection() {
+        selectionBeforeRange.removeAll()
+    }
+
+    func selectConnected(atX x: Int, y: Int, addingToSelection: Bool) {
+        guard x >= 0, y >= 0, x < gridSize, y < gridSize else {
+            if !addingToSelection { selectedPixels.removeAll() }
+            return
+        }
+        selectConnectedSection(
+            x: x,
+            y: y,
+            addingToSelection: addingToSelection
+        )
+    }
+
+    func selectPixel(atX x: Int, y: Int, addingToSelection: Bool) {
+        guard x >= 0, y >= 0, x < gridSize, y < gridSize else {
+            if !addingToSelection { selectedPixels.removeAll() }
+            return
+        }
+        let index = y * gridSize + x
+        guard pixels[index] & 0xff > 0 else {
+            if !addingToSelection { selectedPixels.removeAll() }
+            return
+        }
+        if addingToSelection {
+            selectedPixels.insert(index)
+        } else {
+            selectedPixels = [index]
+        }
+    }
+
+    func selectionContains(x: Int, y: Int) -> Bool {
+        guard x >= 0, y >= 0, x < gridSize, y < gridSize else { return false }
+        return selectedPixels.contains(y * gridSize + x)
+    }
+
+    @discardableResult
+    func copySelection() -> Bool {
+        guard !selectedPixels.isEmpty else { return false }
+        let xs = selectedPixels.map { $0 % gridSize }
+        let ys = selectedPixels.map { $0 / gridSize }
+        guard let minX = xs.min(), let maxX = xs.max(),
+              let minY = ys.min(), let maxY = ys.max() else { return false }
+        selectionClipboard = PixelClipboard(
+            entries: selectedPixels.sorted().map { index in
+                (index % gridSize - minX, index / gridSize - minY, pixels[index])
+            },
+            sourceOrigin: PixelGridPoint(x: minX, y: minY),
+            width: maxX - minX + 1,
+            height: maxY - minY + 1
+        )
+        return true
+    }
+
+    @discardableResult
+    func pasteSelection() -> Bool {
+        guard let clipboard = selectionClipboard else { return false }
+        var origin = PixelGridPoint(
+            x: clipboard.sourceOrigin.x + 1,
+            y: clipboard.sourceOrigin.y + 1
+        )
+        if origin.x + clipboard.width > gridSize {
+            origin = PixelGridPoint(x: clipboard.sourceOrigin.x, y: origin.y)
+        }
+        if origin.y + clipboard.height > gridSize {
+            origin = PixelGridPoint(x: origin.x, y: clipboard.sourceOrigin.y)
+        }
+        let before = pixels
+        var pasted: Set<Int> = []
+        for entry in clipboard.entries {
+            let x = origin.x + entry.x
+            let y = origin.y + entry.y
+            guard x >= 0, y >= 0, x < gridSize, y < gridSize else { continue }
+            let index = y * gridSize + x
+            pixels[index] = entry.color
+            pasted.insert(index)
+        }
+        guard pixels != before else {
+            selectedPixels = pasted
+            return !pasted.isEmpty
+        }
+        pushUndo(before)
+        selectedPixels = pasted
+        return !pasted.isEmpty
+    }
+
+    func beginSelectionDrag(copying: Bool) {
+        guard !selectedPixels.isEmpty, selectionDragOriginal == nil else { return }
+        selectionDragOriginal = pixels
+        selectionDragSource = selectedPixels
+        selectionDragCopies = copying
+    }
+
+    func updateSelectionDrag(dx proposedDX: Int, dy proposedDY: Int) {
+        guard let original = selectionDragOriginal, !selectionDragSource.isEmpty else { return }
+        let xs = selectionDragSource.map { $0 % gridSize }
+        let ys = selectionDragSource.map { $0 / gridSize }
+        guard let minX = xs.min(), let maxX = xs.max(),
+              let minY = ys.min(), let maxY = ys.max() else { return }
+        let dx = min(gridSize - 1 - maxX, max(-minX, proposedDX))
+        let dy = min(gridSize - 1 - maxY, max(-minY, proposedDY))
+        let sourceValues = selectionDragSource.map { ($0, original[$0]) }
+        var next = original
+        if !selectionDragCopies {
+            for (source, _) in sourceValues { next[source] = 0 }
+        }
+        var destination: Set<Int> = []
+        for (source, color) in sourceValues {
+            let x = source % gridSize + dx
+            let y = source / gridSize + dy
+            let index = y * gridSize + x
+            next[index] = color
+            destination.insert(index)
+        }
+        pixels = next
+        selectedPixels = destination
+    }
+
+    func finishSelectionDrag() {
+        guard let original = selectionDragOriginal else { return }
+        if pixels != original { pushUndo(original) }
+        selectionDragOriginal = nil
+        selectionDragSource.removeAll()
+        selectionDragCopies = false
+    }
+
+    /// A macOS double-click begins as an ordinary first click. Restore the
+    /// pixels from before that first click and discard only that provisional
+    /// stroke before selecting, so selection never changes the artwork.
+    func selectConnectedAfterDoubleClick(
+        atX x: Int,
+        y: Int,
+        restoring snapshot: PixelDoubleClickSnapshot,
+        addingToSelection: Bool
+    ) {
+        if snapshot.pixels.count == pixels.count, pixels != snapshot.pixels {
+            if undoStack.last == snapshot.pixels { undoStack.removeLast() }
+            pixels = snapshot.pixels
+            redoStack.removeAll()
+        }
+        if addingToSelection { selectedPixels = snapshot.selection }
+        strokeStart = nil
+        lastPaintPoint = nil
+        selectConnected(atX: x, y: y, addingToSelection: addingToSelection)
+    }
+
+    func moveSelection(dx: Int, dy: Int) {
+        guard !selectedPixels.isEmpty, dx != 0 || dy != 0 else { return }
+        let moves = selectedPixels.map { source -> (source: Int, destination: Int)? in
+            let x = source % gridSize + dx
+            let y = source / gridSize + dy
+            guard x >= 0, y >= 0, x < gridSize, y < gridSize else { return nil }
+            return (source, y * gridSize + x)
+        }
+        guard moves.allSatisfy({ $0 != nil }) else { return }
+        let resolved = moves.compactMap { $0 }
+        let before = pixels
+        for move in resolved { pixels[move.source] = 0 }
+        for move in resolved { pixels[move.destination] = before[move.source] }
+        pushUndo(before)
+        selectedPixels = Set(resolved.map(\.destination))
+    }
+
     func clearSelection() {
         selectedPixels.removeAll()
     }
 
     func image() -> CGImage? {
         Self.image(pixels: pixels, size: gridSize)
+    }
+
+    func image(frame index: Int) -> CGImage? {
+        guard frames.indices.contains(index) else { return nil }
+        return Self.image(pixels: frames[index], size: gridSize)
+    }
+
+    func addBlankFrame() {
+        guard frames.count < 5 else { return }
+        frames.append([UInt32](repeating: 0, count: gridSize * gridSize))
+        activeFrame = frames.count - 1
+    }
+
+    func duplicateFrame() {
+        guard frames.count < 5 else { return }
+        frames.insert(pixels, at: activeFrame + 1)
+        activeFrame += 1
+    }
+
+    func deleteFrame() {
+        guard frames.count > 1 else { return }
+        frames.remove(at: activeFrame)
+        activeFrame = min(activeFrame, frames.count - 1)
+        undoStack.removeAll()
+        redoStack.removeAll()
+        selectedPixels.removeAll()
     }
 
     func pngData() -> Data? {
@@ -265,6 +516,24 @@ private final class PixelOutfitCanvas {
         CGImageDestinationAddImage(destination, image, nil)
         guard CGImageDestinationFinalize(destination) else { return nil }
         return data as Data
+    }
+
+    func allPNGData() -> [Data]? {
+        var result: [Data] = []
+        for index in frames.indices {
+            guard let image = image(frame: index) else { return nil }
+            let data = NSMutableData()
+            guard let destination = CGImageDestinationCreateWithData(
+                data,
+                UTType.png.identifier as CFString,
+                1,
+                nil
+            ) else { return nil }
+            CGImageDestinationAddImage(destination, image, nil)
+            guard CGImageDestinationFinalize(destination) else { return nil }
+            result.append(data as Data)
+        }
+        return result
     }
 
     private func paintLine(toX x: Int, y: Int, color: UInt32) {
@@ -342,6 +611,12 @@ private final class PixelOutfitCanvas {
         }
     }
 
+    private func pushUndo(_ snapshot: [UInt32]) {
+        undoStack.append(snapshot)
+        if undoStack.count > 50 { undoStack.removeFirst() }
+        redoStack.removeAll()
+    }
+
     static func image(pixels: [UInt32], size: Int) -> CGImage? {
         guard pixels.count == size * size else { return nil }
         var bytes = [UInt8](repeating: 0, count: pixels.count * 4)
@@ -392,35 +667,6 @@ private final class PixelOutfitCanvas {
     }
 }
 
-private enum OutfitDraftStore {
-    static var url: URL {
-        CustomOutfitStorage.directory
-            .deletingLastPathComponent()
-            .appendingPathComponent("outfit-draft.bannyoutfit")
-    }
-
-    static func load() -> CustomOutfitBundle? {
-        guard let data = try? Data(contentsOf: url),
-              let bundle = try? JSONDecoder().decode(CustomOutfitBundle.self, from: data),
-              let valid = try? bundle.validated()
-        else { return nil }
-        return valid
-    }
-
-    static func save(_ bundle: CustomOutfitBundle) {
-        guard let data = try? JSONEncoder().encode(bundle) else { return }
-        try? FileManager.default.createDirectory(
-            at: url.deletingLastPathComponent(),
-            withIntermediateDirectories: true
-        )
-        try? data.write(to: url, options: [.atomic])
-    }
-
-    static func clear() {
-        try? FileManager.default.removeItem(at: url)
-    }
-}
-
 struct OutfitStudio: View {
     let bodyStyle: Body
     private let original: CustomOutfitBundle?
@@ -435,11 +681,15 @@ struct OutfitStudio: View {
     @State private var starterImage: CGImage?
     @State private var choosingSourceOutfit = false
     @State private var showMannequin = true
+    @State private var mannequinBodyStyle: Body
+    @State private var mannequinOutfits: [OutfitCategory: String] = [:]
+    @State private var frameDelay: Double
+    @State private var previewPlaying = true
     @State private var canvasZoom: CGFloat = 1
     @State private var canvasZoomGestureStart: CGFloat?
     @State private var pendingGridSize: Int?
     @State private var errorMessage: String?
-    @State private var draftTask: Task<Void, Never>?
+    @FocusState private var canvasHasKeyboardFocus: Bool
 
     init(
         bodyStyle: Body,
@@ -447,12 +697,14 @@ struct OutfitStudio: View {
         onSave: @escaping (CustomOutfitBundle) -> Void
     ) {
         self.bodyStyle = bodyStyle
-        let source = editing ?? OutfitDraftStore.load()
+        let source = editing
         self.original = editing
         self.onSave = onSave
         _canvas = State(initialValue: PixelOutfitCanvas(outfit: source))
-        _name = State(initialValue: source?.manifest.name ?? "My Outfit")
+        _name = State(initialValue: source?.manifest.name ?? "")
         _category = State(initialValue: source?.manifest.category ?? .suitTop)
+        _mannequinBodyStyle = State(initialValue: bodyStyle)
+        _frameDelay = State(initialValue: source?.frameDelay ?? 0.2)
         _createdAt = State(initialValue: source?.manifest.createdAt ?? Date())
         _id = State(initialValue: source?.manifest.id ?? UUID().uuidString.lowercased())
     }
@@ -496,9 +748,6 @@ struct OutfitStudio: View {
             }
         }
         .frame(minWidth: editorMinimumWidth, minHeight: editorMinimumHeight)
-        .onChange(of: canvas.pixels) { _, _ in scheduleDraftSave() }
-        .onChange(of: name) { _, _ in scheduleDraftSave() }
-        .onChange(of: category) { _, _ in scheduleDraftSave() }
         .confirmationDialog(
             "Change pixel grid?",
             isPresented: Binding(
@@ -511,7 +760,6 @@ struct OutfitStudio: View {
                 Button("Resample to \(pendingGridSize)×\(pendingGridSize)") {
                     canvas.resize(to: pendingGridSize)
                     self.pendingGridSize = nil
-                    scheduleDraftSave()
                 }
             }
             Button("Cancel", role: .cancel) { pendingGridSize = nil }
@@ -522,7 +770,7 @@ struct OutfitStudio: View {
             isPresented: $choosingSourceOutfit
         ) {
             OutfitCopyPicker(
-                bodyStyle: bodyStyle,
+                bodyStyle: mannequinBodyStyle,
                 initialCategory: category,
                 restrictedCategory: original?.manifest.category
             ) { source, pixels in
@@ -540,8 +788,9 @@ struct OutfitStudio: View {
                 OutfitImageStarter(
                     image: starterImage,
                     gridSize: canvas.gridSize,
-                    bodyStyle: bodyStyle,
-                    category: category
+                    bodyStyle: mannequinBodyStyle,
+                    category: category,
+                    mannequinOutfits: mannequinOutfits
                 ) { pixels in
                     canvas.replacePixels(pixels)
                     self.starterImage = nil
@@ -559,6 +808,21 @@ struct OutfitStudio: View {
         } message: {
             Text(errorMessage ?? "")
         }
+        .onChange(of: category) { _, newCategory in
+            mannequinOutfits = mannequinOutfits.filter {
+                !outfitCategoriesConflict($0.key, newCategory)
+            }
+        }
+        #if os(macOS)
+        .background(
+            OutfitEditorShortcutCapture(
+                undo: { canvas.undo() },
+                redo: { canvas.redo() },
+                copy: { canvas.copySelection() },
+                paste: { canvas.pasteSelection() }
+            )
+        )
+        #endif
     }
 
     private var controls: some View {
@@ -633,6 +897,42 @@ struct OutfitStudio: View {
                     Toggle("Show mannequin guide", isOn: $showMannequin)
                         .font(.caption)
                         .accessibilityIdentifier("outfit-show-mannequin")
+                    Picker("Mannequin body", selection: $mannequinBodyStyle) {
+                        ForEach(BannyCore.Body.allCases, id: \.self) { body in
+                            Text(body.rawValue.capitalized).tag(body)
+                        }
+                    }
+                    .pickerStyle(.menu)
+                    .accessibilityIdentifier("outfit-mannequin-body")
+
+                    if !previewWardrobeCategories.isEmpty {
+                        DisclosureGroup("Other mannequin outfits") {
+                            VStack(alignment: .leading, spacing: 7) {
+                                Text("Add compatible layers to check how this outfit works with a complete look. Contract-conflicting categories are unavailable.")
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                                    .fixedSize(horizontal: false, vertical: true)
+                                ForEach(previewWardrobeCategories) { previewCategory in
+                                    Picker(
+                                        previewCategory.displayName,
+                                        selection: mannequinOutfitBinding(for: previewCategory)
+                                    ) {
+                                        Text("None").tag("")
+                                        ForEach(
+                                            previewOutfitChoices(for: previewCategory),
+                                            id: \.name
+                                        ) { choice in
+                                            Text(choice.label).tag(choice.name)
+                                        }
+                                    }
+                                    .pickerStyle(.menu)
+                                }
+                            }
+                            .padding(.top, 6)
+                        }
+                        .font(.caption)
+                        .accessibilityIdentifier("outfit-mannequin-wardrobe")
+                    }
                 }
 
                 VStack(alignment: .leading, spacing: 8) {
@@ -660,10 +960,11 @@ struct OutfitStudio: View {
                     if canvas.hasSelection {
                         VStack(alignment: .leading, spacing: 6) {
                             Label(
-                                "\(canvas.selectedPixels.count) matching pixels selected",
+                                "\(canvas.selectedPixels.count) pixels selected",
                                 systemImage: "square.dashed"
                             )
                             .font(.caption.bold())
+                            .accessibilityIdentifier("outfit-selection-count")
                             Button {
                                 canvas.recolorSelection()
                             } label: {
@@ -673,11 +974,27 @@ struct OutfitStudio: View {
                             .buttonStyle(.borderedProminent)
                             .tint(.orange)
                             .accessibilityIdentifier("outfit-recolor-section")
+                            HStack {
+                                Button {
+                                    canvas.copySelection()
+                                } label: {
+                                    Label("Copy", systemImage: "doc.on.doc")
+                                }
+                                .accessibilityIdentifier("outfit-copy-pixels")
+                                Button {
+                                    canvas.pasteSelection()
+                                } label: {
+                                    Label("Paste", systemImage: "doc.on.clipboard")
+                                }
+                                .disabled(!canvas.canPasteSelection)
+                                .accessibilityIdentifier("outfit-paste-pixels")
+                            }
+                            .buttonStyle(.bordered)
                             Button("Clear Selection") {
                                 canvas.clearSelection()
                             }
                             .font(.caption)
-                            Text("Shift-click another colored section to add it. Click transparent space to deselect all.")
+                            Text("Shift-click or Shift-drag adds pixels. Drag selected pixels to move; Command-drag copies. Use ⌘C and ⌘P (or ⌘V) to copy and paste.")
                                 .font(.caption2)
                                 .foregroundStyle(.secondary)
                         }
@@ -685,10 +1002,13 @@ struct OutfitStudio: View {
                         .background(Color.orange.opacity(0.1),
                                     in: RoundedRectangle(cornerRadius: 7))
                     } else if canvas.tool == .section {
-                        Text("Click a colored pixel to select its connected section. Shift-click to add more.")
+                        Text("Click a pixel or drag across a range. Shift adds to the selection; double-click selects a connected same-color region.")
                             .font(.caption2)
                             .foregroundStyle(.secondary)
                     }
+                    Text("Double-click any painted pixel to select its whole connected same-color region.")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
                 }
 
                 HStack {
@@ -696,10 +1016,14 @@ struct OutfitStudio: View {
                         Label("Undo", systemImage: "arrow.uturn.backward")
                     }
                     .disabled(!canvas.canUndo)
+                    .keyboardShortcut("z", modifiers: .command)
+                    .accessibilityIdentifier("outfit-undo")
                     Button { canvas.redo() } label: {
                         Label("Redo", systemImage: "arrow.uturn.forward")
                     }
                     .disabled(!canvas.canRedo)
+                    .keyboardShortcut("z", modifiers: [.command, .shift])
+                    .accessibilityIdentifier("outfit-redo")
                 }
                 .labelStyle(.iconOnly)
 
@@ -721,6 +1045,7 @@ struct OutfitStudio: View {
                     Label("Clear Canvas", systemImage: "trash")
                 }
                 .disabled(canvas.isEmpty)
+                .accessibilityIdentifier("outfit-clear-canvas")
             }
             .padding(16)
         }
@@ -792,14 +1117,41 @@ struct OutfitStudio: View {
                 ScrollView([.horizontal, .vertical]) {
                     PixelDesignSurface(
                         canvas: canvas,
-                        bodyStyle: bodyStyle,
-                        showMannequin: showMannequin
+                        bodyStyle: mannequinBodyStyle,
+                        category: category,
+                        mannequinOutfits: mannequinOutfits,
+                        showMannequin: showMannequin,
+                        onInteraction: { canvasHasKeyboardFocus = true }
                     )
+                    .focusable()
+                    .focused($canvasHasKeyboardFocus)
+                    .onKeyPress(.leftArrow) {
+                        guard canvas.hasSelection else { return .ignored }
+                        canvas.moveSelection(dx: -1, dy: 0)
+                        return .handled
+                    }
+                    .onKeyPress(.rightArrow) {
+                        guard canvas.hasSelection else { return .ignored }
+                        canvas.moveSelection(dx: 1, dy: 0)
+                        return .handled
+                    }
+                    .onKeyPress(.upArrow) {
+                        guard canvas.hasSelection else { return .ignored }
+                        canvas.moveSelection(dx: 0, dy: -1)
+                        return .handled
+                    }
+                    .onKeyPress(.downArrow) {
+                        guard canvas.hasSelection else { return .ignored }
+                        canvas.moveSelection(dx: 0, dy: 1)
+                        return .handled
+                    }
                     .frame(
                         width: fittedSide * canvasZoom,
                         height: fittedSide * canvasZoom
                     )
                     .padding(16)
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel("Outfit pixel canvas")
                     .accessibilityIdentifier("outfit-pixel-canvas")
                 }
                 .defaultScrollAnchor(.center)
@@ -824,6 +1176,10 @@ struct OutfitStudio: View {
                         }
                 )
                 .help("Pinch to zoom. Scroll to move around the enlarged canvas.")
+                Divider()
+                outfitFrameStrip
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -834,13 +1190,42 @@ struct OutfitStudio: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 12) {
                 Text("LIVE PREVIEW").font(.caption.bold()).foregroundStyle(.secondary)
-                OutfitMannequinPreview(
-                    part: canvas.image(),
-                    bodyStyle: bodyStyle,
-                    category: category
-                )
+                TimelineView(.animation(
+                    minimumInterval: 1.0 / 30.0,
+                    paused: !previewPlaying
+                )) { timeline in
+                    let index = previewPlaying
+                        ? Int(timeline.date.timeIntervalSinceReferenceDate / frameDelay)
+                            % canvas.frames.count
+                        : canvas.activeFrame
+                    OutfitMannequinPreview(
+                        part: canvas.image(frame: index),
+                        bodyStyle: mannequinBodyStyle,
+                        category: category,
+                        mannequinOutfits: mannequinOutfits
+                    )
+                }
                 .aspectRatio(1, contentMode: .fit)
                 .clipShape(RoundedRectangle(cornerRadius: 8))
+                Button {
+                    previewPlaying.toggle()
+                } label: {
+                    Label(
+                        previewPlaying ? "Pause animation" : "Play animation",
+                        systemImage: previewPlaying ? "pause.fill" : "play.fill"
+                    )
+                    .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+                LabeledContent("Frame time") {
+                    Text("\(frameDelay, format: .number.precision(.fractionLength(2))) s")
+                        .monospacedDigit()
+                }
+                Slider(value: $frameDelay, in: 0.04...2, step: 0.01)
+                    .accessibilityIdentifier("outfit-frame-delay")
+                Text("\(canvas.frames.count) of 5 frames • loops while worn")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
                 Text("The preview uses the app’s actual wardrobe layer order. Transparent pixels reveal the Banny underneath.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -864,18 +1249,115 @@ struct OutfitStudio: View {
         )
     }
 
+    private var outfitFrameStrip: some View {
+        HStack(spacing: 7) {
+            ForEach(Array(canvas.frames.indices), id: \.self) { index in
+                Button {
+                    canvas.activeFrame = index
+                    previewPlaying = false
+                } label: {
+                    VStack(spacing: 2) {
+                        if let image = canvas.image(frame: index) {
+                            Image(decorative: image, scale: 1)
+                                .resizable()
+                                .interpolation(.none)
+                                .aspectRatio(1, contentMode: .fit)
+                        }
+                        Text("\(index + 1)").font(.caption2.bold())
+                    }
+                    .frame(width: 54, height: 54)
+                    .padding(3)
+                    .background(
+                        canvas.activeFrame == index
+                            ? Color.orange.opacity(0.18)
+                            : Color.primary.opacity(0.05),
+                        in: RoundedRectangle(cornerRadius: 6)
+                    )
+                    .overlay(RoundedRectangle(cornerRadius: 6).stroke(
+                        canvas.activeFrame == index ? Color.orange : Color.clear,
+                        lineWidth: 2
+                    ))
+                }
+                .buttonStyle(.plain)
+            }
+            Spacer(minLength: 4)
+            Button { canvas.addBlankFrame() } label: {
+                Label("Blank frame", systemImage: "plus")
+            }
+            .disabled(canvas.frames.count >= 5)
+            Button { canvas.duplicateFrame() } label: {
+                Label("Duplicate frame", systemImage: "square.on.square")
+            }
+            .disabled(canvas.frames.count >= 5)
+            Button(role: .destructive) { canvas.deleteFrame() } label: {
+                Image(systemName: "trash")
+            }
+            .disabled(canvas.frames.count <= 1)
+        }
+        .labelStyle(.iconOnly)
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("outfit-frame-strip")
+    }
+
+    private var previewWardrobeCategories: [OutfitCategory] {
+        OutfitCategory.allCases.filter { candidate in
+            candidate != category
+                && !outfitCategoriesConflict(candidate, category)
+                && !previewOutfitChoices(for: candidate).isEmpty
+        }
+    }
+
+    private func previewOutfitChoices(
+        for previewCategory: OutfitCategory
+    ) -> [(name: String, label: String)] {
+        let catalog = SharedAssets.catalog
+        var choices = catalog.outfits(inSlot: previewCategory.rawValue)
+        let names: [String]
+        switch previewCategory {
+        case .eyes: names = catalog.summary().eyes.filter { $0 != "default" }
+        case .mouth: names = catalog.summary().mouths.filter { $0 != "default" }
+        default: names = []
+        }
+        choices += names.map {
+            ($0, $0.replacingOccurrences(of: "-", with: " ").capitalized)
+        }
+        return choices.sorted {
+            $0.label.localizedCaseInsensitiveCompare($1.label) == .orderedAscending
+        }
+    }
+
+    private func mannequinOutfitBinding(
+        for previewCategory: OutfitCategory
+    ) -> Binding<String> {
+        Binding(
+            get: { mannequinOutfits[previewCategory] ?? "" },
+            set: { name in
+                if name.isEmpty {
+                    mannequinOutfits.removeValue(forKey: previewCategory)
+                } else {
+                    mannequinOutfits = mannequinOutfits.filter {
+                        !outfitCategoriesConflict($0.key, previewCategory)
+                    }
+                    mannequinOutfits[previewCategory] = name
+                }
+            }
+        )
+    }
+
     private func makeBundle() -> CustomOutfitBundle? {
-        guard let pngData = canvas.pngData() else { return nil }
+        guard let frames = canvas.allPNGData(), let pngData = frames.first else { return nil }
         return CustomOutfitBundle(
             manifest: CustomOutfitManifest(
                 id: id,
                 name: name,
                 category: category,
                 gridSize: canvas.gridSize,
+                frameDelay: frameDelay,
                 createdAt: createdAt,
                 modifiedAt: Date()
             ),
-            pngData: pngData
+            pngData: pngData,
+            framePNGData: frames.count > 1 ? frames : nil
         )
     }
 
@@ -886,7 +1368,6 @@ struct OutfitStudio: View {
         }
         do {
             let saved = try CustomOutfitLibrary.shared.save(proposed)
-            OutfitDraftStore.clear()
             onSave(saved)
             dismiss()
         } catch {
@@ -903,16 +1384,6 @@ struct OutfitStudio: View {
         let cleanName = name.trimmingCharacters(in: .whitespacesAndNewlines)
         if cleanName.isEmpty || cleanName == "My Outfit" {
             name = "\(source.label) Remix"
-        }
-        scheduleDraftSave()
-    }
-
-    private func scheduleDraftSave() {
-        draftTask?.cancel()
-        draftTask = Task {
-            try? await Task.sleep(for: .milliseconds(500))
-            guard !Task.isCancelled, let bundle = makeBundle() else { return }
-            OutfitDraftStore.save(bundle)
         }
     }
 }
@@ -985,10 +1456,7 @@ private struct OutfitCopyPicker: View {
                                 choose(choice)
                             } label: {
                                 VStack(spacing: 7) {
-                                    if let image = SharedAssets.catalog.outfitThumbnail(
-                                        choice.name,
-                                        body: bodyStyle
-                                    ) {
+                                    if let image = choiceThumbnail(choice) {
                                         Image(decorative: image, scale: 1)
                                             .resizable()
                                             .interpolation(.none)
@@ -1046,15 +1514,43 @@ private struct OutfitCopyPicker: View {
     }
 
     private var choices: [Choice] {
-        SharedAssets.catalog.outfits(inSlot: category.rawValue)
+        let catalog = SharedAssets.catalog
+        let staticChoices = catalog.outfits(inSlot: category.rawValue)
             .map { Choice(name: $0.name, label: $0.label) }
+        let animatedNames: [String]
+        switch category {
+        case .eyes: animatedNames = catalog.summary().eyes
+        case .mouth: animatedNames = catalog.summary().mouths
+        default: animatedNames = []
+        }
+        let animatedChoices = animatedNames.map {
+            Choice(name: $0, label: $0.replacingOccurrences(of: "-", with: " ").capitalized)
+        }
+        return (animatedChoices + staticChoices).sorted {
+            $0.label.localizedCaseInsensitiveCompare($1.label) == .orderedAscending
+        }
     }
 
     private func choose(_ choice: Choice) {
-        guard let image = SharedAssets.catalog.outfitImage(
-            choice.name,
-            body: bodyStyle
-        ) else { return }
+        let catalog = SharedAssets.catalog
+        let image: CGImage?
+        switch category {
+        case .eyes:
+            image = catalog.eyesImage(
+                option: choice.name,
+                expression: .open,
+                body: bodyStyle
+            )
+        case .mouth:
+            image = catalog.mouthImage(
+                option: choice.name,
+                state: .closed,
+                body: bodyStyle
+            )
+        default:
+            image = catalog.outfitImage(choice.name, body: bodyStyle)
+        }
+        guard let image else { return }
         let gridSize = CustomOutfitLibrary.shared
             .bundle(named: choice.name)?
             .manifest.gridSize ?? 100
@@ -1064,6 +1560,26 @@ private struct OutfitCopyPicker: View {
             image: image,
             preferredGridSize: gridSize
         )
+    }
+
+    private func choiceThumbnail(_ choice: Choice) -> CGImage? {
+        let catalog = SharedAssets.catalog
+        switch category {
+        case .eyes:
+            return catalog.eyesThumbnail(
+                option: choice.name,
+                expression: .open,
+                body: bodyStyle
+            )
+        case .mouth:
+            return catalog.mouthThumbnail(
+                option: choice.name,
+                state: .closed,
+                body: bodyStyle
+            )
+        default:
+            return catalog.outfitThumbnail(choice.name, body: bodyStyle)
+        }
     }
 
     private var pickerMinimumWidth: CGFloat {
@@ -1083,10 +1599,182 @@ private struct OutfitCopyPicker: View {
     }
 }
 
+#if os(macOS)
+/// A sheet-local command handler keeps undo/redo working while the focusable
+/// pixel canvas owns first responder. Text fields retain their native undo
+/// stack while they are actively being edited.
+private struct OutfitEditorShortcutCapture: NSViewRepresentable {
+    let undo: () -> Void
+    let redo: () -> Void
+    let copy: () -> Bool
+    let paste: () -> Bool
+
+    func makeCoordinator() -> Coordinator { Coordinator() }
+
+    func makeNSView(context: Context) -> NSView {
+        let view = NSView(frame: .zero)
+        context.coordinator.update(undo: undo, redo: redo, copy: copy, paste: paste)
+        context.coordinator.install(on: view)
+        return view
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {
+        context.coordinator.update(undo: undo, redo: redo, copy: copy, paste: paste)
+    }
+
+    @MainActor
+    final class Coordinator {
+        private weak var view: NSView?
+        private var monitor: Any?
+        private var undoAction: () -> Void = {}
+        private var redoAction: () -> Void = {}
+        private var copyAction: () -> Bool = { false }
+        private var pasteAction: () -> Bool = { false }
+
+        func update(
+            undo: @escaping () -> Void,
+            redo: @escaping () -> Void,
+            copy: @escaping () -> Bool,
+            paste: @escaping () -> Bool
+        ) {
+            undoAction = undo
+            redoAction = redo
+            copyAction = copy
+            pasteAction = paste
+        }
+
+        func install(on view: NSView) {
+            self.view = view
+            guard monitor == nil else { return }
+            monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+                let hasCommand = event.modifierFlags.contains(.command)
+                let keyCode = event.keyCode
+                let isRedo = event.modifierFlags.contains(.shift)
+                guard hasCommand, [6, 8, 9, 35].contains(keyCode) else { return event }
+                let handled = MainActor.assumeIsolated { () -> Bool in
+                    guard let self, self.view?.window === NSApp.keyWindow else { return false }
+                    if let text = NSApp.keyWindow?.firstResponder as? NSText,
+                       text.superview != nil, !text.isHidden {
+                        return false
+                    }
+                    switch keyCode {
+                    case 6:
+                        if isRedo { self.redoAction() } else { self.undoAction() }
+                        return true
+                    case 8:
+                        return self.copyAction()
+                    case 9, 35:
+                        return self.pasteAction()
+                    default:
+                        return false
+                    }
+                }
+                return handled ? nil : event
+            }
+        }
+
+        deinit {
+            if let monitor { NSEvent.removeMonitor(monitor) }
+        }
+    }
+}
+
+/// Watches native click counts without taking hit-testing away from SwiftUI's
+/// painting drag gesture. The first click is allowed through; on click two the
+/// editor restores the pre-click pixels, selects the region, and consumes only
+/// that second mouse-down.
+private struct OutfitCanvasMouseCapture: NSViewRepresentable {
+    let snapshot: () -> PixelDoubleClickSnapshot
+    let doubleClick: (PixelDoubleClickSnapshot, CGPoint) -> Void
+
+    func makeCoordinator() -> Coordinator { Coordinator() }
+
+    func makeNSView(context: Context) -> NSView {
+        let view = NSView(frame: .zero)
+        view.setAccessibilityElement(false)
+        context.coordinator.update(snapshot: snapshot, doubleClick: doubleClick)
+        context.coordinator.install(on: view)
+        return view
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {
+        context.coordinator.update(snapshot: snapshot, doubleClick: doubleClick)
+    }
+
+    @MainActor
+    final class Coordinator {
+        private weak var view: NSView?
+        private var monitor: Any?
+        private var baseline: PixelDoubleClickSnapshot?
+        private var snapshotAction: () -> PixelDoubleClickSnapshot = {
+            PixelDoubleClickSnapshot(pixels: [], selection: [])
+        }
+        private var doubleClickAction: (PixelDoubleClickSnapshot, CGPoint) -> Void = { _, _ in }
+
+        func update(
+            snapshot: @escaping () -> PixelDoubleClickSnapshot,
+            doubleClick: @escaping (PixelDoubleClickSnapshot, CGPoint) -> Void
+        ) {
+            snapshotAction = snapshot
+            doubleClickAction = doubleClick
+        }
+
+        func install(on view: NSView) {
+            self.view = view
+            guard monitor == nil else { return }
+            monitor = NSEvent.addLocalMonitorForEvents(matching: .leftMouseDown) {
+                [weak self] event in
+                let clickCount = event.clickCount
+                let locationInWindow = event.locationInWindow
+                let eventWindowNumber = event.windowNumber
+                let handled = MainActor.assumeIsolated { () -> Bool in
+                    guard let self, let view = self.view,
+                          view.window?.windowNumber == eventWindowNumber,
+                          view.bounds.width > 0, view.bounds.height > 0 else { return false }
+                    let point = view.convert(locationInWindow, from: nil)
+                    guard view.bounds.contains(point) else {
+                        self.baseline = nil
+                        return false
+                    }
+                    if clickCount == 1 {
+                        self.baseline = self.snapshotAction()
+                        return false
+                    }
+                    guard clickCount == 2 else { return false }
+                    let topLeftPoint = CGPoint(
+                        x: point.x,
+                        y: view.bounds.height - point.y
+                    )
+                    self.doubleClickAction(
+                        self.baseline ?? self.snapshotAction(),
+                        topLeftPoint
+                    )
+                    self.baseline = nil
+                    return true
+                }
+                return handled ? nil : event
+            }
+        }
+
+        deinit {
+            if let monitor { NSEvent.removeMonitor(monitor) }
+        }
+    }
+}
+#endif
+
 private struct PixelDesignSurface: View {
     @Bindable var canvas: PixelOutfitCanvas
     let bodyStyle: Body
+    let category: OutfitCategory
+    let mannequinOutfits: [OutfitCategory: String]
     let showMannequin: Bool
+    let onInteraction: () -> Void
+
+    @State private var sectionDragStart: PixelGridPoint?
+    @State private var sectionDragMoved = false
+    @State private var sectionDragIsAdditive = false
+    @State private var selectionMoveStart: PixelGridPoint?
 
     var body: some View {
         GeometryReader { geometry in
@@ -1102,7 +1790,14 @@ private struct PixelDesignSurface: View {
                     if showMannequin {
                         var ghost = context
                         ghost.opacity = 0.28
-                        drawBasicMannequin(in: &ghost, box: box, bodyStyle: bodyStyle)
+                        drawOutfitMannequin(
+                            in: &ghost,
+                            box: box,
+                            bodyStyle: bodyStyle,
+                            activeCategory: category,
+                            activePart: nil,
+                            mannequinOutfits: mannequinOutfits
+                        )
                     }
                     if let image = canvas.image() {
                         context.draw(
@@ -1150,6 +1845,34 @@ private struct PixelDesignSurface: View {
                 }
             }
             .frame(width: side, height: side)
+            #if os(macOS)
+            .background(
+                OutfitCanvasMouseCapture(
+                    snapshot: {
+                        PixelDoubleClickSnapshot(
+                            pixels: canvas.pixels,
+                            selection: canvas.selectedPixels
+                        )
+                    },
+                    doubleClick: { snapshot, point in
+                        onInteraction()
+                        canvas.selectConnectedAfterDoubleClick(
+                            atX: min(
+                                canvas.gridSize - 1,
+                                max(0, Int(point.x / side * CGFloat(canvas.gridSize)))
+                            ),
+                            y: min(
+                                canvas.gridSize - 1,
+                                max(0, Int(point.y / side * CGFloat(canvas.gridSize)))
+                            ),
+                            restoring: snapshot,
+                            addingToSelection: sectionSelectionIsAdditive
+                        )
+                    }
+                )
+                .accessibilityHidden(true)
+            )
+            #endif
             .position(x: origin.x + side / 2, y: origin.y + side / 2)
             .overlay {
                 RoundedRectangle(cornerRadius: 3)
@@ -1161,10 +1884,60 @@ private struct PixelDesignSurface: View {
             .gesture(
                 DragGesture(minimumDistance: 0)
                     .onChanged { value in
+                        onInteraction()
+                        let localX = value.location.x
+                        let localY = value.location.y
+                        let point = PixelGridPoint(
+                            x: min(
+                                canvas.gridSize - 1,
+                                max(0, Int(localX / side * CGFloat(canvas.gridSize)))
+                            ),
+                            y: min(
+                                canvas.gridSize - 1,
+                                max(0, Int(localY / side * CGFloat(canvas.gridSize)))
+                            )
+                        )
+                        if let start = selectionMoveStart {
+                            canvas.updateSelectionDrag(
+                                dx: point.x - start.x,
+                                dy: point.y - start.y
+                            )
+                            return
+                        }
+                        if localX >= 0, localY >= 0, localX < side, localY < side,
+                           canvas.selectionContains(x: point.x, y: point.y),
+                           canvas.tool == .section || selectionDragShouldCopy {
+                            selectionMoveStart = point
+                            canvas.beginSelectionDrag(copying: selectionDragShouldCopy)
+                            return
+                        }
+                        if canvas.tool == .section {
+                            if sectionDragStart == nil,
+                               (localX < 0 || localY < 0 || localX >= side || localY >= side) {
+                                return
+                            }
+                            if sectionDragStart == nil {
+                                sectionDragStart = point
+                                sectionDragIsAdditive = sectionSelectionIsAdditive
+                                sectionDragMoved = false
+                                canvas.beginRangeSelection(
+                                    addingToSelection: sectionDragIsAdditive
+                                )
+                            }
+                            guard let start = sectionDragStart else { return }
+                            if point != start { sectionDragMoved = true }
+                            canvas.updateRangeSelection(
+                                fromX: start.x,
+                                y: start.y,
+                                toX: point.x,
+                                y: point.y
+                            )
+                            return
+                        }
                         canvas.beginStroke()
-                        let x = Int((value.location.x - origin.x) / side
+                        let x = Int(value.location.x / side
                                     * CGFloat(canvas.gridSize))
-                        let y = Int((value.location.y - origin.y) / side
+                        let y = Int(value.location.y / side
                                     * CGFloat(canvas.gridSize))
                         canvas.useTool(
                             atX: x,
@@ -1172,15 +1945,77 @@ private struct PixelDesignSurface: View {
                             addingToSelection: sectionSelectionIsAdditive
                         )
                     }
-                    .onEnded { _ in canvas.endStroke() }
+                    .onEnded { _ in
+                        if selectionMoveStart != nil {
+                            canvas.finishSelectionDrag()
+                            selectionMoveStart = nil
+                            return
+                        }
+                        if canvas.tool == .section {
+                            if let start = sectionDragStart, !sectionDragMoved {
+                                canvas.selectPixel(
+                                    atX: start.x,
+                                    y: start.y,
+                                    addingToSelection: sectionDragIsAdditive
+                                )
+                            }
+                            canvas.finishRangeSelection()
+                            sectionDragStart = nil
+                            sectionDragMoved = false
+                            return
+                        }
+                        canvas.endStroke()
+                    }
             )
+            #if !os(macOS)
+            .highPriorityGesture(
+                SpatialTapGesture(count: 2)
+                    .onEnded { value in
+                        onInteraction()
+                        // This gesture is attached to the square drawing
+                        // surface, so its coordinates are already local even
+                        // when the square is centered in a wider/taller area.
+                        let localX = value.location.x
+                        let localY = value.location.y
+                        guard localX >= 0, localY >= 0,
+                              localX < side, localY < side else {
+                            canvas.clearSelection()
+                            return
+                        }
+                        canvas.selectConnected(
+                            atX: min(
+                                canvas.gridSize - 1,
+                                Int(localX / side * CGFloat(canvas.gridSize))
+                            ),
+                            y: min(
+                                canvas.gridSize - 1,
+                                Int(localY / side * CGFloat(canvas.gridSize))
+                            ),
+                            addingToSelection: sectionSelectionIsAdditive
+                        )
+                    }
+            )
+            #endif
         }
     }
+}
+
+private struct PixelGridPoint: Equatable {
+    let x: Int
+    let y: Int
 }
 
 private var sectionSelectionIsAdditive: Bool {
     #if os(macOS)
     NSEvent.modifierFlags.contains(.shift)
+    #else
+    false
+    #endif
+}
+
+private var selectionDragShouldCopy: Bool {
+    #if os(macOS)
+    NSEvent.modifierFlags.contains(.command)
     #else
     false
     #endif
@@ -1207,55 +2042,164 @@ private struct OutfitMannequinPreview: View {
     let part: CGImage?
     let bodyStyle: Body
     let category: OutfitCategory
+    let mannequinOutfits: [OutfitCategory: String]
 
     var body: some View {
         Canvas { context, size in
             context.fill(Path(CGRect(origin: .zero, size: size)),
                          with: .color(Color(red: 0.98, green: 0.97, blue: 0.92)))
-            let box = CGRect(origin: .zero, size: size)
-            func draw(_ image: CGImage?) {
-                guard let image else { return }
-                context.draw(Image(decorative: image, scale: 1).interpolation(.none), in: box)
-            }
-            let catalog = SharedAssets.catalog
-            if category == .backside { draw(part) }
-            draw(catalog.bodyImage(bodyStyle))
-            if category == .necklace {
-                draw(part)
-            } else {
-                draw(catalog.necklaceImage(body: bodyStyle))
-            }
-            if category == .head {
-                draw(part)
-            } else {
-                draw(catalog.eyesImage(option: "default", expression: .open, body: bodyStyle))
-                if category == .glasses { draw(part) }
-                draw(catalog.mouthImage(option: "default", state: .closed, body: bodyStyle))
-                if category == .legs { draw(part) }
-                if category == .suit { draw(part) }
-                if category == .suitBottom { draw(part) }
-                if category == .suitTop { draw(part) }
-                if category == .headTop { draw(part) }
-            }
-            if category == .hand { draw(part) }
+            drawOutfitMannequin(
+                in: &context,
+                box: CGRect(origin: .zero, size: size),
+                bodyStyle: bodyStyle,
+                activeCategory: category,
+                activePart: part,
+                mannequinOutfits: mannequinOutfits
+            )
         }
     }
 }
 
-private func drawBasicMannequin(
+private func outfitCategoriesConflict(
+    _ lhs: OutfitCategory,
+    _ rhs: OutfitCategory
+) -> Bool {
+    if lhs == rhs { return true }
+    let headDependents: Set<OutfitCategory> = [.eyes, .glasses, .mouth, .headTop]
+    if lhs == .head { return headDependents.contains(rhs) }
+    if rhs == .head { return headDependents.contains(lhs) }
+    let suitPieces: Set<OutfitCategory> = [.suitBottom, .suitTop]
+    if lhs == .suit { return suitPieces.contains(rhs) }
+    if rhs == .suit { return suitPieces.contains(lhs) }
+    return false
+}
+
+/// Flat mannequin renderer that mirrors the URI resolver's category conflicts.
+/// `activeCategory` participates in hiding defaults even when its pixels are
+/// omitted, which keeps the design guide from showing default eyes/mouth under
+/// artwork for those replacement categories.
+private func drawOutfitMannequin(
     in context: inout GraphicsContext,
     box: CGRect,
-    bodyStyle: Body
+    bodyStyle: Body,
+    activeCategory: OutfitCategory?,
+    activePart: CGImage?,
+    mannequinOutfits: [OutfitCategory: String]
 ) {
     let catalog = SharedAssets.catalog
+    var parts = mannequinOutfits.reduce(into: [OutfitCategory: CGImage]()) {
+        result, entry in
+        switch entry.key {
+        case .eyes:
+            result[entry.key] = catalog.eyesImage(
+                option: entry.value,
+                expression: .open,
+                body: bodyStyle
+            )
+        case .mouth:
+            result[entry.key] = catalog.mouthImage(
+                option: entry.value,
+                state: .closed,
+                body: bodyStyle
+            )
+        default:
+            result[entry.key] = catalog.outfitImage(entry.value, body: bodyStyle)
+        }
+    }
+    if let activeCategory, let activePart {
+        parts[activeCategory] = activePart
+    }
+    func isPresent(_ category: OutfitCategory) -> Bool {
+        activeCategory == category || parts[category] != nil
+    }
     func draw(_ image: CGImage?) {
         guard let image else { return }
         context.draw(Image(decorative: image, scale: 1).interpolation(.none), in: box)
     }
+
+    draw(parts[.backside])
     draw(catalog.bodyImage(bodyStyle))
-    draw(catalog.necklaceImage(body: bodyStyle))
-    draw(catalog.eyesImage(option: "default", expression: .open, body: bodyStyle))
-    draw(catalog.mouthImage(option: "default", state: .closed, body: bodyStyle))
+    if isPresent(.necklace) { draw(parts[.necklace]) }
+    else { draw(catalog.necklaceImage(body: bodyStyle)) }
+
+    let headWorn = isPresent(.head)
+    draw(parts[.head])
+    if !headWorn {
+        if isPresent(.eyes) { draw(parts[.eyes]) }
+        else {
+            draw(catalog.eyesImage(
+                option: "default",
+                expression: .open,
+                body: bodyStyle
+            ))
+        }
+        draw(parts[.glasses])
+        if isPresent(.mouth) { draw(parts[.mouth]) }
+        else {
+            draw(catalog.mouthImage(
+                option: "default",
+                state: .closed,
+                body: bodyStyle
+            ))
+        }
+    }
+
+    draw(parts[.legs])
+    let suitWorn = isPresent(.suit)
+    draw(parts[.suit])
+    if !suitWorn {
+        draw(parts[.suitBottom])
+        draw(parts[.suitTop])
+    }
+    if !headWorn { draw(parts[.headTop]) }
+    draw(parts[.hand])
+}
+
+private enum StarterProcessingLevel: String, CaseIterable, Identifiable {
+    case none
+    case fine
+    case standard
+    case pixelated
+    case superPixelated
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .none: "None (full color)"
+        case .fine: "Fine"
+        case .standard: "Standard"
+        case .pixelated: "Pixelated"
+        case .superPixelated: "Super pixelated"
+        }
+    }
+
+    var paletteSize: Int? {
+        switch self {
+        case .none: nil
+        case .fine: 32
+        case .standard: 16
+        case .pixelated: 8
+        case .superPixelated: 4
+        }
+    }
+
+    func sampleSize(for gridSize: Int) -> Int {
+        switch self {
+        case .none, .fine: gridSize
+        case .standard: max(1, gridSize / 2)
+        case .pixelated: max(1, gridSize / 4)
+        case .superPixelated: max(1, gridSize / 8)
+        }
+    }
+
+    func detail(for gridSize: Int) -> String {
+        let samples = sampleSize(for: gridSize)
+        guard let paletteSize else {
+            return "Keeps full color and samples directly into the \(gridSize)×\(gridSize) outfit grid."
+        }
+        return "Previews at \(samples)×\(samples) with up to \(paletteSize) colors, then expands into the editable \(gridSize)×\(gridSize) grid."
+    }
 }
 
 private struct OutfitImageStarter: View {
@@ -1263,6 +2207,7 @@ private struct OutfitImageStarter: View {
     let gridSize: Int
     let bodyStyle: Body
     let category: OutfitCategory
+    var mannequinOutfits: [OutfitCategory: String] = [:]
     var preserveSourcePixels = false
     let apply: ([UInt32]) -> Void
 
@@ -1271,22 +2216,49 @@ private struct OutfitImageStarter: View {
     @State private var offsetX = 0.0
     @State private var offsetY = 0.0
     @State private var rotation = 0.0
-    @State private var paletteSize = 16
+    @State private var processingLevel: StarterProcessingLevel = .standard
     @State private var alphaThreshold = 0.18
     @State private var dither = false
+
+    private var processedPixels: [UInt32] {
+        preserveSourcePixels
+            ? OutfitImageProcessor.placeCopy(
+                image,
+                gridSize: gridSize,
+                scale: scale,
+                offsetX: offsetX,
+                offsetY: offsetY,
+                rotation: rotation
+            )
+            : OutfitImageProcessor.process(
+                image,
+                gridSize: gridSize,
+                scale: scale,
+                offsetX: offsetX,
+                offsetY: offsetY,
+                rotation: rotation,
+                level: processingLevel,
+                alphaThreshold: alphaThreshold,
+                dither: dither
+            )
+    }
 
     var body: some View {
         NavigationStack {
             HStack(spacing: 0) {
                 VStack {
                     StarterPlacementPreview(
-                        image: image,
+                        processedImage: PixelOutfitCanvas.image(
+                            pixels: processedPixels,
+                            size: gridSize
+                        ),
                         scale: $scale,
                         offsetX: $offsetX,
                         offsetY: $offsetY,
                         rotation: $rotation,
                         bodyStyle: bodyStyle,
-                        category: category
+                        category: category,
+                        mannequinOutfits: mannequinOutfits
                     )
                     .aspectRatio(1, contentMode: .fit)
                     .padding()
@@ -1339,14 +2311,22 @@ private struct OutfitImageStarter: View {
                         }
                     } else {
                         Section("Pixel processing") {
-                            Stepper("Palette: \(paletteSize) colors",
-                                    value: $paletteSize, in: 4...32, step: 4)
+                            Picker("Processing", selection: $processingLevel) {
+                                ForEach(StarterProcessingLevel.allCases) { level in
+                                    Text(level.title).tag(level)
+                                }
+                            }
+                            .accessibilityIdentifier("starter-processing-level")
                             LabeledContent("Transparency") {
                                 Slider(value: $alphaThreshold, in: 0...0.9)
                             }
                             Toggle("Ordered dithering", isOn: $dither)
-                            Text("The image is reduced to the \(gridSize)×\(gridSize) outfit grid. You can edit every resulting pixel afterward.")
+                                .disabled(processingLevel == .none)
+                            Text(processingLevel.detail(for: gridSize))
                                 .font(.caption)
+                                .foregroundStyle(.secondary)
+                            Text("The preview shows the exact processed pixels that will be placed.")
+                                .font(.caption.bold())
                                 .foregroundStyle(.secondary)
                         }
                     }
@@ -1361,27 +2341,7 @@ private struct OutfitImageStarter: View {
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button(preserveSourcePixels ? "Place Copy" : "Make Pixel Starter") {
-                        let pixels = preserveSourcePixels
-                            ? OutfitImageProcessor.placeCopy(
-                                image,
-                                gridSize: gridSize,
-                                scale: scale,
-                                offsetX: offsetX,
-                                offsetY: offsetY,
-                                rotation: rotation
-                            )
-                            : OutfitImageProcessor.process(
-                                image,
-                                gridSize: gridSize,
-                                scale: scale,
-                                offsetX: offsetX,
-                                offsetY: offsetY,
-                                rotation: rotation,
-                                paletteSize: paletteSize,
-                                alphaThreshold: alphaThreshold,
-                                dither: dither
-                            )
-                        apply(pixels)
+                        apply(processedPixels)
                         dismiss()
                     }
                     .buttonStyle(.borderedProminent)
@@ -1394,13 +2354,14 @@ private struct OutfitImageStarter: View {
 }
 
 private struct StarterPlacementPreview: View {
-    let image: CGImage
+    let processedImage: CGImage?
     @Binding var scale: Double
     @Binding var offsetX: Double
     @Binding var offsetY: Double
     @Binding var rotation: Double
     let bodyStyle: Body
     let category: OutfitCategory
+    let mannequinOutfits: [OutfitCategory: String]
 
     @State private var dragStart: CGSize?
     @State private var scaleStart: Double?
@@ -1413,29 +2374,21 @@ private struct StarterPlacementPreview: View {
                              with: .color(Color(red: 0.98, green: 0.97, blue: 0.92)))
                 var ghost = context
                 ghost.opacity = 0.22
-                drawBasicMannequin(
+                drawOutfitMannequin(
                     in: &ghost,
                     box: CGRect(origin: .zero, size: size),
-                    bodyStyle: bodyStyle
+                    bodyStyle: bodyStyle,
+                    activeCategory: category,
+                    activePart: nil,
+                    mannequinOutfits: mannequinOutfits
                 )
-                let fit = min(
-                    size.width / CGFloat(image.width),
-                    size.height / CGFloat(image.height)
-                )
-                let width = CGFloat(image.width) * fit * scale
-                let height = CGFloat(image.height) * fit * scale
-                let center = CGPoint(
-                    x: size.width / 2 + CGFloat(offsetX) / 400 * size.width,
-                    y: size.height / 2 + CGFloat(offsetY) / 400 * size.height
-                )
-                var placed = context
-                placed.translateBy(x: center.x, y: center.y)
-                placed.rotate(by: .degrees(rotation))
-                placed.draw(
-                    Image(decorative: image, scale: 1),
-                    in: CGRect(x: -width / 2, y: -height / 2,
-                               width: width, height: height)
-                )
+                if let processedImage {
+                    context.draw(
+                        Image(decorative: processedImage, scale: 1)
+                            .interpolation(.none),
+                        in: CGRect(origin: .zero, size: size)
+                    )
+                }
             }
             .contentShape(Rectangle())
             .gesture(
@@ -1562,31 +2515,32 @@ private enum OutfitImageProcessor {
         offsetX: Double,
         offsetY: Double,
         rotation: Double,
-        paletteSize: Int,
+        level: StarterProcessingLevel,
         alphaThreshold: Double,
         dither: Bool
     ) -> [UInt32] {
-        let count = gridSize * gridSize
+        let sampleSize = level.sampleSize(for: gridSize)
+        let count = sampleSize * sampleSize
         var bytes = [UInt8](repeating: 0, count: count * 4)
         guard let context = CGContext(
             data: &bytes,
-            width: gridSize,
-            height: gridSize,
+            width: sampleSize,
+            height: sampleSize,
             bitsPerComponent: 8,
-            bytesPerRow: gridSize * 4,
+            bytesPerRow: sampleSize * 4,
             space: CGColorSpace(name: CGColorSpace.sRGB)!,
             bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
-        ) else { return [UInt32](repeating: 0, count: count) }
+        ) else { return [UInt32](repeating: 0, count: gridSize * gridSize) }
         context.interpolationQuality = .high
-        let fit = min(CGFloat(gridSize) / CGFloat(image.width),
-                      CGFloat(gridSize) / CGFloat(image.height))
+        let fit = min(CGFloat(sampleSize) / CGFloat(image.width),
+                      CGFloat(sampleSize) / CGFloat(image.height))
         let width = CGFloat(image.width) * fit * scale
         let height = CGFloat(image.height) * fit * scale
         let center = CGPoint(
-            x: CGFloat(gridSize) / 2
-                + CGFloat(offsetX) / 400 * CGFloat(gridSize),
-            y: CGFloat(gridSize) / 2
-                + CGFloat(offsetY) / 400 * CGFloat(gridSize)
+            x: CGFloat(sampleSize) / 2
+                + CGFloat(offsetX) / 400 * CGFloat(sampleSize),
+            y: CGFloat(sampleSize) / 2
+                + CGFloat(offsetY) / 400 * CGFloat(sampleSize)
         )
         context.saveGState()
         context.translateBy(x: center.x, y: center.y)
@@ -1599,24 +2553,34 @@ private enum OutfitImageProcessor {
         context.restoreGState()
 
         let threshold = UInt8(max(0, min(255, Int(alphaThreshold * 255))))
-        var samples: [(Double, Double, Double)] = []
-        let strideBy = max(1, count / 8_000)
-        for pixel in Swift.stride(from: 0, to: count, by: strideBy) {
-            let index = pixel * 4
-            if bytes[index + 3] > threshold {
-                samples.append((Double(bytes[index]), Double(bytes[index + 1]),
-                                Double(bytes[index + 2])))
+        var palette: [(Double, Double, Double)]?
+        if let paletteSize = level.paletteSize {
+            var samples: [(Double, Double, Double)] = []
+            let strideBy = max(1, count / 8_000)
+            for pixel in Swift.stride(from: 0, to: count, by: strideBy) {
+                let index = pixel * 4
+                if bytes[index + 3] > threshold {
+                    samples.append((Double(bytes[index]), Double(bytes[index + 1]),
+                                    Double(bytes[index + 2])))
+                }
             }
+            palette = kMeans(samples, count: max(2, paletteSize))
         }
-        let palette = kMeans(samples, count: max(2, paletteSize))
         let bayer = [0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5]
-        var output = [UInt32](repeating: 0, count: count)
+        var sampled = [UInt32](repeating: 0, count: count)
         for pixel in 0..<count {
             let index = pixel * 4
             let alpha = bytes[index + 3]
             guard alpha > threshold else { continue }
-            let x = pixel % gridSize
-            let y = pixel / gridSize
+            guard let palette else {
+                sampled[pixel] = UInt32(bytes[index]) << 24
+                    | UInt32(bytes[index + 1]) << 16
+                    | UInt32(bytes[index + 2]) << 8
+                    | UInt32(alpha)
+                continue
+            }
+            let x = pixel % sampleSize
+            let y = pixel / sampleSize
             let adjustment = dither
                 ? (Double(bayer[(y % 4) * 4 + (x % 4)]) / 15 - 0.5) * 26
                 : 0
@@ -1628,10 +2592,19 @@ private enum OutfitImageProcessor {
             let nearest = palette.min {
                 distance(color, $0) < distance(color, $1)
             } ?? color
-            output[pixel] = UInt32(nearest.0.rounded()) << 24
+            sampled[pixel] = UInt32(nearest.0.rounded()) << 24
                 | UInt32(nearest.1.rounded()) << 16
                 | UInt32(nearest.2.rounded()) << 8
                 | 0xff
+        }
+        guard sampleSize != gridSize else { return sampled }
+        var output = [UInt32](repeating: 0, count: gridSize * gridSize)
+        for y in 0..<gridSize {
+            let sourceY = min(sampleSize - 1, y * sampleSize / gridSize)
+            for x in 0..<gridSize {
+                let sourceX = min(sampleSize - 1, x * sampleSize / gridSize)
+                output[y * gridSize + x] = sampled[sourceY * sampleSize + sourceX]
+            }
         }
         return output
     }

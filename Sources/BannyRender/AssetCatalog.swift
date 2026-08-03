@@ -68,8 +68,15 @@ public final class AssetCatalog: @unchecked Sendable {
     private struct CustomEntry {
         var slot: Int
         var label: String
-        var image: CGImage
+        var images: [CGImage]
+        var frameDelay: Double
         var selectable: Bool
+
+        func image(at time: Double) -> CGImage {
+            guard images.count > 1 else { return images[0] }
+            let index = Int(floor(max(0, time) / frameDelay)) % images.count
+            return images[index]
+        }
     }
     private var customOutfits: [String: CustomEntry] = [:]
     private let lock = NSLock()
@@ -105,17 +112,17 @@ public final class AssetCatalog: @unchecked Sendable {
     /// Whether `name` is a real selectable eye option. Rendering falls back to
     /// `default` for resilience, but validation must reject misspelled options.
     public func hasEyeOption(_ name: String) -> Bool {
-        catalog.eyes[name] != nil
+        catalog.eyes[name] != nil || customImage(named: name, slot: 5) != nil
     }
 
     /// Whether `name` is a real selectable mouth option.
     public func hasMouthOption(_ name: String) -> Bool {
-        catalog.mouths[name] != nil
+        catalog.mouths[name] != nil || customImage(named: name, slot: 7) != nil
     }
 
-    public func outfitImage(_ name: String, body: Body) -> CGImage? {
+    public func outfitImage(_ name: String, body: Body, at time: Double = 0) -> CGImage? {
         lock.lock()
-        let custom = customOutfits[name]?.image
+        let custom = customOutfits[name]?.image(at: time)
         lock.unlock()
         if let custom { return custom }
         return catalog.outfits[name]?.ref.file(for: body).flatMap(image(named:))
@@ -126,7 +133,7 @@ public final class AssetCatalog: @unchecked Sendable {
     /// consumes hundreds of megabytes and eventually makes ImageIO return nil.
     public func outfitThumbnail(_ name: String, body: Body) -> CGImage? {
         lock.lock()
-        let custom = customOutfits[name]?.image
+        let custom = customOutfits[name]?.images.first
         lock.unlock()
         if let custom { return custom }
         return catalog.outfits[name]?.ref.file(for: body).flatMap(thumbnail(named:))
@@ -137,14 +144,17 @@ public final class AssetCatalog: @unchecked Sendable {
     }
 
     /// Eye layer for an expression: open art, the option's blink art, or a shared brow frame.
-    public func eyesImage(option: String, expression: EyeExpression, body: Body) -> CGImage? {
-        eyesRef(option: option, expression: expression)?
+    public func eyesImage(option: String, expression: EyeExpression, body: Body,
+                          at time: Double = 0) -> CGImage? {
+        if let custom = customImage(named: option, slot: 5, at: time) { return custom }
+        return eyesRef(option: option, expression: expression)?
             .file(for: body).flatMap(image(named:))
     }
 
     public func eyesThumbnail(option: String, expression: EyeExpression,
                               body: Body) -> CGImage? {
-        eyesRef(option: option, expression: expression)?
+        if let custom = customImage(named: option, slot: 5, at: 0) { return custom }
+        return eyesRef(option: option, expression: expression)?
             .file(for: body).flatMap(thumbnail(named:))
     }
 
@@ -157,15 +167,25 @@ public final class AssetCatalog: @unchecked Sendable {
         mouth(option: option)?.inverted ?? false
     }
 
-    public func mouthImage(option: String, state: MouthState, body: Body) -> CGImage? {
-        mouthRef(option: option, state: state)?
+    public func mouthImage(option: String, state: MouthState, body: Body,
+                           at time: Double = 0) -> CGImage? {
+        if let custom = customImage(named: option, slot: 7, at: time) { return custom }
+        return mouthRef(option: option, state: state)?
             .file(for: body).flatMap(image(named:))
     }
 
     public func mouthThumbnail(option: String, state: MouthState,
                                body: Body) -> CGImage? {
-        mouthRef(option: option, state: state)?
+        if let custom = customImage(named: option, slot: 7, at: 0) { return custom }
+        return mouthRef(option: option, state: state)?
             .file(for: body).flatMap(thumbnail(named:))
+    }
+
+    private func customImage(named name: String, slot: Int, at time: Double = 0) -> CGImage? {
+        lock.lock()
+        defer { lock.unlock() }
+        guard let entry = customOutfits[name], entry.slot == slot else { return nil }
+        return entry.image(at: time)
     }
 
     public func shadowImage() -> CGImage? {
@@ -209,17 +229,24 @@ public final class AssetCatalog: @unchecked Sendable {
         name: String,
         label: String,
         slot: Int,
-        pngData: Data
+        pngData: Data,
+        framePNGData: [Data]? = nil,
+        frameDelay: Double = 0.2
     ) -> Bool {
-        guard let source = CGImageSourceCreateWithData(pngData as CFData, nil),
-              let image = CGImageSourceCreateImageAtIndex(source, 0, nil) else {
+        let dataFrames = (framePNGData?.isEmpty == false ? framePNGData! : [pngData]).prefix(5)
+        let images = dataFrames.compactMap { data -> CGImage? in
+            guard let source = CGImageSourceCreateWithData(data as CFData, nil) else { return nil }
+            return CGImageSourceCreateImageAtIndex(source, 0, nil)
+        }
+        guard images.count == dataFrames.count, !images.isEmpty else {
             return false
         }
         lock.lock()
         customOutfits[name] = CustomEntry(
             slot: slot,
             label: label,
-            image: image,
+            images: images,
+            frameDelay: max(0.04, min(2, frameDelay)),
             selectable: true
         )
         lock.unlock()

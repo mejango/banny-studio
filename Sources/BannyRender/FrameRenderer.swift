@@ -142,7 +142,13 @@ public struct FrameRenderer: Sendable {
         }
 
         for e in entries.sorted(by: { $0.placement.zIndex < $1.placement.zIndex }) {
-            drawCharacter(scene.characters[e.index], pose: e.pose, placement: e.placement, in: ctx)
+            drawCharacter(
+                scene.characters[e.index],
+                pose: e.pose,
+                placement: e.placement,
+                time: t,
+                in: ctx
+            )
         }
         drawVisualTracks(on: .inFrontOfCast)
         ctx.restoreGState() // camera off — captions render in screen space
@@ -329,7 +335,8 @@ public struct FrameRenderer: Sendable {
     // MARK: - Character
 
     private func drawCharacter(_ character: Character, pose: CharacterPose,
-                               placement p: StageLayout.Placement, in ctx: CGContext) {
+                               placement p: StageLayout.Placement, time: Double,
+                               in ctx: CGContext) {
         ctx.saveGState()
         // .char: translate(tx,ty) scale(s), origin 0 0
         ctx.translateBy(x: CGFloat(p.tx), y: CGFloat(p.ty))
@@ -382,7 +389,12 @@ public struct FrameRenderer: Sendable {
             case .eyes:
                 guard !headWorn else { continue }
                 let option = outfit[5] ?? "default"
-                if let img = assets.eyesImage(option: option, expression: pose.eye, body: character.body) {
+                if let img = assets.eyesImage(
+                    option: option,
+                    expression: pose.eye,
+                    body: character.body,
+                    at: time
+                ) {
                     drawImage(img, in: box, ctx: ctx)
                 }
             case .mouth:
@@ -401,7 +413,7 @@ public struct FrameRenderer: Sendable {
                 case .closed: state = .closed
                 }
                 if let img = assets.mouthImage(option: option, state: state,
-                                               body: character.body) {
+                                               body: character.body, at: time) {
                     drawImage(img, in: box, ctx: ctx)
                 }
             case .outfit(let id):
@@ -413,14 +425,15 @@ public struct FrameRenderer: Sendable {
                     // random scatter of 4px chunks at ramping density.
                     let n = Self.fuzzSteps
                     let step = min(n - 1, max(0, Int(anim.progress * Double(n))))
-                    if let name = currentName, let img = assets.outfitImage(name, body: character.body) {
+                    if let name = currentName,
+                       let img = assets.outfitImage(name, body: character.body, at: time) {
                         // Equip / swap-in: density climbs 0.2→0.8, then snaps full.
                         let density = Double(step + 1) / Double(n) * Self.fuzzMaxDensity
                         withFuzzClip(box: box, seed: id * 131 + step, density: density, ctx: ctx) {
                             drawImage(img, in: box, ctx: ctx)
                         }
                     } else if let prev = anim.prev,
-                              let pimg = assets.outfitImage(prev, body: character.body) {
+                              let pimg = assets.outfitImage(prev, body: character.body, at: time) {
                         // Unequip: density falls 0.8→0.2, then gone.
                         let density = Double(n - step) / Double(n) * Self.fuzzMaxDensity
                         withFuzzClip(box: box, seed: id * 131 + step, density: density, ctx: ctx) {
@@ -434,7 +447,8 @@ public struct FrameRenderer: Sendable {
                     if let img = assets.necklaceImage(body: character.body) {
                         drawImage(img, in: box, ctx: ctx)
                     }
-                } else if let name = currentName, let img = assets.outfitImage(name, body: character.body) {
+                } else if let name = currentName,
+                          let img = assets.outfitImage(name, body: character.body, at: time) {
                     drawImage(img, in: box, ctx: ctx)
                 }
             }

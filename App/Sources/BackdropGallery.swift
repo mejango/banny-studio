@@ -42,11 +42,56 @@ struct BackdropGallerySection: View {
     var query = ""
     var expandedByDefault = false
     @State private var expanded = false
+    @State private var customExpanded = true
+    @State private var library = CustomBackgroundLibrary.shared
+    @State private var creatingBackground = false
+    @State private var managingBackgrounds = false
 
     private static let columns = [GridItem(.adaptive(minimum: 44), spacing: 4)]
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 7) {
+                Button {
+                    creatingBackground = true
+                } label: {
+                    Label("Create Background", systemImage: "paintbrush.pointed")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(.orange)
+                .accessibilityIdentifier("create-background")
+
+                Button {
+                    managingBackgrounds = true
+                } label: {
+                    Label("My Backgrounds", systemImage: "photo.stack")
+                }
+                .buttonStyle(.bordered)
+                .accessibilityIdentifier("manage-backgrounds")
+            }
+
+            if !library.backgrounds.isEmpty {
+                DisclosureGroup(isExpanded: $customExpanded) {
+                    LazyVGrid(columns: Self.columns, spacing: 4) {
+                        ForEach(filteredCustomBackgrounds) { background in
+                            CustomBackgroundThumbnail(
+                                background: background,
+                                animated: true
+                            )
+                            .frame(width: 44, height: 44)
+                            .clipShape(RoundedRectangle(cornerRadius: 4))
+                            .onTapGesture { model.addCustomBackground(background) }
+                            .help(background.manifest.name)
+                        }
+                    }
+                } label: {
+                    Text("MY BACKGROUNDS (\(library.backgrounds.count))")
+                        .font(.caption.bold())
+                        .foregroundStyle(.secondary)
+                }
+            }
+
             DisclosureGroup(isExpanded: $expanded) {
                 ScrollView {
                     LazyVGrid(columns: Self.columns, spacing: 4) {
@@ -66,12 +111,31 @@ struct BackdropGallerySection: View {
         .onAppear {
             if expandedByDefault { expanded = true }
         }
+        .sheet(isPresented: $creatingBackground) {
+            CustomBackgroundStudio { background in
+                model.addCustomBackground(background)
+                creatingBackground = false
+            }
+        }
+        .sheet(isPresented: $managingBackgrounds) {
+            CustomBackgroundManager { background in
+                model.addCustomBackground(background)
+                managingBackgrounds = false
+            }
+        }
     }
 
     private var filteredURLs: [URL] {
         BuiltInBackdrops.urls.filter { url in
             query.isEmpty || BuiltInBackdrops.displayName(url.lastPathComponent)
                 .localizedCaseInsensitiveContains(query)
+        }
+    }
+
+    private var filteredCustomBackgrounds: [CustomBackgroundBundle] {
+        library.backgrounds.filter {
+            query.isEmpty
+                || $0.manifest.name.localizedCaseInsensitiveContains(query)
         }
     }
 }

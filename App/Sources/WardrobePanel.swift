@@ -81,6 +81,8 @@ struct WardrobePanel: View {
             .accessibilityIdentifier("wardrobe-toggle")
 
             if wardrobeExpanded {
+                let customEyes = pickerItems(inSlot: 5, body: body_)
+                let customMouths = pickerItems(inSlot: 7, body: body_)
                 HStack(spacing: 7) {
                     Button {
                         creatingOutfit = true
@@ -100,31 +102,28 @@ struct WardrobePanel: View {
                     .buttonStyle(.bordered)
                 }
 
-                slotGrid(title: "Eyes", selected: outfit[5] ?? "default", allowNone: false,
+                slotGrid(title: "Eyes", selected: outfit[5] ?? "default", allowNone: true,
                          crop: Self.cropRegion(forSlot: 5),
                          items: ["default", "eyeliner", "fierce", "glassy", "surprised", "introspective"].map {
                              ($0, $0, SharedAssets.catalog.eyesThumbnail(
                                 option: $0, expression: .open, body: body_))
-                         }) { name in
-                    apply(slot: 5, name: name == "default" ? nil : name)
+                         } + customEyes) { name in
+                    apply(slot: 5, name: name.isEmpty || name == "default" ? nil : name)
                 }
-                slotGrid(title: "Mouth", selected: outfit[7] ?? "default", allowNone: false,
+                slotGrid(title: "Mouth", selected: outfit[7] ?? "default", allowNone: true,
                          crop: Self.cropRegion(forSlot: 7),
                          items: ["default", "lipstick", "gapteeth", "open"].map {
                              ($0, $0, SharedAssets.catalog.mouthThumbnail(
                                 option: $0, state: .closed, body: body_))
-                         }) { name in
-                    apply(slot: 7, name: name == "default" ? nil : name)
+                         } + customMouths) { name in
+                    apply(slot: 7, name: name.isEmpty || name == "default" ? nil : name)
                 }
                 ForEach(Self.outfitSlots, id: \.self) { slot in
-                    let items = SharedAssets.catalog.outfits(inSlot: slot)
+                    let items = pickerItems(inSlot: slot, body: body_)
                     if !items.isEmpty {
                         slotGrid(title: slotName(slot), selected: outfit[slot] ?? "",
                                  allowNone: true, crop: Self.cropRegion(forSlot: slot),
-                                 items: items.map {
-                                     ($0.name, $0.label, SharedAssets.catalog.outfitThumbnail(
-                                        $0.name, body: body_))
-                                 }) { name in
+                                 items: items) { name in
                             apply(slot: slot, name: name.isEmpty ? nil : name)
                         }
                     }
@@ -172,6 +171,36 @@ struct WardrobePanel: View {
 
     private func slotName(_ slot: Int) -> String {
         SharedAssets.catalog.slotName(slot) ?? "Slot \(slot)"
+    }
+
+    /// Local creations live in the same category grid as bundled wardrobe
+    /// pieces. Keep them first so a newly saved outfit is immediately visible,
+    /// while retaining project-embedded custom assets which may not exist in
+    /// this device's local library.
+    private func pickerItems(
+        inSlot slot: Int,
+        body bodyStyle: BannyCore.Body
+    ) -> [(name: String, label: String, image: CGImage?)] {
+        let local: [(name: String, label: String, image: CGImage?)] = customLibrary.outfits
+            .filter { $0.manifest.category.rawValue == slot }
+            .map {
+                (
+                    name: $0.assetName,
+                    label: $0.manifest.name,
+                    image: SharedAssets.catalog.outfitThumbnail($0.assetName, body: bodyStyle)
+                )
+            }
+        let localNames = Set(local.map(\.name))
+        let remaining = SharedAssets.catalog.outfits(inSlot: slot)
+            .filter { !localNames.contains($0.name) }
+            .map {
+                (
+                    name: $0.name,
+                    label: $0.label,
+                    image: SharedAssets.catalog.outfitThumbnail($0.name, body: bodyStyle)
+                )
+            }
+        return local + remaining
     }
 
     private func slotGrid(title: String, selected: String, allowNone: Bool, crop: CGRect,

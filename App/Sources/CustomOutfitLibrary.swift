@@ -152,7 +152,9 @@ final class CustomOutfitLibrary {
             name: bundle.assetName,
             label: bundle.manifest.name,
             slot: bundle.manifest.category.rawValue,
-            pngData: bundle.pngData
+            pngData: bundle.pngData,
+            framePNGData: bundle.framePNGData,
+            frameDelay: bundle.frameDelay
         )
     }
 }

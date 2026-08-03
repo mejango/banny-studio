@@ -1,12 +1,15 @@
 import Foundation
 
-/// Contract-compatible static wardrobe categories. Eyes and mouths are
-/// intentionally excluded: those assets require multiple animated states.
+/// Contract-compatible wardrobe categories. Custom eyes and mouths use one
+/// static image for every animation state, which makes pixel-authored face
+/// replacements predictable while preserving the resolver's layer semantics.
 public enum OutfitCategory: Int, Codable, CaseIterable, Identifiable, Sendable {
     case backside = 2
     case necklace = 3
     case head = 4
+    case eyes = 5
     case glasses = 6
+    case mouth = 7
     case legs = 8
     case suit = 9
     case suitBottom = 10
@@ -21,7 +24,9 @@ public enum OutfitCategory: Int, Codable, CaseIterable, Identifiable, Sendable {
         case .backside: "Backside"
         case .necklace: "Necklace"
         case .head: "Head"
+        case .eyes: "Eyes"
         case .glasses: "Glasses"
+        case .mouth: "Mouth"
         case .legs: "Legs"
         case .suit: "Suit"
         case .suitBottom: "Suit Bottom"
@@ -39,8 +44,12 @@ public enum OutfitCategory: Int, Codable, CaseIterable, Identifiable, Sendable {
             "Draws above the body and replaces the default necklace."
         case .head:
             "Replaces the whole head and hides the face, glasses, and head-top items."
+        case .eyes:
+            "Replaces the Banny’s default eyes and stays static across expressions."
         case .glasses:
             "Draws above the eyes and below the mouth."
+        case .mouth:
+            "Replaces the Banny’s default mouth and stays static while speaking."
         case .legs:
             "Draws over the body and face, before clothing."
         case .suit:
@@ -61,7 +70,9 @@ public enum OutfitCategory: Int, Codable, CaseIterable, Identifiable, Sendable {
         case .backside: "rectangle.behind.rectangle"
         case .necklace: "circle.dotted"
         case .head: "person.crop.circle"
+        case .eyes: "eye"
         case .glasses: "eyeglasses"
+        case .mouth: "mouth"
         case .legs: "figure.walk"
         case .suit: "person.fill"
         case .suitBottom: "rectangle.bottomhalf.inset.filled"
@@ -81,6 +92,9 @@ public struct CustomOutfitManifest: Codable, Equatable, Sendable {
     public var name: String
     public var category: OutfitCategory
     public var gridSize: Int
+    /// Shared duration for each optional animation frame. Older single-frame
+    /// outfits decode with nil and use the 0.2 second editor default.
+    public var frameDelay: Double?
     public var createdAt: Date
     public var modifiedAt: Date
 
@@ -90,6 +104,7 @@ public struct CustomOutfitManifest: Codable, Equatable, Sendable {
         name: String,
         category: OutfitCategory,
         gridSize: Int = 100,
+        frameDelay: Double? = nil,
         createdAt: Date = Date(),
         modifiedAt: Date = Date()
     ) {
@@ -98,6 +113,7 @@ public struct CustomOutfitManifest: Codable, Equatable, Sendable {
         self.name = name
         self.category = category
         self.gridSize = gridSize
+        self.frameDelay = frameDelay
         self.createdAt = createdAt
         self.modifiedAt = modifiedAt
     }
@@ -112,14 +128,27 @@ public struct CustomOutfitManifest: Codable, Equatable, Sendable {
 public struct CustomOutfitBundle: Codable, Equatable, Identifiable, Sendable {
     public var manifest: CustomOutfitManifest
     public var pngData: Data
+    /// Optional lossless frames. `pngData` remains frame one for backwards
+    /// compatibility with older Studio builds and external tooling.
+    public var framePNGData: [Data]?
 
-    public init(manifest: CustomOutfitManifest, pngData: Data) {
+    public init(
+        manifest: CustomOutfitManifest,
+        pngData: Data,
+        framePNGData: [Data]? = nil
+    ) {
         self.manifest = manifest
         self.pngData = pngData
+        self.framePNGData = framePNGData
     }
 
     public var assetName: String { manifest.assetName }
     public var id: String { manifest.id }
+    public var frames: [Data] {
+        guard let framePNGData, !framePNGData.isEmpty else { return [pngData] }
+        return Array(framePNGData.prefix(5))
+    }
+    public var frameDelay: Double { manifest.frameDelay ?? 0.2 }
 
     public func validated() throws -> CustomOutfitBundle {
         guard manifest.formatVersion == CustomOutfitManifest.currentFormatVersion else {
@@ -134,12 +163,16 @@ public struct CustomOutfitBundle: Codable, Equatable, Identifiable, Sendable {
         guard CustomOutfitManifest.supportedGridSizes.contains(manifest.gridSize) else {
             throw CustomOutfitError.unsupportedGridSize(manifest.gridSize)
         }
-        guard pngData.count <= 32 * 1_024 * 1_024 else {
+        guard (1...5).contains(frames.count),
+              (0.04...2).contains(frameDelay),
+              frames.reduce(0, { $0 + $1.count }) <= 64 * 1_024 * 1_024 else {
             throw CustomOutfitError.imageTooLarge
         }
         let pngSignature: [UInt8] = [137, 80, 78, 71, 13, 10, 26, 10]
-        guard pngData.count >= pngSignature.count,
-              Array(pngData.prefix(pngSignature.count)) == pngSignature else {
+        guard frames.allSatisfy({ data in
+            data.count >= pngSignature.count
+                && Array(data.prefix(pngSignature.count)) == pngSignature
+        }) else {
             throw CustomOutfitError.invalidPNG
         }
         return self

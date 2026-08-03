@@ -167,7 +167,9 @@ final class ShowDocumentFile: ReferenceFileDocument {
                 name: outfit.assetName,
                 label: outfit.manifest.name,
                 slot: outfit.manifest.category.rawValue,
-                pngData: outfit.pngData
+                pngData: outfit.pngData,
+                framePNGData: outfit.framePNGData,
+                frameDelay: outfit.frameDelay
             )
         }
     }

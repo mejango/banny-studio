@@ -3,8 +3,10 @@ import Testing
 @testable import BannyCore
 
 @Test func customOutfitCategoriesMatchRendererContractSlots() {
-    #expect(OutfitCategory.allCases.map(\.rawValue) == [2, 3, 4, 6, 8, 9, 10, 11, 12, 13])
+    #expect(OutfitCategory.allCases.map(\.rawValue) == Array(2...13))
     #expect(OutfitCategory.head.layerExplanation.contains("hides"))
+    #expect(OutfitCategory.eyes.layerExplanation.contains("Replaces"))
+    #expect(OutfitCategory.mouth.layerExplanation.contains("Replaces"))
     #expect(OutfitCategory.suit.layerExplanation.contains("hides"))
 }
 
@@ -16,9 +18,11 @@ import Testing
             id: id,
             name: "Moon Jacket",
             category: .suitTop,
-            gridSize: 100
+            gridSize: 100,
+            frameDelay: 0.12
         ),
-        pngData: png
+        pngData: png,
+        framePNGData: [png, png]
     )
     let valid = try bundle.validated()
     let decoded = try JSONDecoder().decode(
@@ -27,6 +31,8 @@ import Testing
     )
     #expect(decoded == valid)
     #expect(decoded.assetName == "custom-\(id.lowercased())")
+    #expect(decoded.frames.count == 2)
+    #expect(decoded.frameDelay == 0.12)
 }
 
 @Test func customOutfitValidationRejectsUnsafeInput() {

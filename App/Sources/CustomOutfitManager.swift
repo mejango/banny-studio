@@ -170,7 +170,8 @@ struct CustomOutfitManager: View {
             Text(outfit.manifest.name)
                 .font(.subheadline.bold())
                 .lineLimit(1)
-            Label(outfit.manifest.category.displayName,
+            Label(
+                  "\(outfit.manifest.category.displayName) • \(outfit.frames.count) frame\(outfit.frames.count == 1 ? "" : "s")",
                   systemImage: outfit.manifest.category.iconName)
                 .font(.caption2)
                 .foregroundStyle(.secondary)
@@ -182,6 +183,7 @@ struct CustomOutfitManager: View {
                     }
                     .buttonStyle(.borderedProminent)
                 }
+                Spacer(minLength: 0)
                 Menu {
                     Button("Edit") { editing = outfit }
                     Button("Export…") { prepareExport(outfit) }
@@ -189,8 +191,13 @@ struct CustomOutfitManager: View {
                     Button("Delete", role: .destructive) { deleting = outfit }
                 } label: {
                     Image(systemName: "ellipsis")
+                        .frame(width: 24, height: 24)
+                        .contentShape(Rectangle())
                 }
                 .menuStyle(.borderlessButton)
+                .menuIndicator(.hidden)
+                .fixedSize()
+                .accessibilityLabel("Outfit actions")
             }
         }
         .padding(10)
@@ -231,8 +238,12 @@ struct OutfitMannequinCard: View {
     let bodyStyle: Body
 
     var body: some View {
-        let image = PixelImageDecoder.decode(outfit.pngData)
-        Canvas { context, size in
+        TimelineView(.animation(minimumInterval: 1.0 / 30.0)) { timeline in
+            let index = Int(
+                timeline.date.timeIntervalSinceReferenceDate / outfit.frameDelay
+            ) % outfit.frames.count
+            let image = PixelImageDecoder.decode(outfit.frames[index])
+            Canvas { context, size in
             context.fill(Path(CGRect(origin: .zero, size: size)),
                          with: .color(Color(red: 0.98, green: 0.97, blue: 0.92)))
             let box = CGRect(origin: .zero, size: size)
@@ -254,17 +265,26 @@ struct OutfitMannequinCard: View {
             if outfit.manifest.category == .head {
                 draw(image)
             } else {
-                draw(catalog.eyesImage(option: "default", expression: .open,
-                                       body: bodyStyle))
+                if outfit.manifest.category == .eyes {
+                    draw(image)
+                } else {
+                    draw(catalog.eyesImage(option: "default", expression: .open,
+                                           body: bodyStyle))
+                }
                 if outfit.manifest.category == .glasses { draw(image) }
-                draw(catalog.mouthImage(option: "default", state: .closed,
-                                        body: bodyStyle))
+                if outfit.manifest.category == .mouth {
+                    draw(image)
+                } else {
+                    draw(catalog.mouthImage(option: "default", state: .closed,
+                                            body: bodyStyle))
+                }
                 if [.legs, .suit, .suitBottom, .suitTop, .headTop]
                     .contains(outfit.manifest.category) {
                     draw(image)
                 }
             }
             if outfit.manifest.category == .hand { draw(image) }
+            }
         }
     }
 }
