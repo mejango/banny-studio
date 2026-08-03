@@ -499,12 +499,18 @@ private final class BackgroundFrameCanvas {
         ) else { return [UInt32](repeating: 0xffffffff, count: width * height) }
         context.interpolationQuality = .high
         context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
-        return stride(from: 0, to: bytes.count, by: 4).map {
-            UInt32(bytes[$0]) << 24
-                | UInt32(bytes[$0 + 1]) << 16
-                | UInt32(bytes[$0 + 2]) << 8
-                | UInt32(bytes[$0 + 3])
+        var pixels: [UInt32] = []
+        pixels.reserveCapacity(width * height)
+        var index = 0
+        while index < bytes.count {
+            let red = UInt32(bytes[index]) << 24
+            let green = UInt32(bytes[index + 1]) << 16
+            let blue = UInt32(bytes[index + 2]) << 8
+            let alpha = UInt32(bytes[index + 3])
+            pixels.append(red | green | blue | alpha)
+            index += 4
         }
+        return pixels
     }
 }
 

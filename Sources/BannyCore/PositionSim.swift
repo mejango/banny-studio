@@ -218,6 +218,14 @@ public final class PositionTimelineCache: @unchecked Sendable {
         var speed: Double
         var rotationSpeed: Double
         var gScale: Double
+
+        static func == (lhs: Key, rhs: Key) -> Bool {
+            lhs.recStart == rhs.recStart
+                && lhs.speed == rhs.speed
+                && lhs.rotationSpeed == rhs.rotationSpeed
+                && lhs.gScale == rhs.gScale
+                && lhs.events == rhs.events
+        }
     }
 
     private let lock = NSLock()
@@ -238,9 +246,15 @@ public final class PositionTimelineCache: @unchecked Sendable {
         }
         entries.removeAll { $0.key == key } // stale horizon
         // Build past t so steady playback rebuilds at most every ~2 minutes.
+        // At the very start of a show, interactive placement edits mutate
+        // `recStart` on every drag tick. If a t=0 query eagerly builds 120s of
+        // future motion, each mouse move becomes a full timeline rebuild for
+        // that character. Keep start-state queries shallow; later playback and
+        // scrubbing still get the long lookahead that keeps transport smooth.
+        let lookahead = t < 0.1 ? 0.25 : 120.0
         let timeline = PositionTimeline(events: events, recStart: recStart, speed: speed,
                                         rotationSpeed: rotationSpeed,
-                                        gScale: gScale, upTo: t + 120)
+                                        gScale: gScale, upTo: t + lookahead)
         entries.insert((key, timeline), at: 0)
         if entries.count > Self.capacity { entries.removeLast() }
         return timeline

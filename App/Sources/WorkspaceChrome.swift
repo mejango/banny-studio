@@ -1097,7 +1097,7 @@ private struct TimelineOutlineSection: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        LazyVStack(alignment: .leading, spacing: 8) {
             HStack {
                 Text("SHOW OUTLINE").font(.caption.bold()).foregroundStyle(.secondary)
                 Spacer()
@@ -1293,7 +1293,7 @@ private struct CastBrowser: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        LazyVStack(alignment: .leading, spacing: 8) {
             HStack {
                 Text("CAST").font(.caption.bold()).foregroundStyle(.secondary)
                 Spacer()

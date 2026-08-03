@@ -65,7 +65,13 @@ struct SpeechMouthPreview: Equatable {
 @Observable
 final class StudioModel {
     var document: ShowDocument {
-        didSet { file?.updateDocumentSnapshot(document) }
+        didSet {
+            if documentSnapshotDeferralCount > 0 {
+                hasDeferredDocumentSnapshot = true
+            } else {
+                file?.updateDocumentSnapshot(document)
+            }
+        }
     }
     weak var file: ShowDocumentFile? {
         didSet {
@@ -92,6 +98,8 @@ final class StudioModel {
     private var recStartTime: Double = 0
     private var characterRecordUndoScene: SceneState?
     private var startWall: TimeInterval = 0
+    @ObservationIgnored private var documentSnapshotDeferralCount = 0
+    @ObservationIgnored private var hasDeferredDocumentSnapshot = false
 
     // Editor state.
     var selection: Set<Int> = [0] {
@@ -1188,6 +1196,21 @@ final class StudioModel {
     }
 
     var simulator: SceneSimulator { SceneSimulator(state: scene) }
+
+    /// Continuous gestures can mutate the value-type document dozens of times
+    /// per second. Keep the editor live, but avoid rebuilding autosave
+    /// snapshots for every drag tick; the final state is flushed on gesture end.
+    func beginDeferredDocumentSnapshots() {
+        documentSnapshotDeferralCount += 1
+    }
+
+    func endDeferredDocumentSnapshots() {
+        guard documentSnapshotDeferralCount > 0 else { return }
+        documentSnapshotDeferralCount -= 1
+        guard documentSnapshotDeferralCount == 0, hasDeferredDocumentSnapshot else { return }
+        hasDeferredDocumentSnapshot = false
+        file?.updateDocumentSnapshot(document)
+    }
 
     /// Timeline duration: web tlDurNeeded — max content end + 3s, clamped 20..3600.
     var duration: Double {

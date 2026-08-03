@@ -676,16 +676,24 @@ private final class PixelOutfitCanvas {
         ) else { return nil }
         context.interpolationQuality = .none
         context.draw(image, in: CGRect(x: 0, y: 0, width: size, height: size))
-        return stride(from: 0, to: bytes.count, by: 4).map { index in
+        var pixels: [UInt32] = []
+        pixels.reserveCapacity(size * size)
+        var index = 0
+        while index < bytes.count {
             let alpha = UInt32(bytes[index + 3])
-            guard alpha > 0 else { return 0 }
-            // CGContext returns premultiplied channels; convert back to the
-            // straight RGBA representation used by the paint tools.
-            let red = min(255, (UInt32(bytes[index]) * 255 + alpha / 2) / alpha)
-            let green = min(255, (UInt32(bytes[index + 1]) * 255 + alpha / 2) / alpha)
-            let blue = min(255, (UInt32(bytes[index + 2]) * 255 + alpha / 2) / alpha)
-            return red << 24 | green << 16 | blue << 8 | alpha
+            if alpha == 0 {
+                pixels.append(0)
+            } else {
+                // CGContext returns premultiplied channels; convert back to the
+                // straight RGBA representation used by the paint tools.
+                let red = min(255, (UInt32(bytes[index]) * 255 + alpha / 2) / alpha)
+                let green = min(255, (UInt32(bytes[index + 1]) * 255 + alpha / 2) / alpha)
+                let blue = min(255, (UInt32(bytes[index + 2]) * 255 + alpha / 2) / alpha)
+                pixels.append(red << 24 | green << 16 | blue << 8 | alpha)
+            }
+            index += 4
         }
+        return pixels
     }
 }
 
@@ -2558,12 +2566,18 @@ private enum OutfitImageProcessor {
             in: CGRect(x: -width / 2, y: -height / 2,
                        width: width, height: height)
         )
-        return stride(from: 0, to: bytes.count, by: 4).map { index in
-            UInt32(bytes[index]) << 24
-                | UInt32(bytes[index + 1]) << 16
-                | UInt32(bytes[index + 2]) << 8
-                | UInt32(bytes[index + 3])
+        var pixels: [UInt32] = []
+        pixels.reserveCapacity(count)
+        var index = 0
+        while index < bytes.count {
+            let red = UInt32(bytes[index]) << 24
+            let green = UInt32(bytes[index + 1]) << 16
+            let blue = UInt32(bytes[index + 2]) << 8
+            let alpha = UInt32(bytes[index + 3])
+            pixels.append(red | green | blue | alpha)
+            index += 4
         }
+        return pixels
     }
 
     static func process(

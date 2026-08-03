@@ -266,6 +266,21 @@ let ep1Exists = FileManager.default.fileExists(atPath: "/Users/jango/Documents/b
     }
 }
 
+@Test func startPoseCacheQueriesDoNotPrebuildLongTimelines() {
+    let events: [PerfEvent] = [
+        .key(t: 0, code: .arrowRight, down: true),
+        .key(t: 30, code: .arrowRight, down: false),
+    ]
+    let timeline = PositionTimelineCache.shared.timeline(
+        events: events,
+        recStart: StartPose(x: 0.5, depth: 0, face: 1),
+        speed: 320,
+        gScale: 0.6,
+        coveringAtLeast: 0
+    )
+    #expect(timeline.horizon < 1)
+}
+
 /// Hour-long shows must answer pose queries at tick rate: warm-timeline
 /// queries near t=3600 stay ~10s-of-integration cheap.
 @Test func hourLongPoseQueriesStayFast() {
