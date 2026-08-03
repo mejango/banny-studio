@@ -13,6 +13,13 @@ public struct FrameRenderer: Sendable {
     public static let stageFill = CGColor(red: 1, green: 0.992, blue: 0.949, alpha: 1) // #fffdf2
 
     let assets: AssetCatalog
+    /// Live preview can decode the 1600px source layers to the largest raster
+    /// the stage can actually display. Export leaves this nil and retains the
+    /// full-resolution assets.
+    let assetMaxPixelSize: Int?
+    /// Optional interactive-only cache. Export omits it and continues drawing
+    /// every source layer at full resolution.
+    let characterSpriteCache: CharacterSpriteCache?
     /// Slot render order between BODY layers, per web RENDER constant.
     private static let renderOrder: [Slot] = [
         .outfit(2), .body, .outfit(3), .outfit(4), .eyes, .outfit(6), .mouth,
@@ -24,8 +31,11 @@ public struct FrameRenderer: Sendable {
         case outfit(Int)
     }
 
-    public init(assets: AssetCatalog) {
+    public init(assets: AssetCatalog, assetMaxPixelSize: Int? = nil,
+                characterSpriteCache: CharacterSpriteCache? = nil) {
         self.assets = assets
+        self.assetMaxPixelSize = assetMaxPixelSize
+        self.characterSpriteCache = characterSpriteCache
     }
 
     /// Renders scene state at time t into `ctx`. `size` is the output frame (16:9).
@@ -118,7 +128,7 @@ public struct FrameRenderer: Sendable {
         }
 
         // Shadows first (web z = char z - 1, under every character).
-        if let shadow = assets.shadowImage() {
+        if let shadow = assets.shadowImage(maxPixelSize: assetMaxPixelSize) {
             for e in entries.sorted(by: { $0.placement.zIndex < $1.placement.zIndex }) {
                 for light in lights where light.intensity > 0.01 {
                     let s = StageLayout.shadow(for: e.placement, pose: e.pose,
@@ -375,6 +385,65 @@ public struct FrameRenderer: Sendable {
         }
 
         let box = CGRect(x: 0, y: 0, width: StageLayout.box, height: StageLayout.box)
+        if let cache = characterSpriteCache {
+            let key = characterSpriteKey(character: character, pose: pose, time: time,
+                                         pixelSize: cache.pixelSize)
+            if let sprite = cache.image(for: key, build: {
+                rasterizedCharacter(character, pose: pose, time: time,
+                                    pixelSize: cache.pixelSize)
+            }) {
+                drawImage(sprite, in: box, ctx: ctx)
+                ctx.restoreGState()
+                return
+            }
+        }
+        drawCharacterLayers(character, pose: pose, time: time, box: box, in: ctx)
+        ctx.restoreGState()
+    }
+
+    /// Appearance-only cache key: transforms and movement deliberately stay
+    /// outside the sprite so the same flattened art follows every live pose.
+    private func characterSpriteKey(character: Character, pose: CharacterPose,
+                                    time: Double, pixelSize: Int) -> String {
+        let outfit = pose.outfit.sorted { $0.key < $1.key }
+            .map { "\($0.key)=\($0.value)" }.joined(separator: ";")
+        let dissolves = pose.outfitAnim.sorted { $0.key < $1.key }.map { slot, anim in
+            let step = min(Self.fuzzSteps - 1,
+                           max(0, Int(anim.progress * Double(Self.fuzzSteps))))
+            return "\(slot)=\(anim.prev ?? "-")@\(step)"
+        }.joined(separator: ";")
+        var customNames = Array(pose.outfit.values)
+        customNames.append(contentsOf: pose.outfitAnim.values.compactMap(\.prev))
+        customNames.append(pose.outfit[5] ?? "default")
+        customNames.append(pose.outfit[7] ?? "default")
+        let custom = assets.customRenderToken(names: customNames, at: time)
+        return [String(pixelSize), String(assetMaxPixelSize ?? 0), custom,
+                character.body.rawValue, pose.eye.rawValue, pose.mouthShape.rawValue,
+                outfit, dissolves].joined(separator: "|")
+    }
+
+    private func rasterizedCharacter(_ character: Character, pose: CharacterPose,
+                                     time: Double, pixelSize: Int) -> CGImage? {
+        guard let context = CGContext(
+            data: nil,
+            width: pixelSize,
+            height: pixelSize,
+            bitsPerComponent: 8,
+            bytesPerRow: 0,
+            space: CGColorSpace(name: CGColorSpace.sRGB)!,
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ) else { return nil }
+        let scale = CGFloat(pixelSize) / CGFloat(StageLayout.box)
+        context.translateBy(x: 0, y: CGFloat(pixelSize))
+        context.scaleBy(x: scale, y: -scale)
+        context.interpolationQuality = .none
+        let box = CGRect(x: 0, y: 0, width: StageLayout.box, height: StageLayout.box)
+        drawCharacterLayers(character, pose: pose, time: time, box: box, in: context)
+        return context.makeImage()
+    }
+
+    private func drawCharacterLayers(_ character: Character, pose: CharacterPose,
+                                     time: Double, box: CGRect, in ctx: CGContext) {
         let outfit = pose.outfit
         let headWorn = outfit[4] != nil
         // Web applyOutfit exclusivity: suit hides suit bottom/top; head hides glasses/head top.
@@ -385,7 +454,9 @@ public struct FrameRenderer: Sendable {
         for slot in Self.renderOrder {
             switch slot {
             case .body:
-                if let img = assets.bodyImage(character.body) { drawImage(img, in: box, ctx: ctx) }
+                if let img = assets.bodyImage(character.body, maxPixelSize: assetMaxPixelSize) {
+                    drawImage(img, in: box, ctx: ctx)
+                }
             case .eyes:
                 guard !headWorn else { continue }
                 let option = outfit[5] ?? "default"
@@ -393,7 +464,8 @@ public struct FrameRenderer: Sendable {
                     option: option,
                     expression: pose.eye,
                     body: character.body,
-                    at: time
+                    at: time,
+                    maxPixelSize: assetMaxPixelSize
                 ) {
                     drawImage(img, in: box, ctx: ctx)
                 }
@@ -413,7 +485,8 @@ public struct FrameRenderer: Sendable {
                 case .closed: state = .closed
                 }
                 if let img = assets.mouthImage(option: option, state: state,
-                                               body: character.body, at: time) {
+                                               body: character.body, at: time,
+                                               maxPixelSize: assetMaxPixelSize) {
                     drawImage(img, in: box, ctx: ctx)
                 }
             case .outfit(let id):
@@ -426,34 +499,38 @@ public struct FrameRenderer: Sendable {
                     let n = Self.fuzzSteps
                     let step = min(n - 1, max(0, Int(anim.progress * Double(n))))
                     if let name = currentName,
-                       let img = assets.outfitImage(name, body: character.body, at: time) {
+                       let img = assets.outfitImage(name, body: character.body, at: time,
+                                                    maxPixelSize: assetMaxPixelSize) {
                         // Equip / swap-in: density climbs 0.2→0.8, then snaps full.
                         let density = Double(step + 1) / Double(n) * Self.fuzzMaxDensity
                         withFuzzClip(box: box, seed: id * 131 + step, density: density, ctx: ctx) {
                             drawImage(img, in: box, ctx: ctx)
                         }
                     } else if let prev = anim.prev,
-                              let pimg = assets.outfitImage(prev, body: character.body, at: time) {
+                              let pimg = assets.outfitImage(prev, body: character.body, at: time,
+                                                           maxPixelSize: assetMaxPixelSize) {
                         // Unequip: density falls 0.8→0.2, then gone.
                         let density = Double(n - step) / Double(n) * Self.fuzzMaxDensity
                         withFuzzClip(box: box, seed: id * 131 + step, density: density, ctx: ctx) {
                             drawImage(pimg, in: box, ctx: ctx)
                         }
-                    } else if id == 3, let img = assets.necklaceImage(body: character.body) {
+                    } else if id == 3, let img = assets.necklaceImage(
+                        body: character.body, maxPixelSize: assetMaxPixelSize) {
                         drawImage(img, in: box, ctx: ctx)
                     }
                 } else if id == 3, currentName == nil {
                     // Necklace slot falls back to the default block chain.
-                    if let img = assets.necklaceImage(body: character.body) {
+                    if let img = assets.necklaceImage(
+                        body: character.body, maxPixelSize: assetMaxPixelSize) {
                         drawImage(img, in: box, ctx: ctx)
                     }
                 } else if let name = currentName,
-                          let img = assets.outfitImage(name, body: character.body, at: time) {
+                          let img = assets.outfitImage(name, body: character.body, at: time,
+                                                       maxPixelSize: assetMaxPixelSize) {
                     drawImage(img, in: box, ctx: ctx)
                 }
             }
         }
-        ctx.restoreGState()
     }
 
     // MARK: - Outfit "fuzz" dissolve (ported from banny-minter useFuzz)

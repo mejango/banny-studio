@@ -89,6 +89,7 @@ public final class AssetCatalog: @unchecked Sendable {
         case mouthTight
     }
     private var customOutfits: [String: CustomEntry] = [:]
+    private var customRenderRevision = 0
     private let lock = NSLock()
 
     public init(catalogURL: URL, pngDirectory: URL) throws {
@@ -108,8 +109,10 @@ public final class AssetCatalog: @unchecked Sendable {
 
     // MARK: - Resolution
 
-    public func bodyImage(_ body: Body) -> CGImage? {
-        catalog.bodies[body.rawValue].flatMap { image(named: $0.file) }
+    public func bodyImage(_ body: Body, maxPixelSize: Int? = nil) -> CGImage? {
+        catalog.bodies[body.rawValue].flatMap {
+            image(named: $0.file, maxPixelSize: maxPixelSize)
+        }
     }
 
     public func outfitSlot(_ name: String) -> Int? {
@@ -130,12 +133,15 @@ public final class AssetCatalog: @unchecked Sendable {
         catalog.mouths[name] != nil || customImage(named: name, slot: 7) != nil
     }
 
-    public func outfitImage(_ name: String, body: Body, at time: Double = 0) -> CGImage? {
+    public func outfitImage(_ name: String, body: Body, at time: Double = 0,
+                            maxPixelSize: Int? = nil) -> CGImage? {
         lock.lock()
         let custom = customOutfits[name]?.image(at: time)
         lock.unlock()
         if let custom { return custom }
-        return catalog.outfits[name]?.ref.file(for: body).flatMap(image(named:))
+        return catalog.outfits[name]?.ref.file(for: body).flatMap {
+            image(named: $0, maxPixelSize: maxPixelSize)
+        }
     }
 
     /// A picker-sized copy of an outfit part. Wardrobe grids can contain every
@@ -146,16 +152,20 @@ public final class AssetCatalog: @unchecked Sendable {
         let custom = customOutfits[name]?.images.first
         lock.unlock()
         if let custom { return custom }
-        return catalog.outfits[name]?.ref.file(for: body).flatMap(thumbnail(named:))
+        return catalog.outfits[name]?.ref.file(for: body).flatMap {
+            thumbnail(named: $0)
+        }
     }
 
-    public func necklaceImage(body: Body) -> CGImage? {
-        catalog.necklace.file(for: body).flatMap(image(named:))
+    public func necklaceImage(body: Body, maxPixelSize: Int? = nil) -> CGImage? {
+        catalog.necklace.file(for: body).flatMap {
+            image(named: $0, maxPixelSize: maxPixelSize)
+        }
     }
 
     /// Eye layer for an expression: open art, the option's blink art, or a shared brow frame.
     public func eyesImage(option: String, expression: EyeExpression, body: Body,
-                          at time: Double = 0) -> CGImage? {
+                          at time: Double = 0, maxPixelSize: Int? = nil) -> CGImage? {
         let customState: CustomFaceState = expression == .closed ? .blink : .base
         if let custom = customImage(
             named: option,
@@ -164,14 +174,14 @@ public final class AssetCatalog: @unchecked Sendable {
             at: time
         ) { return custom }
         return eyesRef(option: option, expression: expression)?
-            .file(for: body).flatMap(image(named:))
+            .file(for: body).flatMap { image(named: $0, maxPixelSize: maxPixelSize) }
     }
 
     public func eyesThumbnail(option: String, expression: EyeExpression,
                               body: Body) -> CGImage? {
         if let custom = customImage(named: option, slot: 5, at: 0) { return custom }
         return eyesRef(option: option, expression: expression)?
-            .file(for: body).flatMap(thumbnail(named:))
+            .file(for: body).flatMap { thumbnail(named: $0) }
     }
 
     func mouth(option: String) -> MouthEntry? {
@@ -184,7 +194,7 @@ public final class AssetCatalog: @unchecked Sendable {
     }
 
     public func mouthImage(option: String, state: MouthState, body: Body,
-                           at time: Double = 0) -> CGImage? {
+                           at time: Double = 0, maxPixelSize: Int? = nil) -> CGImage? {
         let customState: CustomFaceState = switch state {
         case .closed: .base
         case .open: .mouthOpen
@@ -197,14 +207,14 @@ public final class AssetCatalog: @unchecked Sendable {
             at: time
         ) { return custom }
         return mouthRef(option: option, state: state)?
-            .file(for: body).flatMap(image(named:))
+            .file(for: body).flatMap { image(named: $0, maxPixelSize: maxPixelSize) }
     }
 
     public func mouthThumbnail(option: String, state: MouthState,
                                body: Body) -> CGImage? {
         if let custom = customImage(named: option, slot: 7, at: 0) { return custom }
         return mouthRef(option: option, state: state)?
-            .file(for: body).flatMap(thumbnail(named:))
+            .file(for: body).flatMap { thumbnail(named: $0) }
     }
 
     private func customImage(
@@ -225,12 +235,12 @@ public final class AssetCatalog: @unchecked Sendable {
         return entry.image(from: frames, at: time)
     }
 
-    public func shadowImage() -> CGImage? {
-        catalog.shadow.file.flatMap(image(named:))
+    public func shadowImage(maxPixelSize: Int? = nil) -> CGImage? {
+        catalog.shadow.file.flatMap { image(named: $0, maxPixelSize: maxPixelSize) }
     }
 
     public func sunImage() -> CGImage? {
-        catalog.sun.file.flatMap(image(named:))
+        catalog.sun.file.flatMap { image(named: $0) }
     }
 
     /// Human-readable slot name (web CATNAMES).
@@ -295,6 +305,7 @@ public final class AssetCatalog: @unchecked Sendable {
             frameDelay: max(0.04, min(2, frameDelay)),
             selectable: true
         )
+        customRenderRevision &+= 1
         lock.unlock()
         return true
     }
@@ -308,8 +319,22 @@ public final class AssetCatalog: @unchecked Sendable {
 
     public func unregisterCustomOutfit(_ name: String) {
         lock.lock()
-        customOutfits.removeValue(forKey: name)
+        if customOutfits.removeValue(forKey: name) != nil { customRenderRevision &+= 1 }
         lock.unlock()
+    }
+
+    /// Stable cache discriminator for project/user artwork plus the current
+    /// frame of any animated custom layers used by one composited character.
+    func customRenderToken(names: [String], at time: Double) -> String {
+        lock.lock()
+        defer { lock.unlock() }
+        var parts = [String(customRenderRevision)]
+        for name in Set(names).sorted() {
+            guard let entry = customOutfits[name], entry.images.count > 1 else { continue }
+            let frame = Int(floor(max(0, time) / entry.frameDelay)) % entry.images.count
+            parts.append("\(name):\(frame)")
+        }
+        return parts.joined(separator: ",")
     }
 
     /// Removes a deleted library item from wardrobe pickers without breaking
@@ -444,7 +469,10 @@ public final class AssetCatalog: @unchecked Sendable {
         }
     }
 
-    func image(named file: String) -> CGImage? {
+    func image(named file: String, maxPixelSize: Int? = nil) -> CGImage? {
+        if let maxPixelSize {
+            return thumbnail(named: file, maxPixelSize: max(1, maxPixelSize))
+        }
         lock.lock()
         defer { lock.unlock() }
         if let hit = cache[file] { return hit }
@@ -455,8 +483,7 @@ public final class AssetCatalog: @unchecked Sendable {
         return img
     }
 
-    private func thumbnail(named file: String) -> CGImage? {
-        let maxPixelSize = 400
+    private func thumbnail(named file: String, maxPixelSize: Int = 400) -> CGImage? {
         let key = "\(file)#thumb-\(maxPixelSize)"
         lock.lock()
         defer { lock.unlock() }

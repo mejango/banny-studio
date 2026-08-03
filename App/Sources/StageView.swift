@@ -12,8 +12,12 @@ struct StageView: View {
     let file: ShowDocumentFile
 
     @State private var media = StageMediaCache()
-    /// Wall-clock of the previous canvas draw — freeform/pen ticks use REAL
-    /// elapsed time, so a slow frame never dilates the animation clock.
+    /// The live editor flattens each distinct body/face/outfit stack once.
+    /// Placement and animation remain dynamic, but steady frames draw one
+    /// sprite per character instead of several large transparent layers.
+    @State private var characterSprites = CharacterSpriteCache(pixelSize: 800)
+    /// Wall-clock of the previous canvas draw — light/media pen ticks use real
+    /// elapsed time. Character puppeteering owns a separate monotonic clock.
     /// (Reference type: mutating it inside the Canvas doesn't re-invalidate.)
     private final class FrameClock { var last: Date? }
     @State private var frameClock = FrameClock()
@@ -47,10 +51,9 @@ struct StageView: View {
             && model.heldLightKeys.isEmpty && model.speechMouthPreview == nil
     }
 
-    /// The canvas only spans the full stage box while the overview needs the
-    /// wings; everything 60fps (playback, puppeteering, recording) runs on an
-    /// aspect-fit canvas — Canvas repaints its whole backing store per tick,
-    /// so its size IS the render cost.
+    /// The canvas spans the full stage box while the paused overview needs its
+    /// wings. Playback/recording use the smaller aspect-fit canvas; cached
+    /// character sprites keep interactive overview compositing bounded.
     private var overviewLayout: Bool {
         guard !model.playing, !model.recording else { return false }
         let cue = model.selectedBackgroundCueValue
@@ -73,7 +76,7 @@ struct StageView: View {
                 model.tick(now: Date.timeIntervalSinceReferenceDate)
                 let dt = min(0.1, max(0, timeline.date.timeIntervalSince(frameClock.last ?? timeline.date)))
                 frameClock.last = timeline.date
-                model.freeformNudge(dt: dt)
+                model.freeformNudge(now: ProcessInfo.processInfo.systemUptime)
                 model.lightTick(dt: dt)
                 model.imageRecordTick()
                 file.audioEngine?.tick(model: model)
@@ -143,7 +146,11 @@ struct StageView: View {
                     cg.saveGState()
                     cg.translateBy(x: rect.minX, y: rect.minY)
                     cg.scaleBy(x: s, y: s)
-                    FrameRenderer(assets: SharedAssets.catalog).draw(
+                    FrameRenderer(
+                        assets: SharedAssets.catalog,
+                        assetMaxPixelSize: characterSprites.pixelSize,
+                        characterSpriteCache: characterSprites
+                    ).draw(
                         scene: drawScene, at: model.time, size: frameSize,
                         background: bg,
                         visualAsset: { cue, t in

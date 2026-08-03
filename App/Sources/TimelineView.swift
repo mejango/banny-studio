@@ -711,14 +711,16 @@ struct StudioTimelineView: View {
     }
 
     /// The outfit-change dot near a click, if any.
-    private func outfitEvent(at point: CGPoint) -> (char: Int, index: Int)? {
+    private func outfitEvent(at point: CGPoint) -> OutfitEventSelection? {
         guard let row = row(at: point.y), case .character(let ci) = row,
               model.scene.characters.indices.contains(ci) else { return nil }
         let cy = laneTop(of: row) + height(of: row) - wardrobeStripH / 2
         guard abs(point.y - cy) < 9 else { return nil }
         for (i, ev) in model.scene.characters[ci].events.enumerated() {
             guard case .outfit(let t, _, _) = ev else { continue }
-            if abs(x(forTime: t) - point.x) < 7 { return (ci, i) }
+            if abs(x(forTime: t) - point.x) < 7 {
+                return OutfitEventSelection(char: ci, index: i)
+            }
         }
         return nil
     }
@@ -2336,18 +2338,19 @@ struct StudioTimelineView: View {
         let stripY = y + h - wardrobeStripH
         ctx.fill(Path(CGRect(x: 0, y: stripY, width: contentWidth + 40, height: wardrobeStripH)),
                  with: .color(theme.stripTint))
-        for ev in character.events {
+        for (eventIndex, ev) in character.events.enumerated() {
             guard case .outfit(let t, _, _) = ev else { continue }
             let cx = x(forTime: t)
             guard timelineContains(x: cx, padding: 7) else { continue }
             let cy = stripY + wardrobeStripH / 2
             ctx.fill(Path(ellipseIn: CGRect(x: cx - 3, y: cy - 3, width: 6, height: 6)),
                      with: .color(lightMode ? .black : .white))
-            if let sel = model.selectedOutfitEvent, sel.char == i,
-               character.events.indices.contains(sel.index), character.events[sel.index] == ev,
+            let selection = OutfitEventSelection(char: i, index: eventIndex)
+            if model.selectedOutfitEvents.contains(selection),
                case .outfit(_, let slot, let name) = ev {
                 ctx.stroke(Path(ellipseIn: CGRect(x: cx - 5.5, y: cy - 5.5, width: 11, height: 11)),
                            with: .color(.orange), lineWidth: 1.5)
+                guard model.selectedOutfitEvent == selection else { continue }
                 // What this dot changes, in a bubble above it.
                 let slotTitle = SharedAssets.catalog.slotName(slot) ?? "Slot \(slot)"
                 let itemTitle = name.map { n in
@@ -2896,7 +2899,7 @@ struct StudioTimelineView: View {
             let at = events.firstIndex { $0.t > ev.t } ?? events.count
             events.insert(ev, at: at)
             model.scene.characters[o.char].events = events
-            model.selectedOutfitEvent = (o.char, at)
+            model.selectedOutfitEvent = OutfitEventSelection(char: o.char, index: at)
             return
         }
         if let dc = draggingCue {
@@ -3237,7 +3240,7 @@ struct StudioTimelineView: View {
         return nil
     }
 
-    /// Marquee release: select every mark and clip inside the dragged region.
+    /// Marquee release: select every timeline item inside the dragged region.
     private func applyMarquee(_ a: CGPoint, _ b: CGPoint) {
         let rect = CGRect(x: min(a.x, b.x), y: min(a.y, b.y),
                           width: abs(a.x - b.x), height: abs(a.y - b.y))
@@ -3247,6 +3250,7 @@ struct StudioTimelineView: View {
         var marks: Set<PerfMark> = []
         var clips: Set<String> = []
         var bgCues: Set<String> = []
+        var outfitEvents: Set<OutfitEventSelection> = []
         for row in rows {
             let top = laneTop(of: row)
             let h = height(of: row)
@@ -3273,6 +3277,14 @@ struct StudioTimelineView: View {
                         marks.insert(mark)
                     }
                 }
+                let wardrobeTop = top + h - wardrobeStripH
+                if rect.maxY > wardrobeTop, rect.minY < top + h {
+                    for (index, event) in model.scene.characters[i].events.enumerated() {
+                        guard case .outfit(let t, _, _) = event,
+                              t >= t0, t <= t1 else { continue }
+                        outfitEvents.insert(OutfitEventSelection(char: i, index: index))
+                    }
+                }
             case .audio(let i):
                 if rect.maxY > top + presenceStripH {
                     for clip in model.scene.audioTracks[i].clips
@@ -3286,6 +3298,7 @@ struct StudioTimelineView: View {
         }
         model.selectedMarks = marks
         model.selectedClips = clips
+        model.selectedOutfitEvents = outfitEvents
         model.selectedReaction = nil
         model.selectedMouthCue = nil
         model.selectedBackgroundCues = bgCues

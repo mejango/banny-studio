@@ -23,6 +23,68 @@ private func writePNG(_ image: CGImage, to url: URL) throws {
     #expect(CGImageDestinationFinalize(dest))
 }
 
+@Test func interactiveSpriteCachePreservesCharacterComposition() throws {
+    let catalog = try AssetCatalog(assetsRoot: assetsRoot)
+    let scene = SceneState(characters: [
+        Character(
+            body: .orange,
+            x: 0.5,
+            baseOutfit: [5: "fierce", 6: "proff-glasses", 11: "doc-coat", 12: "proff-hair"],
+            events: [.key(t: 0, code: .keyM, down: true)],
+            name: "Cached")
+    ], lights: [])
+    let size = CGSize(width: 640, height: 360)
+    func render(_ renderer: FrameRenderer) throws -> Data {
+        let context = makeContext(size)
+        renderer.draw(scene: scene, at: 0.5, size: size, flipped: true, in: context)
+        return try #require(context.makeImage()?.dataProvider?.data as Data?)
+    }
+    let direct = try render(FrameRenderer(assets: catalog, assetMaxPixelSize: 800))
+    let cached = try render(FrameRenderer(
+        assets: catalog,
+        assetMaxPixelSize: 800,
+        characterSpriteCache: CharacterSpriteCache(pixelSize: 800)))
+    #expect(direct.count == cached.count)
+    var maxChannelDelta = 0
+    for offset in stride(from: 0, to: direct.count, by: 4) {
+        let delta = (0..<4).map { abs(Int(direct[offset + $0]) - Int(cached[offset + $0])) }.max() ?? 0
+        maxChannelDelta = max(maxChannelDelta, delta)
+    }
+    #expect(maxChannelDelta <= 1)
+}
+
+@Test func interactiveSpriteCacheReusesTenMovingCharacters() throws {
+    let catalog = try AssetCatalog(assetsRoot: assetsRoot)
+    let cache = CharacterSpriteCache(pixelSize: 800)
+    let outfits = [
+        (11, "goat-jersey"), (11, "doc-coat"), (10, "baggies"),
+        (9, "geisha-body"), (2, "pew-pew"), (12, "green-hat"),
+        (12, "chef-hat"), (8, "flops"), (11, "punk-jacket"), (9, "sweatsuit"),
+    ]
+    let characters = (0..<10).map { index in
+        Character(
+            body: Body.allCases[index % Body.allCases.count],
+            x: 0.08 + Double(index) * 0.09,
+            baseOutfit: [outfits[index].0: outfits[index].1],
+            events: [
+                .key(t: 0, code: index.isMultiple(of: 2) ? .arrowRight : .arrowLeft, down: true),
+                .key(t: 3, code: index.isMultiple(of: 2) ? .arrowRight : .arrowLeft, down: false),
+            ],
+            name: "Player \(index + 1)")
+    }
+    let scene = SceneState(characters: characters, lights: [Light(x: 0.8, y: 0.18)])
+    let size = CGSize(width: 640, height: 360)
+    let renderer = FrameRenderer(
+        assets: catalog,
+        assetMaxPixelSize: 800,
+        characterSpriteCache: cache)
+    let context = makeContext(size)
+    renderer.draw(scene: scene, at: 1, size: size, flipped: true, in: context)
+    #expect(cache.entryCount == 10)
+    renderer.draw(scene: scene, at: 1.5, size: size, flipped: true, in: context)
+    #expect(cache.entryCount == 10, "movement must reuse appearance sprites")
+}
+
 @Test func layoutMatchesWebMath() {
     // A default character at x=0.5, depth 0, H=900 → scale = H/900 = 1, feet on the ground line.
     let c = Character(body: .orange)

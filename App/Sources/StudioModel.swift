@@ -9,6 +9,20 @@ struct ReactionSelection: Equatable {
     var id: String
 }
 
+/// One wardrobe keyframe selected on the timeline. Outfit events live in the
+/// shared performance-event array, so the character and array index identify
+/// the dot while an edit is active.
+struct OutfitEventSelection: Hashable {
+    var char: Int
+    var index: Int
+}
+
+private struct MovedOutfitEvent {
+    var oldIndex: Int
+    var event: PerfEvent
+    var selected: Bool
+}
+
 /// One source-relative automatic mouth interval selected on the timeline.
 /// The index is stable while editing because mouth intervals are constrained
 /// between their neighbours instead of silently reordering beneath the user.
@@ -111,8 +125,20 @@ final class StudioModel {
     /// Marquee/multi-select of scene cues (move or delete together). The single
     /// `selectedBackgroundCue` stays the inspector/camera focus.
     var selectedBackgroundCues: Set<String> = []
-    /// A clicked outfit-change dot: (character, index into its events).
-    var selectedOutfitEvent: (char: Int, index: Int)?
+    /// Outfit-change dots selected by a click or timeline marquee.
+    var selectedOutfitEvents: Set<OutfitEventSelection> = []
+    /// Compatibility/focus accessor for controls that edit one wardrobe dot.
+    /// Setting it deliberately collapses a marquee selection to that one dot.
+    var selectedOutfitEvent: OutfitEventSelection? {
+        get {
+            selectedOutfitEvents.min {
+                ($0.char, $0.index) < ($1.char, $1.index)
+            }
+        }
+        set {
+            selectedOutfitEvents = newValue.map { [$0] } ?? []
+        }
+    }
     /// A clicked motion-change keyframe: (character, index into its events).
     var selectedMotionEvent: (char: Int, index: Int)?
     /// A reusable reaction block selected on a character lane.
@@ -351,7 +377,7 @@ final class StudioModel {
     var hasTimelineSelection: Bool {
         !selectedMarks.isEmpty || !selectedClips.isEmpty || selectedImageCue != nil
             || selectedLightCue != nil || selectedBackgroundCue != nil
-            || !selectedBackgroundCues.isEmpty || selectedOutfitEvent != nil
+            || !selectedBackgroundCues.isEmpty || !selectedOutfitEvents.isEmpty
             || selectedMotionEvent != nil || selectedReaction != nil
             || selectedMouthCue != nil
     }
@@ -367,7 +393,7 @@ final class StudioModel {
     /// drag-only — this excludes them to avoid hijacking light/camera arrows).
     var hasArrowMovableSelection: Bool {
         !selectedMarks.isEmpty || !selectedClips.isEmpty
-            || selectedOutfitEvent != nil || selectedMotionEvent != nil
+            || !selectedOutfitEvents.isEmpty || selectedMotionEvent != nil
             || !selectedBackgroundCues.isEmpty || selectedReaction != nil
             || selectedMouthCue != nil
     }
@@ -380,9 +406,14 @@ final class StudioModel {
         })
         let editableClips = selectedClips.filter { !isClipLocked($0) }
         let editableBackgrounds = selectedBackgroundCues.filter { !isBackgroundCueLocked($0) }
-        let editableOutfit = selectedOutfitEvent.map {
-            scene.characters[safe: $0.char]?.locked == false
-        } ?? false
+        let editableOutfits: [(selection: OutfitEventSelection, event: PerfEvent)] =
+            selectedOutfitEvents.compactMap { selection in
+                guard scene.characters[safe: selection.char]?.locked == false,
+                      scene.characters[selection.char].events.indices.contains(selection.index),
+                      case .outfit = scene.characters[selection.char].events[selection.index]
+                else { return nil }
+                return (selection, scene.characters[selection.char].events[selection.index])
+            }
         let editableMotion = selectedMotionEvent.map {
             scene.characters[safe: $0.char]?.locked == false
         } ?? false
@@ -393,7 +424,7 @@ final class StudioModel {
             scene.characters[safe: $0.character]?.locked == false
         } ?? false
         guard !editableMarks.isEmpty || !editableClips.isEmpty
-                || !editableBackgrounds.isEmpty || editableOutfit
+                || !editableBackgrounds.isEmpty || !editableOutfits.isEmpty
                 || editableMotion || editableReaction || editableMouth else { return }
         registerUndoSnapshot(label: "Nudge Selection")
         // Marks (per character).
@@ -430,11 +461,50 @@ final class StudioModel {
                 }
             }
         }
-        // Outfit event.
-        if editableOutfit, let sel = selectedOutfitEvent, scene.characters.indices.contains(sel.char),
-           scene.characters[sel.char].events.indices.contains(sel.index),
-           case .outfit(let t, _, _) = scene.characters[sel.char].events[sel.index] {
-            moveOutfitEvent(char: sel.char, index: sel.index, to: t + dt)
+        // Outfit events. Rebuild each event array in one pass so moving several
+        // dots cannot invalidate the remaining selected indices mid-operation.
+        if !editableOutfits.isEmpty {
+            let editedCharacters = Set(editableOutfits.map { $0.selection.char })
+            var remapped = Set(selectedOutfitEvents.filter {
+                !editedCharacters.contains($0.char)
+            })
+            for char in editedCharacters {
+                // Marks may already have moved and re-sorted this same array.
+                // Match the unchanged outfit values instead of stale indices.
+                var remaining = editableOutfits
+                    .filter { $0.selection.char == char }
+                    .map(\.event)
+                var tagged: [MovedOutfitEvent] = []
+                for (index, event) in scene.characters[char].events.enumerated() {
+                    let selected = remaining.firstIndex(of: event).map { match in
+                        remaining.remove(at: match)
+                        return true
+                    } ?? false
+                    let shifted: PerfEvent
+                    if selected, case .outfit(let t, let slot, let name) = event {
+                        shifted = .outfit(
+                            t: max(0, ((t + dt) * 1000).rounded() / 1000),
+                            slot: slot,
+                            name: name)
+                    } else {
+                        shifted = event
+                    }
+                    tagged.append(MovedOutfitEvent(
+                        oldIndex: index,
+                        event: shifted,
+                        selected: selected))
+                }
+                tagged.sort { lhs, rhs in
+                    lhs.event.t == rhs.event.t
+                        ? lhs.oldIndex < rhs.oldIndex
+                        : lhs.event.t < rhs.event.t
+                }
+                scene.characters[char].events = tagged.map { $0.event }
+                for (index, event) in tagged.enumerated() where event.selected {
+                    remapped.insert(OutfitEventSelection(char: char, index: index))
+                }
+            }
+            selectedOutfitEvents = remapped
         }
         // Motion keyframe.
         if editableMotion, let sel = selectedMotionEvent, scene.characters.indices.contains(sel.char),
@@ -559,7 +629,7 @@ final class StudioModel {
         let insertAt = events.firstIndex { $0.t > nt } ?? events.count
         events.insert(moved, at: insertAt)
         scene.characters[char].events = events
-        selectedOutfitEvent = (char, insertAt)
+        selectedOutfitEvent = OutfitEventSelection(char: char, index: insertAt)
     }
 
     /// ⌘C / right-click Copy: everything selected, times relative to the earliest.
@@ -763,6 +833,18 @@ final class StudioModel {
 
     /// Delete the timeline selection (anchors handled by the view).
     func deleteTimelineSelection() {
+        // Snapshot wardrobe event values before mark deletion re-sorts their
+        // shared event arrays and invalidates the timeline's selected indices.
+        let editableOutfits: [(character: Int, event: PerfEvent)] =
+            selectedOutfitEvents.compactMap { selection in
+                guard scene.characters.indices.contains(selection.char),
+                      !scene.characters[selection.char].locked,
+                      scene.characters[selection.char].events.indices.contains(selection.index),
+                      case .outfit = scene.characters[selection.char].events[selection.index]
+                else { return nil }
+                return (selection.char,
+                        scene.characters[selection.char].events[selection.index])
+            }
         let editableMarks = Set(selectedMarks.filter {
             scene.characters[safe: $0.character]?.locked != true
         })
@@ -788,16 +870,21 @@ final class StudioModel {
             }
             selectedImageCue = nil
         }
-        if let sel = selectedOutfitEvent {
-            if scene.characters.indices.contains(sel.char),
-               !scene.characters[sel.char].locked,
-               scene.characters[sel.char].events.indices.contains(sel.index),
-               case .outfit = scene.characters[sel.char].events[sel.index] {
-                registerUndoSnapshot(label: "Delete Outfit Change")
-                scene.characters[sel.char].events.remove(at: sel.index)
+        if !editableOutfits.isEmpty {
+            registerUndoSnapshot(label: editableOutfits.count == 1
+                ? "Delete Outfit Change" : "Delete Outfit Changes")
+            for char in Set(editableOutfits.map(\.character)) {
+                var remaining = editableOutfits
+                    .filter { $0.character == char }
+                    .map(\.event)
+                scene.characters[char].events.removeAll { event in
+                    guard let match = remaining.firstIndex(of: event) else { return false }
+                    remaining.remove(at: match)
+                    return true
+                }
             }
-            selectedOutfitEvent = nil
         }
+        selectedOutfitEvents = []
         if let sel = selectedMotionEvent {
             if scene.characters.indices.contains(sel.char),
                !scene.characters[sel.char].locked,
@@ -1864,11 +1951,19 @@ final class StudioModel {
     /// A puppeteering key went down/up. Recording → capture; paused at start →
     /// reposition the start pose (web's "parked at the start" freeform behavior).
     func liveKey(code: EventCode, down: Bool) {
+        if !recording, !playing {
+            let now = ProcessInfo.processInfo.systemUptime
+            // Account for the exact interval through this key transition even
+            // if no render landed immediately before the NSEvent.
+            freeformNudge(now: now)
+            if down { heldCodes.insert(code) } else { heldCodes.remove(code) }
+            freeformKey(code: code, down: down)
+            freeformWallLast = now
+            return
+        }
         if down { heldCodes.insert(code) } else { heldCodes.remove(code) }
         if recording {
             recordEvent(code: code, down: down)
-        } else if !playing {
-            freeformKey(code: code, down: down)
         }
     }
 
@@ -1885,6 +1980,9 @@ final class StudioModel {
     private var freeformStarts: [Int: StartPose] = [:]
     private(set) var freeformClock: Double = 0
     private var freeformLastEvent: Double = 0
+    /// Monotonic wall clock for stopped-stage puppeteering. Rendering samples
+    /// this clock; it does not own it, so dropped frames never slow movement.
+    @ObservationIgnored private var freeformWallLast: TimeInterval?
 
     var freeformActive: Bool { !freeformEvents.isEmpty }
     /// Latest gravity-scaled landing among synthetic one-shot actions. Resolve
@@ -1924,6 +2022,7 @@ final class StudioModel {
         freeformStarts = [:]
         freeformClock = 0
         freeformLastEvent = 0
+        freeformWallLast = nil
         cameraFreeform = nil
     }
 
@@ -1946,13 +2045,23 @@ final class StudioModel {
         freeformLastEvent = freeformClock
     }
 
-    /// Advances the freeform clock at 60 Hz (driven by the stage render loop).
+    /// Advances against monotonic wall time. The stage asks for the current
+    /// value when it draws, but frame rate cannot dilate live movement.
     /// Freeform is a PREVIEW: the "Set start state" button (or hitting REC)
     /// commits the complete spatial state shown on stage.
-    func freeformNudge(dt: Double) {
+    func freeformNudge(now: TimeInterval) {
         guard !playing, !recording, freeformActive,
-              !heldCodes.isEmpty || freeformSettling else { return }
-        freeformClock += dt
+              !heldCodes.isEmpty || freeformSettling else {
+            freeformWallLast = nil
+            return
+        }
+        defer { freeformWallLast = now }
+        guard let last = freeformWallLast else { return }
+        let elapsed = now - last
+        // A multi-second gap is an app sleep/window suspension, not a held-key
+        // gesture. Normal slow frames retain their full elapsed time.
+        guard elapsed >= 0, elapsed < 1 else { return }
+        freeformClock += elapsed
     }
 
     /// Freeform preview pose: synthetic live events simulated on top of the pose

@@ -40,7 +40,7 @@ struct KeyCaptureView: NSViewRepresentable {
                     }), let ei = model.scene.characters[ci].events.firstIndex(where: {
                         if case .outfit = $0 { return true }; return false
                     }) else { Self.dbg("no outfit events"); return }
-                    model.selectedOutfitEvent = (ci, ei)
+                    model.selectedOutfitEvent = OutfitEventSelection(char: ci, index: ei)
                     Self.dbg("before: char \(ci) events \(model.scene.characters[ci].events.count) idx \(ei)")
                     let ev = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [],
                                               timestamp: 0, windowNumber: 0, context: nil,
