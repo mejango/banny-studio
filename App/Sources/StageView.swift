@@ -109,6 +109,7 @@ struct StageView: View {
                 model.applyImageRecordingPreview(to: &scene)
                 let bg = scene.activeBackgroundCue(at: model.time).flatMap {
                     media.background(cue: $0, at: model.time, playing: model.playing,
+                                     transportRate: model.transportPlaybackRate,
                                      revision: model.backgroundRevision,
                                      assets: model.document.assets, file: file)
                 }
@@ -155,6 +156,7 @@ struct StageView: View {
                         background: bg,
                         visualAsset: { cue, t in
                             media.visual(cue: cue, at: t, playing: model.playing,
+                                         transportRate: model.transportPlaybackRate,
                                          revision: model.backgroundRevision,
                                          assets: model.document.assets, file: file)
                         },
@@ -242,6 +244,7 @@ struct StageView: View {
         guard let cue,
               model.time >= cue.start, model.time < cue.start + cue.dur,
               let bg = media.background(cue: cue, at: model.time, playing: false,
+                                        transportRate: model.transportPlaybackRate,
                                         revision: model.backgroundRevision,
                                         assets: model.document.assets, file: file)
         else { return nil }
@@ -266,6 +269,7 @@ struct StageView: View {
         guard let cue = model.selectedImageCueValue else { return }
         guard model.time >= cue.start, model.time < cue.start + cue.dur,
               let img = media.visual(cue: cue, at: model.time, playing: model.playing,
+                                     transportRate: model.transportPlaybackRate,
                                      revision: model.backgroundRevision,
                                      assets: model.document.assets, file: file) else { return }
         let W = Double(frame.width), H = Double(frame.height)
@@ -523,6 +527,7 @@ struct StageView: View {
         let x = (location.x - stageRect.minX) / stageRect.width
         let y = (location.y - stageRect.minY) / stageRect.height
         let image = media.visual(cue: cue, at: model.time, playing: model.playing,
+                                 transportRate: model.transportPlaybackRate,
                                  revision: model.backgroundRevision,
                                  assets: model.document.assets, file: file)
         let assetAspect = image.map { Double($0.width) / Double(max(1, $0.height)) } ?? 1
@@ -640,7 +645,8 @@ final class StageMediaCache {
         return img
     }
 
-    func background(cue: BackgroundCue, at t: Double, playing: Bool, revision: Int,
+    func background(cue: BackgroundCue, at t: Double, playing: Bool,
+                    transportRate: Double, revision: Int,
                     assets: [Asset], file: ShowDocumentFile) -> (image: CGImage, crop: Crop)? {
         refreshIfNeeded(revision: revision)
         guard let asset = assets.first(where: { $0.id == cue.assetID }) else { return nil }
@@ -655,7 +661,8 @@ final class StageMediaCache {
             let playbackID = "scene-\(cue.id)"
             if playing,
                let img = playerFrame(assetID: asset.id, playbackID: playbackID,
-                                     at: t - cue.start, file: file) {
+                                     at: t - cue.start, transportRate: transportRate,
+                                     file: file) {
                 return (img, cue.crop)
             }
             if !playing { pausePlayers() }
@@ -666,7 +673,8 @@ final class StageMediaCache {
 
     /// A floating visual cue can be a still, an animated GIF, or a movie. Its
     /// animation clock starts at the cue's leading edge and loops within it.
-    func visual(cue: ImageCue, at t: Double, playing: Bool, revision: Int,
+    func visual(cue: ImageCue, at t: Double, playing: Bool,
+                transportRate: Double, revision: Int,
                 assets: [Asset], file: ShowDocumentFile) -> CGImage? {
         refreshIfNeeded(revision: revision)
         guard let asset = assets.first(where: { $0.id == cue.assetID }) else { return nil }
@@ -682,7 +690,8 @@ final class StageMediaCache {
             let canStreamForward = !cue.playback.reverse && cue.playback.freezeAt == nil
             if playing, canStreamForward,
                let img = playerFrame(assetID: asset.id, playbackID: playbackID,
-                                     at: t - cue.start, playback: cue, file: file) {
+                                     at: t - cue.start, playback: cue,
+                                     transportRate: transportRate, file: file) {
                 return img
             }
             if !playing { pausePlayers() }
@@ -727,6 +736,7 @@ final class StageMediaCache {
     /// hardware and we pull whatever frame is current each render tick.
     private func playerFrame(assetID: String, playbackID: String,
                              at t: Double, playback cue: ImageCue? = nil,
+                             transportRate: Double,
                              file: ShowDocumentFile) -> CGImage? {
         if players[playbackID] == nil {
             guard !failed.contains(assetID), let url = mediaURL(assetID: assetID, file: file) else { return nil }
@@ -746,7 +756,7 @@ final class StageMediaCache {
         guard let p = players[playbackID] else { return nil }
         let vt = cue.map { $0.sourceTime(at: $0.start + max(0, t), sourceDuration: p.duration) }
             ?? max(0, t).truncatingRemainder(dividingBy: p.duration)
-        let desiredRate = Float(max(0.01, cue?.playback.rate ?? 1))
+        let desiredRate = Float(max(0.01, (cue?.playback.rate ?? 1) * transportRate))
         if abs(p.player.rate - desiredRate) > 0.001 {
             p.player.playImmediately(atRate: desiredRate)
         }

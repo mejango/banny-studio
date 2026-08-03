@@ -55,14 +55,18 @@ public final class AudioGraph {
 
     public let engine = AVAudioEngine()
     public private(set) var clipNodes: [ClipNode] = []
+    /// Realtime review speed. Export and voice previews use the default 1×.
+    public private(set) var playbackRate: Double = 1
     /// Track bus mixers keyed by owner: "c<idx>" for characters, track id for audio tracks.
     private var buses: [String: AVAudioMixerNode] = [:]
     private var masterLimiter: AVAudioUnitEffect?
+    private var transportPitch: AVAudioUnitTimePitch?
 
     public init() {}
 
     /// Wires every clip in the scene. `audioURL` resolves a clip id to its media file.
-    public func build(scene: SceneState, audioURL: (String) -> URL?) throws {
+    public func build(scene: SceneState, playbackRate: Double = 1,
+                      audioURL: (String) -> URL?) throws {
         let main = engine.mainMixerNode
         let stereo = AVAudioFormat(standardFormatWithSampleRate: 44100, channels: 2)!
         let master = AVAudioMixerNode()
@@ -70,7 +74,22 @@ public final class AudioGraph {
         engine.attach(master)
         engine.attach(limiter)
         engine.connect(master, to: limiter, format: stereo)
-        engine.connect(limiter, to: main, format: stereo)
+        self.playbackRate = min(2, max(0.5, playbackRate))
+        if abs(self.playbackRate - 1) > 0.000_001 {
+            // One pitch-preserving transport unit accelerates the complete mix,
+            // including scheduled gaps and effect tails. This is both cheaper
+            // and more accurate than changing every clip's voice-pitch unit.
+            let pitch = AVAudioUnitTimePitch()
+            pitch.rate = Float(self.playbackRate)
+            pitch.overlap = 8
+            engine.attach(pitch)
+            engine.connect(limiter, to: pitch, format: stereo)
+            engine.connect(pitch, to: main, format: stereo)
+            transportPitch = pitch
+        } else {
+            engine.connect(limiter, to: main, format: stereo)
+            transportPitch = nil
+        }
         masterLimiter = limiter
 
         func bus(for key: String, fx: Fx) -> AVAudioMixerNode {

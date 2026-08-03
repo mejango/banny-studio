@@ -4057,6 +4057,7 @@ struct TransportBar: View {
                 Image(systemName: model.playing && !model.recording ? "pause.fill" : "play.fill")
             }
             .help("Play/Pause (Space)")
+            PlaybackSpeedMenu(model: model)
             // Record cluster: REC + what it records (armed event groups).
             HStack(spacing: 6) {
                 Text(recTargetNames)

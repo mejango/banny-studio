@@ -82,6 +82,11 @@ final class StudioModel {
     var time: Double = 0
     var playing = false
     var recording = false
+    static let playbackRateOptions: [Double] = [0.5, 1, 1.5, 2]
+    private(set) var playbackRate: Double = 1
+    /// Recording always follows wall time so a take cannot be stretched by a
+    /// review-speed preference.
+    var transportPlaybackRate: Double { recording ? 1 : playbackRate }
     var recTargets: Set<Int> = []
     private var recPunched: [Int: Set<EventGroup>] = [:]
     private var recStartTime: Double = 0
@@ -1193,7 +1198,7 @@ final class StudioModel {
 
     func tick(now: TimeInterval) {
         guard playing else { return }
-        time = now - startWall
+        time = (now - startWall) * transportPlaybackRate
         if time >= duration {
             time = duration
             pause()
@@ -1204,7 +1209,7 @@ final class StudioModel {
         guard !playing else { pause(); return }
         clearFreeform()
         playing = true
-        startWall = Date.timeIntervalSinceReferenceDate - time
+        anchorPlaybackClock()
         file?.audioEngine?.syncPlayback(self)
     }
 
@@ -1224,9 +1229,31 @@ final class StudioModel {
         clearFreeform()
         time = max(0, min(duration, t))
         if playing {
-            startWall = Date.timeIntervalSinceReferenceDate - time
+            anchorPlaybackClock()
             file?.audioEngine?.syncPlayback(self)
         }
+    }
+
+    /// Changes review speed without moving the playhead. Audio is rebuilt from
+    /// that exact show time; stage video adjusts its player rate on the next
+    /// frame. Recording deliberately rejects rate changes and stays at 1×.
+    func setPlaybackRate(_ requestedRate: Double) {
+        guard !recording else { return }
+        let rate = min(2, max(0.5, requestedRate))
+        guard abs(rate - playbackRate) > 0.000_001 else { return }
+
+        let now = Date.timeIntervalSinceReferenceDate
+        if playing { tick(now: now) }
+        playbackRate = rate
+        guard playing else { return }
+        anchorPlaybackClock(now: now)
+        file?.audioEngine?.syncPlayback(self)
+    }
+
+    private func anchorPlaybackClock(
+        now: TimeInterval = Date.timeIntervalSinceReferenceDate
+    ) {
+        startWall = now - time / transportPlaybackRate
     }
 
     // MARK: - Recording (web tlRec / recEvent / punch-in)
@@ -1800,7 +1827,7 @@ final class StudioModel {
             imageSamples = [(time, p.x, p.y, p.scale, p.rotation)]
             recording = true
             playing = true
-            startWall = Date.timeIntervalSinceReferenceDate - time
+            anchorPlaybackClock()
             file?.audioEngine?.syncPlayback(self)
             return
         }
@@ -1817,7 +1844,7 @@ final class StudioModel {
             cameraPen = (cam.x, cam.y, cam.zoom)
             recording = true
             playing = true
-            startWall = Date.timeIntervalSinceReferenceDate - time
+            anchorPlaybackClock()
             file?.audioEngine?.syncPlayback(self)
             return
         }
@@ -1834,7 +1861,7 @@ final class StudioModel {
             lightPen = (state.x, state.y, state.intensity, state.size)
             recording = true
             playing = true
-            startWall = Date.timeIntervalSinceReferenceDate - time
+            anchorPlaybackClock()
             file?.audioEngine?.syncPlayback(self)
             return
         }
@@ -1872,7 +1899,7 @@ final class StudioModel {
         }
         recording = true
         playing = true
-        startWall = Date.timeIntervalSinceReferenceDate - time
+        anchorPlaybackClock()
         file?.audioEngine?.syncPlayback(self)
     }
 

@@ -156,6 +156,7 @@ struct WorkspaceTransport: View {
         HStack(spacing: 3) {
             rewindButton
             playbackButton
+            PlaybackSpeedMenu(model: model)
             timecodeLabel
             performanceKeysButton
             recordButton
@@ -242,6 +243,53 @@ struct WorkspaceTransport: View {
         let minutes = tenths / 600
         let seconds = (tenths / 10) % 60
         return String(format: "%02d:%02d.%d", minutes, seconds, tenths % 10)
+    }
+}
+
+/// Compact transport-rate picker shared by the wide workspace and the
+/// timeline/phone transport. The selected rate stays visible at a glance.
+struct PlaybackSpeedMenu: View {
+    @Bindable var model: StudioModel
+
+    var body: some View {
+        Menu {
+            ForEach(StudioModel.playbackRateOptions, id: \.self) { rate in
+                Button {
+                    model.setPlaybackRate(rate)
+                } label: {
+                    if abs(model.playbackRate - rate) < 0.000_001 {
+                        Label(Self.label(for: rate), systemImage: "checkmark")
+                    } else {
+                        Text(Self.label(for: rate))
+                    }
+                }
+            }
+        } label: {
+            HStack(spacing: 2) {
+                Text(Self.label(for: model.playbackRate))
+                    .monospacedDigit()
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 7, weight: .bold))
+            }
+            .font(.system(size: 10, weight: .semibold))
+            .frame(minWidth: 36, minHeight: 24)
+            .contentShape(Rectangle())
+        }
+        .menuStyle(.button)
+        .buttonStyle(.borderless)
+        .menuIndicator(.hidden)
+        .disabled(model.recording)
+        .help(model.recording
+              ? "Recording always runs at 1×"
+              : "Playback speed")
+        .accessibilityLabel("Playback speed, \(Self.label(for: model.playbackRate))")
+        .accessibilityIdentifier("playback-speed")
+    }
+
+    private static func label(for rate: Double) -> String {
+        rate.rounded() == rate
+            ? "\(Int(rate))×"
+            : String(format: "%.1f×", rate)
     }
 }
 

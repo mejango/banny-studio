@@ -42,10 +42,14 @@ final class VoiceRecipeAudioGraphTests: XCTestCase {
             clips: [speech, imported],
             speechVoice: SpeechVoiceProfile(recipe: recipe))
         let graph = AudioGraph()
-        try graph.build(scene: SceneState(characters: [character])) { _ in url }
+        try graph.build(scene: SceneState(characters: [character]), playbackRate: 2) { _ in url }
 
         let speechNode = try XCTUnwrap(graph.clipNodes.first { $0.clip.id == "speech" })
         let importedNode = try XCTUnwrap(graph.clipNodes.first { $0.clip.id == "imported" })
+        XCTAssertEqual(graph.playbackRate, 2, accuracy: 0.001)
+        XCTAssertEqual(speechNode.pitch.rate, 1, accuracy: 0.001,
+                       "Transport speed should not overwrite per-voice pitch processing")
+        XCTAssertEqual(importedNode.pitch.rate, 1, accuracy: 0.001)
         XCTAssertEqual(speechNode.pitch.pitch, Float(recipe.resolved.pitchCents), accuracy: 0.01)
         XCTAssertGreaterThan(speechNode.distortion.wetDryMix, 0)
         XCTAssertGreaterThan(speechNode.delay.wetDryMix, 0)

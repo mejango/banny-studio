@@ -46,7 +46,8 @@ final class LiveAudioEngine: StudioAudioEngine {
         graph?.engine.stop()
         let g = AudioGraph()
         do {
-            try g.build(scene: model.scene) { audioURL(for: $0) }
+            try g.build(scene: model.scene,
+                        playbackRate: model.transportPlaybackRate) { audioURL(for: $0) }
             guard !g.clipNodes.isEmpty else { graph = nil; return }
             try g.engine.start()
             g.schedule(from: model.time)
