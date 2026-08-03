@@ -24,6 +24,7 @@ struct StageView: View {
     @AppStorage("studioLightMode") private var lightMode = false
     @State private var dragLast: CGSize?
     @State private var stageDragUndoRegistered = false
+    @State private var stageDragDefersDocumentSnapshots = false
     /// A recording drag latches only when it starts on the selected visual.
     /// The offset keeps the exact grabbed point under the mouse/finger instead
     /// of snapping the asset's pivot to it.
@@ -409,6 +410,7 @@ struct StageView: View {
                     if !lightDrag.resolved { resolveLightDrag(at: value.startLocation) }
                     guard lightDrag.active else { return }
                     beginStageDragUndo("Move Light Cue")
+                    beginStageDragDocumentSnapshotDeferral()
                     model.selectedLightCue = cue.id
                     // Move the entire path by the handle delta. The point
                     // under the cursor therefore follows exactly, and the
@@ -431,6 +433,7 @@ struct StageView: View {
                     // Grab-the-world preview. The Scenes inspector's “Set start
                     // state” is the explicit, undoable commit.
                     guard !model.isTrackLocked(kind) else { return }
+                    beginStageDragDocumentSnapshotDeferral()
                     model.cameraFreeformDrag(dx: dx, dy: dy)
 
                 case .audio, .image:
@@ -438,6 +441,7 @@ struct StageView: View {
                           let cue = model.selectedImageCueValue,
                           model.time >= cue.start, model.time < cue.start + cue.dur else { return }
                     beginStageDragUndo("Place Visual")
+                    beginStageDragDocumentSnapshotDeferral()
                     let inSecondHalf = model.time > cue.start + cue.dur / 2
                     model.updateSelectedImageCue { cue in
                         if var end = cue.to, inSecondHalf {
@@ -457,6 +461,7 @@ struct StageView: View {
                           model.scene.characters.indices.contains(index),
                           !model.scene.characters[index].locked else { return }
                     beginStageDragUndo("Place Character")
+                    beginStageDragDocumentSnapshotDeferral()
                     var c = model.scene.characters[index]
                     c.x = min(1 - 0.044, max(0.044, c.x + dx))
                     c.depth = min(1, max(-12,
@@ -470,9 +475,22 @@ struct StageView: View {
             .onEnded { _ in
                 dragLast = nil
                 stageDragUndoRegistered = false
+                endStageDragDocumentSnapshotDeferral()
                 imageDrag = ImageDragState()
                 lightDrag = LightDragState()
             }
+    }
+
+    private func beginStageDragDocumentSnapshotDeferral() {
+        guard !stageDragDefersDocumentSnapshots else { return }
+        model.beginDeferredDocumentSnapshots()
+        stageDragDefersDocumentSnapshots = true
+    }
+
+    private func endStageDragDocumentSnapshotDeferral() {
+        guard stageDragDefersDocumentSnapshots else { return }
+        stageDragDefersDocumentSnapshots = false
+        model.endDeferredDocumentSnapshots()
     }
 
     private func beginStageDragUndo(_ label: String) {
