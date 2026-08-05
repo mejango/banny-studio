@@ -130,6 +130,15 @@ enum TimelineMath {
         shifted.sort { $0.t < $1.t }
         return shifted
     }
+
+    /// Mirrors the millisecond rounding applied to the underlying key events
+    /// so the selection remains exactly equal to the mark redrawn afterward.
+    static func shiftedMark(_ mark: PerfMark, by dt: Double) -> PerfMark {
+        let start = max(0, ((mark.start + dt) * 1000).rounded() / 1000)
+        let shiftedEnd = max(0, ((mark.end + dt) * 1000).rounded() / 1000)
+        return PerfMark(character: mark.character, code: mark.code,
+                        start: start, end: max(shiftedEnd, start + 0.04))
+    }
 }
 
 /// One timeline row = one track (character / image / audio / background).
@@ -139,6 +148,11 @@ enum TrackRow: Equatable {
     case audio(Int)
     case light(Int)
     case background(Int)
+
+    var characterIndex: Int? {
+        guard case .character(let index) = self else { return nil }
+        return index
+    }
 
     /// Stable identity for per-track height storage.
     func key(in scene: SceneState) -> String {
@@ -164,6 +178,7 @@ struct StudioTimelineView: View {
     private var theme: Theme { lightMode ? .light : .dark }
     @State private var zoom: Double = 1
     @State private var dragStartMarks: [Int: [PerfEvent]]?
+    @State private var dragSelectedMarks: Set<PerfMark>?
     @State private var resizing: (mark: PerfMark, leading: Bool, baseEdge: Double,
                                   baseEvents: [PerfEvent])?
     @State private var draggingClip: (id: String, baseStart: Double, baseDur: Double,
@@ -1468,8 +1483,8 @@ struct StudioTimelineView: View {
                         // Click on the name itself → rename in place.
                         renamingText = label(for: row)
                         renamingRow = row
-                        model.selectedTrackKey = row.key(in: model.scene)
-                        if case .character(let i) = row { model.selection = [i] }
+                        model.selectTrack(key: row.key(in: model.scene),
+                                          characterIndex: row.characterIndex)
                     } else {
                         let key = row.key(in: model.scene)
                         if let last = lastGutterTap, Date().timeIntervalSince(last.at) < 0.45,
@@ -1480,10 +1495,7 @@ struct StudioTimelineView: View {
                         } else {
                             lastGutterTap = (key, Date())
                         }
-                        model.selectedTrackKey = key
-                        if case .character(let i) = row {
-                            model.selection = [i]
-                        }
+                        model.selectTrack(key: key, characterIndex: row.characterIndex)
                     }
                 }
                 resizingTrack = nil
@@ -2724,6 +2736,7 @@ struct StudioTimelineView: View {
                 }
                 dragStartClips = nil
                 dragStartMarks = nil
+                dragSelectedMarks = nil
                 resizing = nil
                 runDrag = nil
                 bgGroupDrag = nil
@@ -2993,6 +3006,7 @@ struct StudioTimelineView: View {
                     #endif
                     dragStartMarks = Dictionary(uniqueKeysWithValues:
                         Set(model.selectedMarks.map(\.character)).map { ($0, model.scene.characters[$0].events) })
+                    dragSelectedMarks = model.selectedMarks
                     dragStartClips = Dictionary(uniqueKeysWithValues:
                         model.selectedClips.compactMap { id in clipStart(id: id).map { (id, $0) } })
                 }
@@ -3020,6 +3034,7 @@ struct StudioTimelineView: View {
                     // Part of a marquee selection — drag the whole group.
                     dragStartMarks = Dictionary(uniqueKeysWithValues:
                         Set(model.selectedMarks.map(\.character)).map { ($0, model.scene.characters[$0].events) })
+                    dragSelectedMarks = model.selectedMarks
                     dragStartClips = Dictionary(uniqueKeysWithValues:
                         model.selectedClips.compactMap { id in clipStart(id: id).map { (id, $0) } })
                 } else {
@@ -3129,11 +3144,15 @@ struct StudioTimelineView: View {
         guard dragStartMarks != nil || dragStartClips != nil else { return }
         let dt = Double(value.translation.width / pxPerSecond)
         if let base = dragStartMarks {
+            let originalSelection = dragSelectedMarks ?? model.selectedMarks
             for (charIndex, events) in base {
-                let charMarks = Set(model.selectedMarks.filter { $0.character == charIndex })
+                let charMarks = Set(originalSelection.filter { $0.character == charIndex })
                 model.scene.characters[charIndex].events =
                     TimelineMath.shiftMarks(charMarks, in: events, by: dt)
             }
+            model.selectedMarks = Set(originalSelection.map {
+                base[$0.character] == nil ? $0 : TimelineMath.shiftedMark($0, by: dt)
+            })
         }
         if let clips = dragStartClips {
             for (id, s) in clips {
@@ -3424,8 +3443,8 @@ struct StudioTimelineView: View {
         lastTap = (point, now)
         if let lockedRow = row(at: y),
            model.isTrackLocked(kind(of: lockedRow)) {
-            model.selectedTrackKey = lockedRow.key(in: model.scene)
-            if case .character(let index) = lockedRow { model.selection = [index] }
+            model.selectTrack(key: lockedRow.key(in: model.scene),
+                              characterIndex: lockedRow.characterIndex)
             return
         }
         if let row = row(at: y), y - laneTop(of: row) < presenceStripH,
@@ -3620,16 +3639,11 @@ struct StudioTimelineView: View {
             mediaAddAt = (ai, max(0, (time(forX: point.x) * 10).rounded() / 10),
                           point.x, point.y)
         } else {
-            model.selectedMarks = []
-            model.selectedClips = []
-            model.selectedImageCue = nil
-            model.selectedBackgroundCue = nil
-            model.selectedBackgroundCues = []
-            model.selectedLightCue = nil
-            model.selectedReaction = nil
-            model.selectedMouthCue = nil
-            if case .character(let i) = row(at: y) {
-                model.selection = [i]
+            if case .character(let index)? = row(at: y) {
+                model.selectTrack(key: TrackRow.character(index).key(in: model.scene),
+                                  characterIndex: index)
+            } else {
+                model.clearTimelineItemSelection()
             }
         }
     }

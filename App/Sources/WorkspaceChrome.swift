@@ -1394,8 +1394,7 @@ private struct CastBrowser: View {
     }
 
     private func select(_ index: Int) {
-        model.selection = [index]
-        model.selectedTrackKey = "c-\(index)"
+        model.selectTrack(key: "c-\(index)", characterIndex: index)
     }
 
     private func addCharacter(_ body: BannyCore.Body) {

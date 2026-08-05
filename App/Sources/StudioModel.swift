@@ -113,6 +113,10 @@ final class StudioModel {
     var activeSceneIndex: Int
     /// Held live keys → the codes currently down, per character (drives live sim while recording).
     private(set) var heldCodes: Set<EventCode> = []
+    /// Brief stopped-stage spatial presses are precision nudges: one press is
+    /// one simulation tick. Longer presses retain real-time hold behavior.
+    @ObservationIgnored private var freeformPresses:
+        [EventCode: (wall: TimeInterval, clock: Double)] = [:]
     /// Live-only mouth poses while the character inspector previews a voice.
     var speechMouthPreview: SpeechMouthPreview?
     @ObservationIgnored var speechMouthPreviewCleanupTask: Task<Void, Never>?
@@ -153,6 +157,31 @@ final class StudioModel {
     /// Track key whose gutter-card popover should open (double-click on the cell).
     var inspectorRequest: String?
     var selectedLightCue: String?
+
+    /// A track selection and a timeline-item selection are different editing
+    /// modes. Explicitly choosing a track must retire any older item selection
+    /// so performance keys cannot keep editing an invisible/stale target.
+    func clearTimelineItemSelection() {
+        selectedMarks = []
+        selectedClips = []
+        selectedImageCue = nil
+        selectedBackgroundCue = nil
+        selectedBackgroundCues = []
+        selectedLightCue = nil
+        selectedOutfitEvents = []
+        selectedMotionEvent = nil
+        selectedReaction = nil
+        selectedMouthCue = nil
+    }
+
+    func selectTrack(key: String, characterIndex: Int? = nil) {
+        clearTimelineItemSelection()
+        selectedTrackKey = key
+        if let characterIndex, scene.characters.indices.contains(characterIndex) {
+            selection = [characterIndex]
+        }
+    }
+
     private var markClipboard: [(character: Int, code: EventCode, start: Double, end: Double)] = []
 
     /// ⌘C: copy selected marks (times kept relative to the earliest mark).
@@ -448,8 +477,7 @@ final class StudioModel {
             }
             selectedMarks = Set(selectedMarks.map { mark in
                 guard editableMarks.contains(mark) else { return mark }
-                return PerfMark(character: mark.character, code: mark.code,
-                                start: max(0, mark.start + dt), end: max(0, mark.end + dt))
+                return TimelineMath.shiftedMark(mark, by: dt)
             })
         }
         // Clips (character + audio tracks).
@@ -1980,11 +2008,33 @@ final class StudioModel {
     func liveKey(code: EventCode, down: Bool) {
         if !recording, !playing {
             let now = ProcessInfo.processInfo.systemUptime
-            // Account for the exact interval through this key transition even
-            // if no render landed immediately before the NSEvent.
-            freeformNudge(now: now)
-            if down { heldCodes.insert(code) } else { heldCodes.remove(code) }
-            freeformKey(code: code, down: down)
+            if down {
+                freeformNudge(now: now)
+                heldCodes.insert(code)
+                if Self.freeformPrecisionCodes.contains(code), freeformPresses[code] == nil {
+                    freeformPresses[code] = (now, freeformClock)
+                }
+                freeformKey(code: code, down: true)
+            } else {
+                let press = freeformPresses.removeValue(forKey: code)
+                let isSoloSpatialPress = heldCodes == [code]
+                if let press, isSoloSpatialPress,
+                   now - press.wall <= Self.freeformTapMaximumDuration {
+                    // A normal key tap can straddle two display refreshes. End
+                    // its synthetic hold after exactly one fixed simulator step
+                    // so arrows and +/− each make one predictable adjustment.
+                    let releaseTime = press.clock + Self.freeformTapStep
+                    freeformClock = max(freeformClock, releaseTime)
+                    heldCodes.remove(code)
+                    freeformKey(code: code, down: false, at: releaseTime)
+                } else {
+                    // Held input stays wall-clock based, including the fraction
+                    // between the final render and the physical key-up event.
+                    freeformNudge(now: now)
+                    heldCodes.remove(code)
+                    freeformKey(code: code, down: false)
+                }
+            }
             freeformWallLast = now
             return
         }
@@ -1996,6 +2046,7 @@ final class StudioModel {
 
     private func releaseAllLiveKeys() {
         heldCodes = []
+        freeformPresses = [:]
     }
 
     // MARK: - Freeform puppeteering (transport stopped)
@@ -2010,6 +2061,12 @@ final class StudioModel {
     /// Monotonic wall clock for stopped-stage puppeteering. Rendering samples
     /// this clock; it does not own it, so dropped frames never slow movement.
     @ObservationIgnored private var freeformWallLast: TimeInterval?
+    private static let freeformTapStep = 1.0 / 60.0
+    private static let freeformTapMaximumDuration = 0.18
+    private static let freeformPrecisionCodes: Set<EventCode> = [
+        .arrowLeft, .arrowRight, .arrowUp, .arrowDown,
+        .rotateLeft, .rotateRight, .zoomIn, .zoomOut,
+    ]
 
     var freeformActive: Bool { !freeformEvents.isEmpty }
     /// Latest gravity-scaled landing among synthetic one-shot actions. Resolve
@@ -2050,10 +2107,12 @@ final class StudioModel {
         freeformClock = 0
         freeformLastEvent = 0
         freeformWallLast = nil
+        freeformPresses = [:]
         cameraFreeform = nil
     }
 
-    private func freeformKey(code: EventCode, down: Bool) {
+    private func freeformKey(code: EventCode, down: Bool, at eventTime: Double? = nil) {
+        let stamp = eventTime ?? freeformClock
         let targets: Set<Int>
         if scenesTrackSelected, let index = scenePreviewCharacterIndex {
             targets = [index]
@@ -2067,7 +2126,11 @@ final class StudioModel {
                 freeformStarts[i] = StartPose(x: pose.x, depth: pose.depth, face: pose.face,
                                               spin: pose.spin, zoom: pose.zoom)
             }
-            freeformEvents[i, default: []].append(.key(t: freeformClock, code: code, down: down))
+            let event = PerfEvent.key(t: stamp, code: code, down: down)
+            var events = freeformEvents[i, default: []]
+            let insertion = events.firstIndex { $0.t > stamp } ?? events.count
+            events.insert(event, at: insertion)
+            freeformEvents[i] = events
         }
         freeformLastEvent = freeformClock
     }

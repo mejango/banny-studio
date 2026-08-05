@@ -216,8 +216,8 @@ struct WideEditor: View {
     }
 
     private func openInspector(for row: TrackRow) {
-        model.selectedTrackKey = row.key(in: model.scene)
-        if case .character(let index) = row { model.selection = [index] }
+        model.selectTrack(key: row.key(in: model.scene),
+                          characterIndex: row.characterIndex)
         withAnimation(.easeInOut(duration: 0.18)) { drawer = .inspect }
     }
 
@@ -694,8 +694,8 @@ struct TrackCardButton: View {
 
     var body: some View {
         Button {
-            model.selectedTrackKey = row.key(in: model.scene)
-            if case .character(let i) = row { model.selection = [i] }
+            model.selectTrack(key: row.key(in: model.scene),
+                              characterIndex: row.characterIndex)
             if let onInspect { onInspect(row) } else { open = true }
         } label: {
             face

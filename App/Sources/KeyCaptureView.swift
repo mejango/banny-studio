@@ -232,6 +232,7 @@ struct KeyCaptureView: NSViewRepresentable {
             }
             if down, let digit = digitMap[event.keyCode] {
                 guard model.scene.characters.indices.contains(digit) else { return true }
+                model.clearTimelineItemSelection()
                 if event.modifierFlags.contains(.shift) {
                     if model.selection.contains(digit) { model.selection.remove(digit) }
                     else { model.selection.insert(digit) }
