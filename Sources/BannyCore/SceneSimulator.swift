@@ -130,9 +130,11 @@ public struct SceneSimulator: Sendable {
         return min(1, max(0, smoothstep + frontLoad))
     }
 
-    public func pose(characterIndex: Int, at t: Double) -> CharacterPose {
+    public func pose(characterIndex: Int, at t: Double,
+                     timelineLookahead: Double = 120) -> CharacterPose {
         let c = state.characters[characterIndex]
-        let base = Self.basePose(for: c, in: state, at: t)
+        let base = Self.basePose(for: c, in: state, at: t,
+                                 timelineLookahead: timelineLookahead)
         var resolved = base
         let definitions = Dictionary(state.reactionLibrary.map { ($0.id, $0) },
                                      uniquingKeysWith: { first, _ in first })
@@ -162,7 +164,8 @@ public struct SceneSimulator: Sendable {
             performer.rotationSpeed = motion.rotationSpeed
             performer.recStart = StartPose(x: 0.5, depth: 0, face: base.face,
                                            spin: 0, zoom: 1)
-            let reaction = Self.basePose(for: performer, in: state, at: localT)
+            let reaction = Self.basePose(for: performer, in: state, at: localT,
+                                         timelineLookahead: timelineLookahead)
             Self.overlay(reaction, definition: definition, intensity: instance.intensity,
                          on: &resolved, relativeTo: base)
         }
@@ -171,14 +174,15 @@ public struct SceneSimulator: Sendable {
 
     /// Pose from the character's ordinary event stream, before reaction blocks.
     private static func basePose(for c: Character, in state: SceneState,
-                                 at t: Double) -> CharacterPose {
+                                 at t: Double, timelineLookahead: Double) -> CharacterPose {
         // Checkpointed + cached: bit-identical to simulatePosition, but a
         // query costs ~10s of integration, not t — hour-long shows stay 60fps.
         let sim = PositionTimelineCache.shared.timeline(
             events: c.events,
             recStart: c.recStart ?? StartPose(x: c.x, depth: c.depth, face: c.face),
             speed: c.speed, rotationSpeed: c.rotationSpeed,
-            gScale: state.gScale, coveringAtLeast: t)
+            gScale: state.gScale, coveringAtLeast: t,
+            lookahead: timelineLookahead)
             .pose(at: t)
 
         // State scan (web resetToTime): last-writer-wins over events strictly before t.

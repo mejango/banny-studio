@@ -50,6 +50,7 @@ public struct FrameRenderer: Sendable {
                      background: (image: CGImage, crop: Crop)? = nil,
                      imageAsset: ((String) -> CGImage?)? = nil,
                      visualAsset: ((ImageCue, Double) -> CGImage?)? = nil,
+                     poseProvider: ((Int) -> CharacterPose)? = nil,
                      poseOverride: ((Int, CharacterPose) -> CharacterPose)? = nil,
                      flipped: Bool = false,
                      in ctx: CGContext) {
@@ -120,7 +121,7 @@ public struct FrameRenderer: Sendable {
         var entries: [(index: Int, pose: CharacterPose, placement: StageLayout.Placement)] = []
         for i in scene.characters.indices
             where !scene.characters[i].hidden && scene.characters[i].presence.isPresent(at: t) {
-            var pose = sim.pose(characterIndex: i, at: t)
+            var pose = poseProvider?(i) ?? sim.pose(characterIndex: i, at: t)
             if let poseOverride { pose = poseOverride(i, pose) }
             let placement = StageLayout.place(pose: pose, character: scene.characters[i],
                                               scene: scene, stageWidth: W, virtualHeight: H)

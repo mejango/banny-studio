@@ -284,3 +284,26 @@ let ep1Exists = FileManager.default.fileExists(atPath: "/Users/jango/Documents/b
     let elapsed = ContinuousClock.now - t0
     #expect(elapsed < .milliseconds(100), "60 hour-mark queries took \(elapsed)")
 }
+
+@Test func interactiveTimelineCacheUsesRequestedLookahead() {
+    let cache = PositionTimelineCache()
+    let events: [PerfEvent] = [
+        .key(t: 0, code: .arrowRight, down: true),
+        .key(t: 1.0 / 60.0, code: .arrowRight, down: false),
+    ]
+    let timeline = cache.timeline(
+        events: events,
+        recStart: StartPose(x: 0.5, depth: 0, face: 1),
+        speed: 320,
+        gScale: 0.6,
+        coveringAtLeast: 0,
+        lookahead: 0.25)
+
+    #expect(timeline.horizon == 0.25)
+    #expect(timeline.pose(at: 1.0 / 60.0) == simulatePosition(
+        events: events,
+        recStart: StartPose(x: 0.5, depth: 0, face: 1),
+        speed: 320,
+        gScale: 0.6,
+        at: 1.0 / 60.0))
+}

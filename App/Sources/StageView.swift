@@ -47,7 +47,7 @@ struct StageView: View {
     /// paused edits redraw via model observation instead. (No always-on loop
     /// for ambient GIFs — idle must cost nothing; GIFs animate in playback.)
     private var renderLoopPaused: Bool {
-        !model.playing && model.heldCodes.isEmpty && !model.freeformSettling
+        !model.playing && model.heldCodes.isEmpty && !model.freeformAnimating
             && model.heldLightKeys.isEmpty && model.speechMouthPreview == nil
     }
 
@@ -129,9 +129,11 @@ struct StageView: View {
                 let speechPreview = model.speechMouthPreview
                 let previewMouth = speechPreview?.shape(
                     at: ProcessInfo.processInfo.systemUptime)
+                var livePoses: [Int: CharacterPose] = [:]
                 let poseOverride: ((Int, CharacterPose) -> CharacterPose)? =
                     hasFreeformPreview || previewMouth != nil
                         ? { i, pose in
+                            if let cached = livePoses[i] { return cached }
                             var livePose = hasFreeformPreview
                                 ? model.freeformPose(characterIndex: i, basePose: pose) ?? pose
                                 : pose
@@ -140,9 +142,22 @@ struct StageView: View {
                                !model.heldCodes.contains(.keyM) {
                                 livePose.mouthShape = previewMouth
                             }
+                            livePoses[i] = livePose
                             return livePose
                         }
                         : nil
+                // Paused overview draws the same cast twice (dimmed wings,
+                // then the framed result). Resolve each recorded pose once per
+                // canvas frame so event-dense shows do not simulate the cast
+                // twice while the user is arranging it.
+                let stageSimulator = SceneSimulator(state: scene)
+                var basePoses: [Int: CharacterPose] = [:]
+                let poseProvider: (Int) -> CharacterPose = { i in
+                    if let cached = basePoses[i] { return cached }
+                    let pose = stageSimulator.pose(characterIndex: i, at: model.time)
+                    basePoses[i] = pose
+                    return pose
+                }
                 let render: (SceneState, CGContext) -> Void = { drawScene, cg in
                     cg.saveGState()
                     cg.translateBy(x: rect.minX, y: rect.minY)
@@ -160,6 +175,7 @@ struct StageView: View {
                                          revision: model.backgroundRevision,
                                          assets: model.document.assets, file: file)
                         },
+                        poseProvider: poseProvider,
                         poseOverride: poseOverride,
                         in: cg)
                     cg.restoreGState()

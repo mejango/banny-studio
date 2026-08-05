@@ -2005,9 +2005,12 @@ final class StudioModel {
 
     /// A puppeteering key went down/up. Recording → capture; paused at start →
     /// reposition the start pose (web's "parked at the start" freeform behavior).
-    func liveKey(code: EventCode, down: Bool) {
+    func liveKey(code: EventCode, down: Bool, timestamp: TimeInterval? = nil) {
         if !recording, !playing {
-            let now = ProcessInfo.processInfo.systemUptime
+            // NSEvent timestamps describe when the physical edge occurred,
+            // even when a busy main thread delivers it later. On-screen
+            // controls omit one and use the current monotonic clock.
+            let now = timestamp ?? ProcessInfo.processInfo.systemUptime
             if down {
                 freeformNudge(now: now)
                 heldCodes.insert(code)
@@ -2019,14 +2022,21 @@ final class StudioModel {
                 let press = freeformPresses.removeValue(forKey: code)
                 let isSoloSpatialPress = heldCodes == [code]
                 if let press, isSoloSpatialPress,
+                   now >= press.wall,
                    now - press.wall <= Self.freeformTapMaximumDuration {
                     // A normal key tap can straddle two display refreshes. End
                     // its synthetic hold after exactly one fixed simulator step
                     // so arrows and +/− each make one predictable adjustment.
                     let releaseTime = press.clock + Self.freeformTapStep
-                    freeformClock = max(freeformClock, releaseTime)
+                    // Render work may have advanced the preview clock while
+                    // this short edge pair waited in the event queue. A tap is
+                    // exactly one tick, independent of that UI latency.
+                    freeformClock = releaseTime
                     heldCodes.remove(code)
                     freeformKey(code: code, down: false, at: releaseTime)
+                    // A quantized spatial tap has no continuing animation: its
+                    // final pose is fully resolved at the fixed release time.
+                    freeformAnimating = false
                 } else {
                     // Held input stays wall-clock based, including the fraction
                     // between the final render and the physical key-up event.
@@ -2035,7 +2045,7 @@ final class StudioModel {
                     freeformKey(code: code, down: false)
                 }
             }
-            freeformWallLast = now
+            freeformWallLast = freeformAnimating ? now : nil
             return
         }
         if down { heldCodes.insert(code) } else { heldCodes.remove(code) }
@@ -2056,7 +2066,13 @@ final class StudioModel {
     /// like playback. Cleared whenever the transport moves.
     private(set) var freeformEvents: [Int: [PerfEvent]] = [:]
     private var freeformStarts: [Int: StartPose] = [:]
-    private(set) var freeformClock: Double = 0
+    /// Canvas-owned animation time. The Canvas already has a 60 Hz schedule;
+    /// publishing every clock step through Observation rebuilt the complete
+    /// Stage view tree at 60 Hz and starved keyboard delivery in dense shows.
+    @ObservationIgnored private(set) var freeformClock: Double = 0
+    /// Observable edge for starting/stopping the Canvas schedule. Unlike the
+    /// clock, this changes only when freeform animation begins or settles.
+    private(set) var freeformAnimating = false
     private var freeformLastEvent: Double = 0
     /// Monotonic wall clock for stopped-stage puppeteering. Rendering samples
     /// this clock; it does not own it, so dropped frames never slow movement.
@@ -2108,6 +2124,7 @@ final class StudioModel {
         freeformLastEvent = 0
         freeformWallLast = nil
         freeformPresses = [:]
+        freeformAnimating = false
         cameraFreeform = nil
     }
 
@@ -2133,6 +2150,7 @@ final class StudioModel {
             freeformEvents[i] = events
         }
         freeformLastEvent = freeformClock
+        freeformAnimating = true
     }
 
     /// Advances against monotonic wall time. The stage asks for the current
@@ -2141,17 +2159,23 @@ final class StudioModel {
     /// commits the complete spatial state shown on stage.
     func freeformNudge(now: TimeInterval) {
         guard !playing, !recording, freeformActive,
-              !heldCodes.isEmpty || freeformSettling else {
+              !heldCodes.isEmpty || freeformAnimating else {
             freeformWallLast = nil
             return
         }
-        defer { freeformWallLast = now }
+        defer {
+            if freeformAnimating { freeformWallLast = now }
+        }
         guard let last = freeformWallLast else { return }
         let elapsed = now - last
         // A multi-second gap is an app sleep/window suspension, not a held-key
         // gesture. Normal slow frames retain their full elapsed time.
         guard elapsed >= 0, elapsed < 1 else { return }
         freeformClock += elapsed
+        if heldCodes.isEmpty, !freeformSettling {
+            freeformAnimating = false
+            freeformWallLast = nil
+        }
     }
 
     /// Freeform preview pose: synthetic live events simulated on top of the pose
@@ -2171,7 +2195,12 @@ final class StudioModel {
         c.wobble = basePose.wobble
         c.size = basePose.size
         s.characters[i] = c
-        var pose = SceneSimulator(state: s).pose(characterIndex: i, at: freeformClock)
+        // Freeform streams change on every key edge and are normally only a
+        // few seconds long. Avoid the playback cache's two-minute lookahead,
+        // which made dense shows precompute thousands of unnecessary frames
+        // on each placement tap.
+        var pose = SceneSimulator(state: s).pose(
+            characterIndex: i, at: freeformClock, timelineLookahead: 5)
         pose.outfit = basePose.outfit
         pose.activeSubtitle = basePose.activeSubtitle
         return pose

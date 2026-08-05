@@ -226,7 +226,8 @@ public final class PositionTimelineCache: @unchecked Sendable {
 
     public func timeline(events: [PerfEvent], recStart: StartPose?, speed: Double,
                          rotationSpeed: Double = 90,
-                         gScale: Double, coveringAtLeast t: Double) -> PositionTimeline {
+                         gScale: Double, coveringAtLeast t: Double,
+                         lookahead: Double = 120) -> PositionTimeline {
         let key = Key(events: events, recStart: recStart, speed: speed,
                       rotationSpeed: rotationSpeed, gScale: gScale)
         lock.lock()
@@ -237,10 +238,13 @@ public final class PositionTimelineCache: @unchecked Sendable {
             return hit.timeline
         }
         entries.removeAll { $0.key == key } // stale horizon
-        // Build past t so steady playback rebuilds at most every ~2 minutes.
+        // Playback builds well past t so it rebuilds at most every ~2 minutes.
+        // Interactive callers can request a much shorter lookahead: their
+        // synthetic event stream changes on every key edge, so speculatively
+        // integrating two minutes there only blocks the editor's main thread.
         let timeline = PositionTimeline(events: events, recStart: recStart, speed: speed,
                                         rotationSpeed: rotationSpeed,
-                                        gScale: gScale, upTo: t + 120)
+                                        gScale: gScale, upTo: t + max(0, lookahead))
         entries.insert((key, timeline), at: 0)
         if entries.count > Self.capacity { entries.removeLast() }
         return timeline

@@ -4139,13 +4139,15 @@ struct TransportBar: View {
         .background(theme.ruler)
     }
 
-    /// The selected character's pose right now — drives the chip glow while
-    /// playing back or holding keys. Nil when idle so nothing simulates.
+    /// The selected character's recorded pose right now. Stopped-stage chip
+    /// glow comes directly from `heldCodes`; simulating the dense recorded
+    /// timeline against the short freeform clock on every UI frame is both
+    /// semantically wrong and needlessly expensive.
     private var livePose: CharacterPose? {
-        guard model.playing || !model.heldCodes.isEmpty,
+        guard model.playing,
               let i = model.selection.first,
               model.scene.characters.indices.contains(i) else { return nil }
-        return model.simulator.pose(characterIndex: i, at: model.playing ? model.time : model.freeformClock)
+        return model.simulator.pose(characterIndex: i, at: model.time)
     }
 
     /// Is this group's motion happening right now (held key or played-back event)?

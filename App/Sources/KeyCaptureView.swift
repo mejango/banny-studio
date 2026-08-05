@@ -212,14 +212,16 @@ struct KeyCaptureView: NSViewRepresentable {
                 else if event.keyCode == 24 || event.keyCode == 69 { rz = .zoomIn }   // = / keypad +
                 else if event.keyCode == 27 || event.keyCode == 78 { rz = .zoomOut }  // - / keypad −
                 if let rz {
-                    if !event.isARepeat { model.liveKey(code: rz, down: down) }
+                    if !event.isARepeat {
+                        model.liveKey(code: rz, down: down, timestamp: event.timestamp)
+                    }
                     return true
                 }
             }
             if event.isARepeat { return codeMap[event.keyCode] != nil } // swallow OS repeats
 
             if let code = codeMap[event.keyCode] {
-                model.liveKey(code: code, down: down)
+                model.liveKey(code: code, down: down, timestamp: event.timestamp)
                 return true
             }
             if down, event.keyCode == 51 || event.keyCode == 117 { // Delete / ⌦
