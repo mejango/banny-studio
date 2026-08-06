@@ -72,10 +72,11 @@ Read-only commands accept `.bs` packages and `.bs.zip` archives (plus legacy
 unpacked package and reject unknown options and JSON fields. Use
 `banny capabilities --json` as the exact AI/automation contract.
 
-For a checkout-independent binary, download the latest `banny-*-macos.zip`
-from [GitHub Releases](https://github.com/mejango/banny-studio/releases), or
-build it locally with `swift build -c release --product banny`. Release tags are
-`cli-v<version>` and the binary reports its own CLI/schema versions.
+Build locally with `swift build -c release --product banny`. Signed,
+checkout-independent `banny-*-macos.zip` archives will appear on
+[GitHub Releases](https://github.com/mejango/banny-studio/releases) when a
+`cli-v<version>` tag runs the notarized release workflow; the binary reports
+its own CLI/schema versions.
 
 The CLI is designed for agents as well as humans: every automatable operation
 accepts `--json`, argument and operation failures become structured JSON on
