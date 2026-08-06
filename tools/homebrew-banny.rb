@@ -11,6 +11,7 @@ class Banny < Formula
   end
 
   test do
-    assert_match "usage: banny", shell_output("#{bin}/banny", 1)
+    assert_match "banny #{version}", shell_output("#{bin}/banny --version")
+    assert_match '"contractVersion":2', shell_output("#{bin}/banny capabilities --json")
   end
 end

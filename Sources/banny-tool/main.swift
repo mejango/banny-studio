@@ -4,6 +4,6 @@ import BannyCLI
 do {
     exit(try await runCLI(arguments: CommandLine.arguments))
 } catch {
-    FileHandle.standardError.write(Data(("\(error)\n").utf8))
-    exit(1)
+    writeCLIError(error, json: CommandLine.arguments.contains("--json"))
+    exit(cliExitCode(for: error))
 }

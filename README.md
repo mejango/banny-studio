@@ -44,13 +44,20 @@ swift run banny schema --example                       # canonical v4 example
 swift run banny catalog --json                         # wardrobe vocabulary
 swift run banny voices --json                          # installed TTS voices
 swift run banny new show.bs --characters 2             # editable Finder package
+swift run banny character set-start show.bs \
+  --character 1 --x 0.35 --face right --json            # typed atomic start pose
+swift run banny performance add show.bs \
+  --character 1 --code ArrowRight --at 1 --duration .5  # typed held action
 swift run banny migrate legacy-show.bs --dry-run       # explicit v2/v3 → v4
 swift run banny apply show.bs patch.json --dry-run     # atomic RFC 6902
 swift run banny tts show.bs --character 1 --captions   # speech + mouth cues
 swift run banny media import show.bs take.wav \
   --character 1 --kind microphone --lipsync            # portable recorded take
 swift run banny validate show.bs                       # strict preflight
-swift run banny preview show.bs frame.png --t 2        # deterministic frame
+swift run banny state show.bs --at 2 --json             # resolved simulator state
+swift run banny preview show.bs frames.png \
+  --times 0,2,4,6 --columns 2                           # deterministic contact sheet
+swift run banny ship show.bs --plan --720 --json        # cost/readiness plan
 swift run banny ship show.bs out.mp4 --720             # headless mp4 export
 swift run banny pack show.bs show.bs.zip               # standard ZIP handoff
 banny skill install --target all                       # Codex + Claude skill
@@ -65,7 +72,16 @@ Read-only commands accept `.bs` packages and `.bs.zip` archives (plus legacy
 unpacked package and reject unknown options and JSON fields. Use
 `banny capabilities --json` as the exact AI/automation contract.
 
-Install without a checkout: `brew install mejango/banny/banny`.
+For a checkout-independent binary, download the latest `banny-*-macos.zip`
+from [GitHub Releases](https://github.com/mejango/banny-studio/releases), or
+build it locally with `swift build -c release --product banny`. Release tags are
+`cli-v<version>` and the binary reports its own CLI/schema versions.
+
+The CLI is designed for agents as well as humans: every automatable operation
+accepts `--json`, argument and operation failures become structured JSON on
+stderr when that flag is present, and `help <command> --json` gives exact
+options and bounds. Mutation commands support dry runs and optimistic SHA-256
+concurrency; long exports can stream JSONL progress with `--progress-json`.
 
 `ep1-native-ship.mp4` in this folder is ep1 shipped natively (160.9 s,
 1280×720@30, H.264+AAC) from `show/ep1/beat1/staging/1.json`.
@@ -100,8 +116,6 @@ node tools/extract-assets.mjs [path/to/index.html]
 
 ## Known gaps vs the webapp (tracked, not blockers)
 
-- Timeline box-select (rubber band) not yet wired; single/⇧ selection, drag,
-  edge-resize, ⌘-click split, ⌘C/⌘V, and delete all work.
 - Editor previews video backgrounds at ~7 fps (export samples exact frames).
 - No in-app player/library screen yet; watching = Ship or QuickTime.
 - Scene-preset backgrounds (web SCENES) were empty in the source build — n/a.

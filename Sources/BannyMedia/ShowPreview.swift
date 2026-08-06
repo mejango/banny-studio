@@ -34,6 +34,53 @@ public enum ShowPreview {
         guard CGImageDestinationFinalize(dest) else { throw PreviewError.encodeFailed }
     }
 
+    /// A compact visual sweep over several times. Agents can inspect a scene's
+    /// continuity with one image instead of issuing a series of frame renders.
+    public static func writeContactSheet(contents: ShowPackage.Contents,
+                                         assets: AssetCatalog,
+                                         at times: [Double],
+                                         columns requestedColumns: Int?,
+                                         to url: URL) throws -> (width: Int, height: Int, columns: Int) {
+        guard !times.isEmpty else { throw PreviewError.encodeFailed }
+        let document = contents.document
+        let options = ShowExporter.Options.p480.fitted(aspect: document.settings.frameAspect)
+        let cellWidth = Int(options.size.width)
+        let cellHeight = Int(options.size.height)
+        let columns = min(times.count, max(1, requestedColumns
+            ?? Int(ceil(sqrt(Double(times.count))))))
+        let rows = Int(ceil(Double(times.count) / Double(columns)))
+        let width = cellWidth * columns
+        let height = cellHeight * rows
+        guard width <= 8_192, height <= 8_192 else { throw PreviewError.imageTooLarge }
+        guard let context = CGContext(
+            data: nil, width: width, height: height,
+            bitsPerComponent: 8, bytesPerRow: 0,
+            space: CGColorSpace(name: CGColorSpace.sRGB)!,
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
+        else { throw PreviewError.contextFailed }
+        context.setFillColor(CGColor(gray: 0.04, alpha: 1))
+        context.fill(CGRect(x: 0, y: 0, width: width, height: height))
+        for (index, time) in times.enumerated() {
+            let image = try render(
+                document: document, assets: assets,
+                assetURL: { contents.assetURLs[$0] }, at: time, options: options)
+            let column = index % columns
+            let row = index / columns
+            let rect = CGRect(
+                x: column * cellWidth,
+                y: height - (row + 1) * cellHeight,
+                width: cellWidth, height: cellHeight)
+            context.draw(image, in: rect)
+        }
+        guard let image = context.makeImage(),
+              let destination = CGImageDestinationCreateWithURL(
+                url as CFURL, UTType.png.identifier as CFString, 1, nil)
+        else { throw PreviewError.encodeFailed }
+        CGImageDestinationAddImage(destination, image, nil)
+        guard CGImageDestinationFinalize(destination) else { throw PreviewError.encodeFailed }
+        return (width, height, columns)
+    }
+
     /// YouTube thumbnail data rendered from the same deterministic stage as
     /// export. It steps JPEG quality down only as needed to meet the API's
     /// hard 2 MB upload limit.

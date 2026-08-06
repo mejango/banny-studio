@@ -4,11 +4,12 @@ public extension ShowDocument {
     /// from here instead of authoring from a blank page.
     static func starter(characterCount: Int = 2) -> ShowDocument {
         let bodies: [Body] = [.orange, .pink, .alien, .original]
-        let n = max(1, min(4, characterCount))
+        let n = max(1, min(10, characterCount))
         let characters = (0..<n).map { i -> Character in
-            let x = n == 1 ? 0.5 : 0.25 + 0.5 * Double(i) / Double(n - 1)
+            let x = n == 1 ? 0.5 : 0.12 + 0.76 * Double(i) / Double(n - 1)
             return Character(body: bodies[i % bodies.count],
                              x: x,
+                             size: n > 4 ? max(0.55, 4 / Double(n)) : 1,
                              face: x <= 0.5 ? 1 : -1,
                              name: "Banny \(i + 1)")
         }

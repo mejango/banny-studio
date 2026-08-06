@@ -21,6 +21,11 @@ final class StarterDocumentTests: XCTestCase {
 
     func testStarterClampsCount() {
         XCTAssertEqual(ShowDocument.starter(characterCount: 0).stage.characters.count, 1)
-        XCTAssertEqual(ShowDocument.starter(characterCount: 99).stage.characters.count, 4)
+        let ten = ShowDocument.starter(characterCount: 99).stage.characters
+        XCTAssertEqual(ten.count, 10)
+        XCTAssertEqual(ten.first!.x, 0.12, accuracy: 0.000_001)
+        XCTAssertEqual(ten.last!.x, 0.88, accuracy: 0.000_001)
+        XCTAssertEqual(Set(ten.map(\.name)).count, 10)
+        XCTAssertTrue(ten.allSatisfy { $0.size == 0.55 })
     }
 }

@@ -1,0 +1,74 @@
+name: Release banny CLI
+
+on:
+  push:
+    tags:
+      - "cli-v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify tag and embedded skill
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#cli-v}"
+          source_version="$(sed -n 's/.*static let version = "\([^"]*\)".*/\1/p' Sources/BannyCLI/contract.swift | head -1)"
+          test "$version" = "$source_version"
+          swift tools/embed-skill.swift --check
+
+      - name: Test
+        run: swift test
+
+      - name: Import Developer ID certificate
+        env:
+          CERTIFICATE_P12: ${{ secrets.DEVELOPER_ID_CERTIFICATE_P12 }}
+          CERTIFICATE_PASSWORD: ${{ secrets.DEVELOPER_ID_CERTIFICATE_PASSWORD }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          keychain="$RUNNER_TEMP/banny-signing.keychain-db"
+          certificate="$RUNNER_TEMP/banny-developer-id.p12"
+          password="$(openssl rand -hex 16)"
+          echo "$CERTIFICATE_P12" | base64 --decode > "$certificate"
+          security create-keychain -p "$password" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$password" "$keychain"
+          security import "$certificate" -P "$CERTIFICATE_PASSWORD" -A -t cert -f pkcs12 -k "$keychain"
+          security list-keychain -d user -s "$keychain" login.keychain-db
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$password" "$keychain"
+          identity="$(security find-identity -v -p codesigning "$keychain" | sed -n 's/.*"\(Developer ID Application:[^"]*\)".*/\1/p' | head -1)"
+          test -n "$identity"
+          echo "DEVELOPER_ID=$identity" >> "$GITHUB_ENV"
+
+      - name: Configure Apple notarization
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+        run: >-
+          xcrun notarytool store-credentials banny-notary
+          --apple-id "$APPLE_ID"
+          --team-id "$APPLE_TEAM_ID"
+          --password "$APPLE_APP_PASSWORD"
+
+      - name: Build, sign, and notarize
+        shell: bash
+        run: tools/release-cli.sh "${GITHUB_REF_NAME#cli-v}"
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#cli-v}"
+          gh release create "$GITHUB_REF_NAME" \
+            "banny-$version-macos.zip" "banny-$version.rb" \
+            --title "banny CLI $version" --generate-notes --verify-tag

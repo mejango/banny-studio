@@ -28,6 +28,62 @@ enum CLIError: Error, CustomStringConvertible {
     }
 }
 
+private struct CLIErrorEnvelope: Codable {
+    struct Payload: Codable {
+        let code: String
+        let message: String
+        let usage: String?
+        let details: [String]?
+    }
+
+    let ok: Bool
+    let error: Payload
+}
+
+/// Stable machine-readable failure output for every command that accepts
+/// `--json`. Errors always go to stderr so stdout remains safe to parse.
+public func writeCLIError(_ error: Error, json: Bool) {
+    guard json else {
+        FileHandle.standardError.write(Data((String(describing: error) + "\n").utf8))
+        return
+    }
+    let payload: CLIErrorEnvelope.Payload
+    switch error {
+    case CLIError.assetsNotFound:
+        payload = .init(code: "assets_not_found", message: String(describing: error),
+                        usage: nil, details: nil)
+    case CLIError.usage(let usage):
+        payload = .init(code: "usage", message: "invalid command usage",
+                        usage: usage, details: nil)
+    case CLIError.notAPackage(let path, let why):
+        payload = .init(code: "not_a_package", message: "cannot read \(path): \(why)",
+                        usage: nil, details: nil)
+    case CLIError.invalid(let message):
+        payload = .init(code: "invalid_argument", message: message,
+                        usage: nil, details: nil)
+    case CLIError.validationFailed(let details):
+        payload = .init(code: "validation_failed", message: "validation failed",
+                        usage: nil, details: details)
+    default:
+        payload = .init(code: "operation_failed", message: String(describing: error),
+                        usage: nil, details: nil)
+    }
+    let encoder = JSONEncoder()
+    encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
+    let data = (try? encoder.encode(CLIErrorEnvelope(ok: false, error: payload)))
+        ?? Data(#"{"error":{"code":"encoding_failed","message":"could not encode error"},"ok":false}"#.utf8)
+    FileHandle.standardError.write(data + Data("\n".utf8))
+}
+
+public func cliExitCode(for error: Error) -> Int32 {
+    switch error {
+    case CLIError.usage, CLIError.invalid: return 2
+    case CLIError.validationFailed: return 3
+    case CLIError.notAPackage: return 4
+    default: return 1
+    }
+}
+
 /// $BANNY_ASSETS → installed app bundle → repo checkout (dev).
 func locateAssetsRoot() throws -> URL {
     let fm = FileManager.default

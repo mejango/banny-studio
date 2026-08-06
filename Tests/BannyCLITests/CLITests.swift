@@ -199,6 +199,14 @@ final class CLITests: XCTestCase {
                 as? [String: Int])?["const"],
             4)
         try await assertSuccess(["banny", "capabilities", "--json"])
+        XCTAssertEqual(BannyCLIContract.version, "2.0.0")
+        XCTAssertEqual(BannyCLIContract.contractVersion, 2)
+        XCTAssertTrue(commandCapabilities.contains { capability in
+            capability.name == "character set-start"
+                && capability.usage.contains("--character")
+                && capability.jsonOutput != nil
+        })
+        try await assertSuccess(["banny", "help", "ship", "--json"])
         try await assertSuccess(["banny", "schema", "--compact"])
         try await assertSuccess(["banny", "catalog", "--json"])
         try await assertSuccess([
@@ -247,6 +255,12 @@ final class CLITests: XCTestCase {
             "banny", "preview", project.path, preview.path, "--t", "0.1",
         ])
         XCTAssertTrue(FileManager.default.fileExists(atPath: preview.path))
+        let contactSheet = root.appendingPathComponent("contact-sheet.png")
+        try await assertSuccess([
+            "banny", "preview", project.path, contactSheet.path,
+            "--times", "0,0.25,0.5,0.75", "--columns", "2", "--json",
+        ])
+        XCTAssertTrue(FileManager.default.fileExists(atPath: contactSheet.path))
         let styled = root.appendingPathComponent("styled.png")
         try await assertSuccess([
             "banny", "stylize", preview.path, styled.path, "48",
@@ -254,6 +268,9 @@ final class CLITests: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(atPath: styled.path))
 
         let movie = root.appendingPathComponent("show.mp4")
+        try await assertSuccess([
+            "banny", "ship", project.path, "--plan", "--480", "--json",
+        ])
         try await assertSuccess([
             "banny", "ship", project.path, movie.path,
             "--480", "--range", "0", "0.1", "--json",
@@ -270,6 +287,63 @@ final class CLITests: XCTestCase {
         } catch {
             XCTAssertTrue(String(describing: error).contains("--overwrite"))
         }
+    }
+
+    func testTenCharacterStarterAndTypedHeadlessEdits() async throws {
+        let root = try temporaryDirectory("banny-cli-headless")
+        let project = root.appendingPathComponent("ten.bs")
+        try await assertSuccess([
+            "banny", "new", project.path, "--characters", "10", "--json",
+        ])
+        let showURL = project.appendingPathComponent("show.json")
+        let initial = try Data(contentsOf: showURL)
+        let initialHash = sha256Hex(initial)
+
+        try await assertSuccess([
+            "banny", "character", "set-start", project.path,
+            "--character", "10", "--x", "0.72", "--depth", "-1.5",
+            "--face", "left", "--spin", "12", "--zoom", "1.1",
+            "--size", "0.7", "--dry-run", "--if-hash", initialHash, "--json",
+        ])
+        XCTAssertEqual(try Data(contentsOf: showURL), initial)
+        try await assertSuccess([
+            "banny", "character", "set-start", project.path,
+            "--character", "10", "--x", "0.72", "--depth", "-1.5",
+            "--face", "left", "--spin", "12", "--zoom", "1.1",
+            "--size", "0.7", "--if-hash", initialHash, "--json",
+        ])
+        var document = try ShowJSONCodec.decodeDocument(
+            String(contentsOf: showURL, encoding: .utf8))
+        let character = document.stage.characters[9]
+        XCTAssertEqual(character.x, 0.72)
+        XCTAssertEqual(character.depth, -1.5)
+        XCTAssertEqual(character.face, -1)
+        XCTAssertEqual(character.size, 0.7)
+        XCTAssertEqual(character.recStart?.spin, 12)
+        XCTAssertEqual(character.recStart?.zoom, 1.1)
+
+        let nextHash = sha256Hex(try Data(contentsOf: showURL))
+        try await assertSuccess([
+            "banny", "performance", "add", project.path,
+            "--character", "10", "--code", "ArrowLeft",
+            "--at", "1.25", "--duration", "0.5",
+            "--if-hash", nextHash, "--json",
+        ])
+        try await assertSuccess([
+            "banny", "performance", "add", project.path,
+            "--character", "10", "--code", "ArrowLeft",
+            "--at", "1.25", "--duration", "0.5", "--json",
+        ])
+        document = try ShowJSONCodec.decodeDocument(
+            String(contentsOf: showURL, encoding: .utf8))
+        XCTAssertEqual(document.stage.characters[9].events, [
+            .key(t: 1.25, code: .arrowLeft, down: true),
+            .key(t: 1.75, code: .arrowLeft, down: false),
+        ])
+        try await assertSuccess([
+            "banny", "state", project.path, "--at", "1.5", "--json",
+        ])
+        try await assertSuccess(["banny", "validate", project.path, "--json"])
     }
 
     func testLegacyImportProducesCanonicalV4Project() async throws {

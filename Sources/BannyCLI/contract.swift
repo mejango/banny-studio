@@ -4,16 +4,46 @@ import BannyCore
 // Public machine contract for GUI-free and agent-driven production.
 
 enum BannyCLIContract {
-    static let version = "1.5.0"
+    static let version = "2.0.0"
+    static let contractVersion = 2
     static let schemaVersion = 4
     static let patchStandard = "RFC 6902"
 }
 
-private struct CommandCapability: Codable {
+struct CommandOptionCapability: Codable {
     let name: String
+    let value: String?
+    let required: Bool
+    let description: String
+    let allowed: [String]?
+    let minimum: Double?
+    let maximum: Double?
+    let defaultValue: String?
+
+    init(_ name: String, value: String? = nil, required: Bool = false,
+         _ description: String, allowed: [String]? = nil,
+         minimum: Double? = nil, maximum: Double? = nil,
+         defaultValue: String? = nil) {
+        self.name = name
+        self.value = value
+        self.required = required
+        self.description = description
+        self.allowed = allowed
+        self.minimum = minimum
+        self.maximum = maximum
+        self.defaultValue = defaultValue
+    }
+}
+
+struct CommandCapability: Codable {
+    let name: String
+    let summary: String
+    let usage: String
     let mutatesProject: Bool
     let acceptsArchive: Bool
-    let synopsis: String
+    let jsonOutput: String?
+    let progress: String?
+    let options: [CommandOptionCapability]
 }
 
 private struct ProductionCapabilities: Codable {
@@ -40,62 +70,231 @@ private struct ProductionCapabilities: Codable {
         let trackKinds: [String]
     }
 
+    struct Limits: Codable {
+        let maxCharacters: Int
+        let starterCharacters: String
+    }
+
+    struct Automation: Codable {
+        let successOutput: String
+        let errorOutput: String
+        let validationOutput: String
+        let progressOutput: String
+        let exitCodes: [String: Int]
+    }
+
+    let contractVersion: Int
     let cliVersion: String
+    let schemaSHA256: String
     let platform: String
+    let limits: Limits
+    let automation: Automation
     let project: Project
     let commands: [CommandCapability]
     let vocabulary: Vocabulary
+}
+
+private let jsonOption = CommandOptionCapability(
+    "--json", "Emit stable JSON on stdout and structured errors on stderr.")
+private let concurrencyOptions = [
+    CommandOptionCapability("--dry-run", "Validate and report without writing."),
+    CommandOptionCapability("--if-hash", value: "SHA256",
+                            "Only mutate the exact show.json revision."),
+    jsonOption,
+]
+
+let commandCapabilities: [CommandCapability] = [
+    .init(name: "capabilities", summary: "Describe the complete machine contract.",
+          usage: "banny capabilities [--json]", mutatesProject: false,
+          acceptsArchive: true, jsonOutput: "ProductionCapabilities", progress: nil,
+          options: [jsonOption]),
+    .init(name: "schema", summary: "Print the canonical v4 schema or starter example.",
+          usage: "banny schema [--compact|--example]", mutatesProject: false,
+          acceptsArchive: true, jsonOutput: "JSON Schema or ShowDocument", progress: nil,
+          options: [.init("--compact", "Minify the schema."),
+                    .init("--example", "Print a canonical starter document."), jsonOption]),
+    .init(name: "catalog", summary: "List exact render vocabulary.",
+          usage: "banny catalog [--json]", mutatesProject: false, acceptsArchive: true,
+          jsonOutput: "AssetCatalog.Summary", progress: nil, options: [jsonOption]),
+    .init(name: "voices", summary: "List voices available for speech synthesis.",
+          usage: "banny voices [--language PREFIX] [--json]", mutatesProject: false,
+          acceptsArchive: true, jsonOutput: "Voice list", progress: nil,
+          options: [.init("--language", value: "PREFIX", "Filter BCP-47 languages."), jsonOption]),
+    .init(name: "new", summary: "Create a strict v4 starter project.",
+          usage: "banny new <project.bs> [--characters N] [--json]", mutatesProject: true,
+          acceptsArchive: false, jsonOutput: "NewProjectReport", progress: nil,
+          options: [.init("--characters", value: "N", "Starter cast size.",
+                          minimum: 1, maximum: 10, defaultValue: "2"), jsonOption]),
+    .init(name: "migrate", summary: "Atomically upgrade an editable v2/v3 project to v4.",
+          usage: "banny migrate <project.bs> [--dry-run] [--if-hash SHA256] [--json]",
+          mutatesProject: true, acceptsArchive: false, jsonOutput: "MigrationReport",
+          progress: nil, options: concurrencyOptions),
+    .init(name: "validate", summary: "Run strict schema, package, and production preflight checks.",
+          usage: "banny validate <show.bs> [--json]", mutatesProject: false,
+          acceptsArchive: true, jsonOutput: "[Diagnostic]", progress: nil, options: [jsonOption]),
+    .init(name: "info", summary: "Summarize project structure and current document hash.",
+          usage: "banny info <show.bs> [--json]", mutatesProject: false,
+          acceptsArchive: true, jsonOutput: "ProjectInfo", progress: nil, options: [jsonOption]),
+    .init(name: "state", summary: "Resolve every character, light, camera, and backdrop at a time.",
+          usage: "banny state <show.bs> --at SECONDS [--json]", mutatesProject: false,
+          acceptsArchive: true, jsonOutput: "StateReport", progress: nil,
+          options: [.init("--at", value: "SECONDS", required: true,
+                          "Timeline time.", minimum: 0), jsonOption]),
+    .init(name: "character set-start", summary: "Set or clear one character's coherent start state.",
+          usage: "banny character set-start <project.bs> --character N [start options] [mutation options]",
+          mutatesProject: true, acceptsArchive: false, jsonOutput: "StartPoseReport", progress: nil,
+          options: [.init("--character", value: "N", required: true, "One-based character index.", minimum: 1, maximum: 10),
+                    .init("--x", value: "N", "Normalized horizontal position.", minimum: 0, maximum: 1),
+                    .init("--depth", value: "N", "Stage depth.", minimum: -12, maximum: 1),
+                    .init("--face", value: "SIDE", "Facing direction.", allowed: ["left", "right", "-1", "1"]),
+                    .init("--spin", value: "DEGREES", "Initial free rotation."),
+                    .init("--zoom", value: "N", "Initial scale multiplier.", minimum: 0.000001),
+                    .init("--size", value: "N", "Character size multiplier.", minimum: 0.000001),
+                    .init("--clear", "Clear the recorded start pose."),
+                   ] + concurrencyOptions),
+    .init(name: "performance add", summary: "Add an idempotent typed key interval.",
+          usage: "banny performance add <project.bs> --character N --code CODE --at SECONDS [options]",
+          mutatesProject: true, acceptsArchive: false, jsonOutput: "PerformanceAddReport", progress: nil,
+          options: [.init("--character", value: "N", required: true, "One-based character index.", minimum: 1, maximum: 10),
+                    .init("--code", value: "CODE", required: true, "Exact EventCode.", allowed: EventCode.allCases.map(\.rawValue)),
+                    .init("--at", value: "SECONDS", required: true, "Press time.", minimum: 0),
+                    .init("--duration", value: "SECONDS", "Held duration.", minimum: 0.000001, defaultValue: "0.1"),
+                   ] + concurrencyOptions),
+    .init(name: "preview", summary: "Render one deterministic frame or a contact sheet.",
+          usage: "banny preview <show.bs> <out.png> [--t SEC|--times CSV] [--columns N] [--json]",
+          mutatesProject: false, acceptsArchive: true, jsonOutput: "PreviewReport", progress: nil,
+          options: [.init("--t", value: "SECONDS", "Single frame time.", minimum: 0, defaultValue: "0"),
+                    .init("--times", value: "CSV", "Comma-separated contact-sheet times."),
+                    .init("--columns", value: "N", "Contact-sheet columns.", minimum: 1), jsonOption]),
+    .init(name: "ship", summary: "Plan or render a deterministic MP4.",
+          usage: "banny ship <show.bs> [out.mp4] [--plan] [tier/range/options]",
+          mutatesProject: false, acceptsArchive: true, jsonOutput: "ShipPlan or ShipReport",
+          progress: "--progress-json writes JSONL progress records to stderr.",
+          options: [.init("--plan", "Preflight and report the render without writing."),
+                    .init("--480", "Render 480p."), .init("--720", "Render 720p."),
+                    .init("--1080", "Render 1080p (default)."), .init("--4k", "Render 2160p."),
+                    .init("--range", value: "FROM TO", "Render an explicit time range."),
+                    .init("--overwrite", "Replace an existing output."),
+                    .init("--progress-json", "Write JSONL progress to stderr."), jsonOption]),
+    .init(name: "apply", summary: "Atomically apply RFC 6902 JSON Patch.",
+          usage: "banny apply <project.bs> <patch.json|-> [--dry-run] [--if-hash SHA256] [--json]",
+          mutatesProject: true, acceptsArchive: false, jsonOutput: "PatchReport", progress: nil,
+          options: concurrencyOptions),
+    .init(name: "tts", summary: "Synthesize portable character speech clips.",
+          usage: "banny tts <project.bs> --character N [--text TEXT|--text-file FILE|--captions] [options]",
+          mutatesProject: true, acceptsArchive: false, jsonOutput: "TTS report", progress: nil,
+          options: [.init("--character", value: "N", required: true, "One-based character index."),
+                    .init("--text", value: "TEXT", "Speech text."),
+                    .init("--text-file", value: "FILE", "Read speech text from UTF-8 file."),
+                    .init("--captions", "Synthesize every nonempty character caption."),
+                    .init("--at", value: "SECONDS", "Single-line start time.", minimum: 0, defaultValue: "0"),
+                    .init("--voice", value: "ID", "Installed voice identifier."),
+                    .init("--preset", value: "NAME", "Portable voice recipe.", allowed: VoiceRecipe.Preset.allCases.map(\.rawValue)),
+                    .init("--flavor", value: "N", "Recipe wet/dry blend.", minimum: 0, maximum: 1),
+                    .init("--rate", value: "N", "Source synthesis rate.", minimum: 0, maximum: 1, defaultValue: "0.5"),
+                    .init("--pitch", value: "N", "Source pitch multiplier.", minimum: 0.5, maximum: 2, defaultValue: "1"),
+                    .init("--name", value: "NAME", "Generated clip name."),
+                    .init("--fade-in", value: "SECONDS", "Clip fade in.", minimum: 0, defaultValue: "0.04"),
+                    .init("--fade-out", value: "SECONDS", "Clip fade out.", minimum: 0, defaultValue: "0.06"),
+                    .init("--no-caption", "Do not add a caption for single-line speech."),
+                    .init("--no-lipsync", "Do not derive automatic mouth timing."),
+                    .init("--replace-generated", "Replace prior CLI-generated speech clips."),
+                    jsonOption]),
+    .init(name: "lipsync", summary: "Analyze or clear precise mouth timing.",
+          usage: "banny lipsync <project.bs> --character N --clip ID [--clear] [--json]",
+          mutatesProject: true, acceptsArchive: false, jsonOutput: "Lip-sync report", progress: nil,
+          options: [.init("--character", value: "N", required: true, "One-based character index."),
+                    .init("--clip", value: "ID", required: true, "Character clip ID."),
+                    .init("--clear", "Remove mouth cues."), jsonOption]),
+    .init(name: "media probe", summary: "Inspect media type, duration, and dimensions.",
+          usage: "banny media probe <file> [--json]", mutatesProject: false,
+          acceptsArchive: true, jsonOutput: "MediaProbe", progress: nil, options: [jsonOption]),
+    .init(name: "media import", summary: "Copy media into a package and place it safely.",
+          usage: "banny media import <project.bs> <file> [target/options] [--json]",
+          mutatesProject: true, acceptsArchive: false, jsonOutput: "Media import report",
+          progress: nil,
+          options: [.init("--id", value: "ID", "Portable asset/clip ID."),
+                    .init("--name", value: "NAME", "Display name."),
+                    .init("--at", value: "SECONDS", "Cue/clip start.", minimum: 0, defaultValue: "0"),
+                    .init("--duration", value: "SECONDS", "Placed duration.", minimum: 0.000001),
+                    .init("--character", value: "N", "Place audio on a character.", minimum: 1, maximum: 10),
+                    .init("--track", value: "ID", "Place on an existing media/image track."),
+                    .init("--background", "Place visual media on the Scenes track."),
+                    .init("--kind", value: "KIND", "Audio clip kind.", allowed: ["imported", "microphone", "speech"]),
+                    .init("--lipsync", "Analyze imported character audio for mouth timing."),
+                    .init("--crop", value: "MODE", "Background crop.", allowed: ["cover", "fit", "stretch", "tile"]),
+                    .init("--x", value: "N", "Visual cue x position.", defaultValue: "0.5"),
+                    .init("--y", value: "N", "Visual cue y position.", defaultValue: "0.5"),
+                    .init("--scale", value: "N", "Visual cue scale.", minimum: 0.000001, defaultValue: "0.3"),
+                    .init("--rotation", value: "DEGREES", "Visual cue rotation.", defaultValue: "0"),
+                    jsonOption]),
+    .init(name: "pack", summary: "Create a portable Studio archive.",
+          usage: "banny pack <project.bs> <out.bs.zip> [--json]", mutatesProject: false,
+          acceptsArchive: false, jsonOutput: "PackageReport", progress: nil, options: [jsonOption]),
+    .init(name: "unpack", summary: "Extract an archive for typed editing.",
+          usage: "banny unpack <in.bs.zip> <project.bs> [--json]", mutatesProject: true,
+          acceptsArchive: true, jsonOutput: "PackageReport", progress: nil, options: [jsonOption]),
+    .init(name: "import", summary: "Convert a web v1 production to native v4.",
+          usage: "banny import <v1.json> <out.bs> [--json]", mutatesProject: true,
+          acceptsArchive: false, jsonOutput: "ImportReport", progress: nil, options: [jsonOption]),
+    .init(name: "stylize", summary: "Convert an image to Banny pixel art.",
+          usage: "banny stylize <in.png> <out.png> [gridWidth] [dither] [--json]",
+          mutatesProject: false, acceptsArchive: true, jsonOutput: "StylizeReport", progress: nil,
+          options: [jsonOption]),
+    .init(name: "skill", summary: "Print or install the current AI production skill.",
+          usage: "banny skill [print|install] [--target codex|claude|all] [--json]",
+          mutatesProject: true, acceptsArchive: true, jsonOutput: "SkillInstallReport", progress: nil,
+          options: [.init("--target", value: "TARGET", "Install target.", allowed: ["codex", "claude", "all"]), jsonOption]),
+]
+
+func helpCommand(_ args: [String]) throws {
+    var options = CLIOptions(args)
+    let json = try options.flag("--json")
+    let name = options.tokens.joined(separator: " ")
+    guard !name.isEmpty else {
+        try options.finish(usage: "banny help [command] [--json]")
+        if json { try printJSON(commandCapabilities) } else { print(cliUsage) }
+        return
+    }
+    guard let command = commandCapabilities.first(where: { $0.name == name }) else {
+        throw CLIError.invalid("unknown command for help: \(name)")
+    }
+    if json {
+        try printJSON(command)
+    } else {
+        print("\(command.summary)\n\nusage: \(command.usage)")
+        if !command.options.isEmpty {
+            print("\noptions:")
+            for option in command.options {
+                let spelling = option.value.map { "\(option.name) \($0)" } ?? option.name
+                print("  \(spelling) — \(option.description)")
+            }
+        }
+    }
 }
 
 func capabilitiesCommand(_ args: [String]) throws {
     var options = CLIOptions(args)
     _ = try options.flag("--json")
     try options.finish(usage: "banny capabilities [--json]")
-    let commands = [
-        CommandCapability(name: "capabilities", mutatesProject: false, acceptsArchive: true,
-                          synopsis: "banny capabilities --json"),
-        CommandCapability(name: "schema", mutatesProject: false, acceptsArchive: true,
-                          synopsis: "banny schema [--compact|--example]"),
-        CommandCapability(name: "catalog", mutatesProject: false, acceptsArchive: true,
-                          synopsis: "banny catalog [--json]"),
-        CommandCapability(name: "voices", mutatesProject: false, acceptsArchive: true,
-                          synopsis: "banny voices [--language PREFIX] [--json]"),
-        CommandCapability(name: "new", mutatesProject: true, acceptsArchive: false,
-                          synopsis: "banny new <project.bs> [--characters N]"),
-        CommandCapability(name: "migrate", mutatesProject: true, acceptsArchive: false,
-                          synopsis: "banny migrate <project.bs> [--dry-run] [--if-hash SHA256]"),
-        CommandCapability(name: "validate", mutatesProject: false, acceptsArchive: true,
-                          synopsis: "banny validate <show.bs> [--json]"),
-        CommandCapability(name: "info", mutatesProject: false, acceptsArchive: true,
-                          synopsis: "banny info <show.bs> [--json]"),
-        CommandCapability(name: "preview", mutatesProject: false, acceptsArchive: true,
-                          synopsis: "banny preview <show.bs> <out.png> [--t SECONDS]"),
-        CommandCapability(name: "ship", mutatesProject: false, acceptsArchive: true,
-                          synopsis: "banny ship <show.bs> <out.mp4> [tier] [--range FROM TO]"),
-        CommandCapability(name: "apply", mutatesProject: true, acceptsArchive: false,
-                          synopsis: "banny apply <project.bs> <patch.json|-> [--dry-run] [--if-hash SHA256]"),
-        CommandCapability(name: "tts", mutatesProject: true, acceptsArchive: false,
-                          synopsis: "banny tts <project.bs> --character N [--text TEXT|--captions] [options]"),
-        CommandCapability(name: "lipsync", mutatesProject: true, acceptsArchive: false,
-                          synopsis: "banny lipsync <project.bs> --character N --clip ID [--clear]"),
-        CommandCapability(name: "media probe", mutatesProject: false, acceptsArchive: true,
-                          synopsis: "banny media probe <file> [--json]"),
-        CommandCapability(name: "media import", mutatesProject: true, acceptsArchive: false,
-                          synopsis: "banny media import <project.bs> <file> [target/options]"),
-        CommandCapability(name: "pack", mutatesProject: false, acceptsArchive: false,
-                          synopsis: "banny pack <project.bs> <out.bs.zip>"),
-        CommandCapability(name: "unpack", mutatesProject: true, acceptsArchive: true,
-                          synopsis: "banny unpack <in.bs.zip> <project.bs>"),
-        CommandCapability(name: "import", mutatesProject: true, acceptsArchive: false,
-                          synopsis: "banny import <v1.json> <out.bs>"),
-        CommandCapability(name: "stylize", mutatesProject: false, acceptsArchive: true,
-                          synopsis: "banny stylize <in.png> <out.png> [gridWidth] [dither]"),
-        CommandCapability(name: "skill", mutatesProject: true, acceptsArchive: true,
-                          synopsis: "banny skill [print|install] [--target codex|claude|all]"),
-    ]
     let value = ProductionCapabilities(
+        contractVersion: BannyCLIContract.contractVersion,
         cliVersion: BannyCLIContract.version,
+        schemaSHA256: sha256Hex(Data(showSchemaJSON.utf8)),
         platform: "macOS",
+        limits: .init(maxCharacters: 10, starterCharacters: "1...10"),
+        automation: .init(
+            successOutput: "--json writes one JSON value to stdout",
+            errorOutput: "argument and operation failures write an error envelope to stderr",
+            validationOutput: "validation diagnostics are a JSON array on stdout and use a nonzero status when errors exist",
+            progressOutput: "--progress-json writes JSON Lines to stderr",
+            exitCodes: [
+                "success": 0,
+                "operation_failed": 1,
+                "invalid_argument_or_usage": 2,
+                "validation_failed": 3,
+                "not_a_package": 4,
+            ]),
         project: .init(
             schemaVersion: BannyCLIContract.schemaVersion,
             directoryExtension: ".bs",
@@ -104,7 +303,7 @@ func capabilitiesCommand(_ args: [String]) throws {
             mutationFormat: BannyCLIContract.patchStandard,
             atomicDocumentWrites: true,
             optimisticConcurrency: "SHA-256 of the current show.json via --if-hash"),
-        commands: commands,
+        commands: commandCapabilities,
         vocabulary: .init(
             bodies: Body.allCases.map(\.rawValue),
             eventCodes: EventCode.allCases.map(\.rawValue),
