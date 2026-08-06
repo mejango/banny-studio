@@ -286,9 +286,9 @@ struct StudioTimelineView: View {
     @State private var renamingText = ""
     @FocusState private var renameFocused: Bool
     @State private var editorOpenedAt = Date.distantPast
-    /// Lanes viewport scroll offset. An observable holder (not view @State) so
-    /// scroll ticks update the pinned overlays and the small viewport canvas,
-    /// never a full-duration drawing surface.
+    /// Lanes viewport scroll offset. Only the pinned ruler, gutter, and
+    /// playhead observe it. Timeline pixels live in stable, lazily-created
+    /// tiles so native scrolling never asks SwiftUI to redraw dense tracks.
     @State private var offsets = TLOffsets()
     @State private var tlProxy: ScrollViewProxy?
     @State private var tlViewport: CGSize = .zero
@@ -308,7 +308,9 @@ struct StudioTimelineView: View {
             VStack(spacing: 0) {
             HStack(spacing: 0) {
                 cornerCell
-                headerBand
+                TimelineHorizontalOffset(offsets: offsets) { scrollX in
+                    headerBand(scrollX: scrollX)
+                }
             }
             .frame(height: lanesTop)
             ZStack(alignment: .topLeading) {
@@ -359,8 +361,10 @@ struct StudioTimelineView: View {
             .coordinateSpace(name: "tlScroll")
             .onPreferenceChange(TLOffsetKey.self) { [offsets] origin in
                 // origin.x includes the leading gutter padding at rest.
-                offsets.x = laneLabelWidth - origin.x
-                offsets.y = -origin.y
+                let x = laneLabelWidth - origin.x
+                let y = -origin.y
+                if abs(offsets.x - x) >= 0.25 { offsets.x = x }
+                if abs(offsets.y - y) >= 0.25 { offsets.y = y }
             }
             .background(GeometryReader { g in
                 Color.clear
@@ -369,6 +373,7 @@ struct StudioTimelineView: View {
             })
             }
             // Pinned gutter: never moves horizontally; tracks vertical scroll.
+            TimelineVerticalOffset(offsets: offsets) { scrollY in
             ZStack(alignment: .topLeading) {
                 #if os(macOS)
                 GutterWheelRedirect(gutterWidth: laneLabelWidth)
@@ -389,7 +394,7 @@ struct StudioTimelineView: View {
                     // .clipped() hides but does NOT stop hit-testing: cards
                     // scrolled out of the gutter would float invisibly over
                     // the transport and steal clicks. Render visible ones only.
-                    let cardY = laneTop(of: row) + presenceStripH + 4 - scrollOffset.y
+                    let cardY = laneTop(of: row) + presenceStripH + 4 - scrollY
                     let onScreen = cardY > -4 && cardY < tlViewport.height
                     if onScreen, isCharacter ? available >= 26 : available >= 14 {
                         TrackCardButton(model: model, file: file, row: row, cardHeight: cardH,
@@ -409,7 +414,7 @@ struct StudioTimelineView: View {
                             .help("Save this position, depth, facing, body size, animated scale, and rotation as the character's start")
                             .offset(x: 12 + (cardH * 30 / 54).rounded() + 10,
                                     y: laneTop(of: row) + presenceStripH + 13 + 13 * lines + 2
-                                        - scrollOffset.y)
+                                        - scrollY)
                     }
                     if onScreen, case .background = row, model.cameraFreeformActive {
                         Button("Set start state") { model.commitCameraStart() }
@@ -421,7 +426,7 @@ struct StudioTimelineView: View {
                             .overlay(Capsule().stroke(Color.orange.opacity(0.55), lineWidth: 1))
                             .help("Save this framing as the scene's camera start")
                             .offset(x: 12 + 34 + 10,
-                                    y: laneTop(of: row) + presenceStripH + 8 - scrollOffset.y)
+                                    y: laneTop(of: row) + presenceStripH + 8 - scrollY)
                     }
                 }
                 if let row = renamingRow {
@@ -437,14 +442,15 @@ struct StudioTimelineView: View {
                         .onSubmit { commitRename() }
                         .onAppear { renameFocused = true }
                         .onChange(of: renameFocused) { _, f in if !f { commitRename() } }
-                        .offset(x: 8, y: laneTop(of: row) + 1 - scrollOffset.y)
+                        .offset(x: 8, y: laneTop(of: row) + 1 - scrollY)
                 }
                 newTrackRow
-                    .offset(y: totalLaneHeight - scrollOffset.y)
+                    .offset(y: totalLaneHeight - scrollY)
             }
             .frame(width: laneLabelWidth)
             .frame(maxHeight: .infinity, alignment: .topLeading)
             .clipped()
+            }
             }
             }
             // ONE playhead line across the band and the lanes — a single view,
@@ -452,8 +458,8 @@ struct StudioTimelineView: View {
             .overlay(alignment: .topLeading) {
                 TimelinePlayhead(
                     model: model,
+                    offsets: offsets,
                     laneLabelWidth: laneLabelWidth,
-                    scrollX: scrollOffset.x,
                     color: theme.playhead,
                     xForTime: x(forTime:))
             }
@@ -775,37 +781,23 @@ struct StudioTimelineView: View {
     }
     private var laneContentHeight: CGFloat { totalLaneHeight + 34 }
 
-    /// The scroll document remains full-sized for precise native hit-testing,
-    /// but its expensive Canvas is only as large as the visible viewport.
-    /// Overscan keeps fast trackpad scrolls seamless without making render cost
-    /// scale with an hour-long episode.
-    private let timelineCanvasOverscan: CGFloat = 96
-    private var timelineCanvasX: CGFloat {
-        max(0, min(laneContentWidth, scrollOffset.x) - timelineCanvasOverscan)
+    /// Stable timeline tiles are composited by the native scroll view. The
+    /// previous moving viewport canvas changed its frame on every scroll tick,
+    /// forcing a full SwiftUI redraw and making dense shows feel stuck.
+    private let timelineTileWidth: CGFloat = 1_536
+    private var timelineTileCount: Int {
+        max(1, Int(ceil(laneContentWidth / timelineTileWidth)))
     }
-    private var timelineCanvasY: CGFloat {
-        max(0, min(laneContentHeight, scrollOffset.y) - timelineCanvasOverscan)
-    }
-    private var timelineCanvasWidth: CGFloat {
-        min(max(1, laneContentWidth - timelineCanvasX),
-            max(1, tlViewport.width - laneLabelWidth) + timelineCanvasOverscan * 2)
-    }
-    private var timelineCanvasHeight: CGFloat {
-        min(max(1, laneContentHeight - timelineCanvasY),
-            max(1, tlViewport.height) + timelineCanvasOverscan * 2)
-    }
-    private var timelineDrawBounds: CGRect {
-        CGRect(x: timelineCanvasX, y: timelineCanvasY,
-               width: timelineCanvasWidth, height: timelineCanvasHeight)
-    }
-    private func timelineIntersects(start: Double, duration: Double) -> Bool {
+    private func timelineIntersects(start: Double, duration: Double,
+                                    drawBounds: CGRect) -> Bool {
         let minX = x(forTime: start)
         let maxX = minX + max(1, xw(start, duration))
-        return maxX >= timelineDrawBounds.minX && minX <= timelineDrawBounds.maxX
+        return maxX >= drawBounds.minX && minX <= drawBounds.maxX
     }
-    private func timelineContains(x: CGFloat, padding: CGFloat = 0) -> Bool {
-        x >= timelineDrawBounds.minX - padding
-            && x <= timelineDrawBounds.maxX + padding
+    private func timelineContains(x: CGFloat, drawBounds: CGRect,
+                                  padding: CGFloat = 0) -> Bool {
+        x >= drawBounds.minX - padding
+            && x <= drawBounds.maxX + padding
     }
 
     // Collapsed scenes fold their time range down to a thin strip so the
@@ -955,14 +947,19 @@ struct StudioTimelineView: View {
     }
 
     /// Pinned ruler/scrub/CC band, shifted by the horizontal scroll offset.
-    private var headerBand: some View {
+    private func headerBand(scrollX: CGFloat) -> some View {
         Canvas { ctx0, size in
-            let fullW = max(size.width + scrollOffset.x, contentWidth + 40)
+            let fullW = max(size.width + scrollX, contentWidth + 40)
+            let drawBounds = CGRect(x: scrollX, y: 0,
+                                    width: size.width, height: size.height)
             var ctx = ctx0
-            ctx.translateBy(x: -scrollOffset.x, y: 0)
-            drawRuler(ctx: ctx, size: CGSize(width: fullW, height: size.height))
-            drawExportRow(ctx: ctx, size: CGSize(width: fullW, height: size.height))
-            drawCaptionsRow(ctx: ctx, size: CGSize(width: fullW, height: size.height))
+            ctx.translateBy(x: -scrollX, y: 0)
+            drawRuler(ctx: ctx, size: CGSize(width: fullW, height: size.height),
+                      scrollX: scrollX)
+            drawExportRow(ctx: ctx, size: CGSize(width: fullW, height: size.height),
+                          scrollX: scrollX)
+            drawCaptionsRow(ctx: ctx, size: CGSize(width: fullW, height: size.height),
+                            drawBounds: drawBounds)
         }
         .clipped()
         .overlay(alignment: .topLeading) {
@@ -979,7 +976,7 @@ struct StudioTimelineView: View {
                     #if os(macOS)
                     .onExitCommand { editingLabel = nil }
                     #endif
-                    .offset(x: max(4, editing.origin.x - scrollOffset.x), y: captionsTop + 3)
+                    .offset(x: max(4, editing.origin.x - scrollX), y: captionsTop + 3)
                     .onAppear { labelFocused = true }
                     .onChange(of: labelFocused) { _, focused in
                         if !focused { commitLabelEdit() }
@@ -1618,37 +1615,45 @@ struct StudioTimelineView: View {
 
     private var timelineCanvas: some View {
         ZStack(alignment: .topLeading) {
-            Canvas { ctx0, _ in
-                var ctx = ctx0
-                ctx.translateBy(x: -timelineCanvasX, y: -timelineCanvasY)
-                let fullSize = CGSize(width: laneContentWidth, height: laneContentHeight)
-                for row in rows {
-                    let top = laneTop(of: row)
-                    let bottom = top + height(of: row)
-                    guard bottom >= timelineDrawBounds.minY,
-                          top <= timelineDrawBounds.maxY else { continue }
-                    drawLane(row, ctx: ctx, size: fullSize)
-                }
-                if let m = marquee {
-                    let r = CGRect(x: min(m.start.x, m.current.x),
-                                   y: min(m.start.y, m.current.y),
-                                   width: abs(m.start.x - m.current.x),
-                                   height: abs(m.start.y - m.current.y))
-                    ctx.fill(Path(r), with: .color(Color.orange.opacity(0.1)))
-                    ctx.stroke(Path(r), with: .color(Color.orange.opacity(0.7)),
-                               lineWidth: 1)
-                }
-                if let g = snapGuide {
-                    let gx = x(forTime: g)
-                    ctx.stroke(Path { p in
-                        p.move(to: CGPoint(x: gx, y: 0))
-                        p.addLine(to: CGPoint(x: gx, y: fullSize.height))
-                    }, with: .color(Color.cyan.opacity(0.8)),
-                       style: StrokeStyle(lineWidth: 1, dash: [4, 3]))
+            LazyHStack(alignment: .top, spacing: 0) {
+                ForEach(0..<timelineTileCount, id: \.self) { tile in
+                    let tileX = CGFloat(tile) * timelineTileWidth
+                    let tileWidth = min(timelineTileWidth, laneContentWidth - tileX)
+                    let drawBounds = CGRect(x: tileX, y: 0,
+                                            width: tileWidth, height: laneContentHeight)
+                    Canvas { ctx0, _ in
+                        var ctx = ctx0
+                        ctx.translateBy(x: -tileX, y: 0)
+                        let fullSize = CGSize(width: laneContentWidth,
+                                              height: laneContentHeight)
+                        for row in rows {
+                            drawLane(row, ctx: ctx, size: fullSize,
+                                     drawBounds: drawBounds)
+                        }
+                        if let m = marquee {
+                            let r = CGRect(x: min(m.start.x, m.current.x),
+                                           y: min(m.start.y, m.current.y),
+                                           width: abs(m.start.x - m.current.x),
+                                           height: abs(m.start.y - m.current.y))
+                            ctx.fill(Path(r), with: .color(Color.orange.opacity(0.1)))
+                            ctx.stroke(Path(r), with: .color(Color.orange.opacity(0.7)),
+                                       lineWidth: 1)
+                        }
+                        if let g = snapGuide {
+                            let gx = x(forTime: g)
+                            ctx.stroke(Path { p in
+                                p.move(to: CGPoint(x: gx, y: 0))
+                                p.addLine(to: CGPoint(x: gx, y: fullSize.height))
+                            }, with: .color(Color.cyan.opacity(0.8)),
+                               style: StrokeStyle(lineWidth: 1, dash: [4, 3]))
+                        }
+                    }
+                    .frame(width: tileWidth, height: laneContentHeight)
+                    .allowsHitTesting(false)
                 }
             }
-            .frame(width: timelineCanvasWidth, height: timelineCanvasHeight)
-            .offset(x: timelineCanvasX, y: timelineCanvasY)
+            .frame(width: laneContentWidth, height: laneContentHeight,
+                   alignment: .topLeading)
             .allowsHitTesting(false)
 
             // Keep gestures, hover, drops, and context menus in full timeline
@@ -1828,7 +1833,7 @@ struct StudioTimelineView: View {
 
     // MARK: - Drawing
 
-    private func drawRuler(ctx: GraphicsContext, size: CGSize) {
+    private func drawRuler(ctx: GraphicsContext, size: CGSize, scrollX: CGFloat) {
         let top = rulerTop  // export + captions sit above the time row
         ctx.fill(Path(CGRect(x: 0, y: top, width: size.width, height: rulerHeight)),
                  with: .color(theme.ruler))
@@ -1875,8 +1880,8 @@ struct StudioTimelineView: View {
         let minor = step / 5
         // Only the ticks inside the viewport draw — the cost of a redraw must
         // never scale with the show's length.
-        let visLo = max(0, time(forX: scrollOffset.x) - step)
-        let visHi = min(model.duration, time(forX: scrollOffset.x + tlViewport.width) + step)
+        let visLo = max(0, time(forX: scrollX) - step)
+        let visHi = min(model.duration, time(forX: scrollX + tlViewport.width) + step)
         if CGFloat(minor) * pxPerSecond >= 7 {
             var m: Double = (visLo / minor).rounded(.down) * minor
             while m <= visHi {
@@ -1903,7 +1908,7 @@ struct StudioTimelineView: View {
     }
 
     /// Export range row: green brackets bound what ships; empty ships everything.
-    private func drawExportRow(ctx: GraphicsContext, size: CGSize) {
+    private func drawExportRow(ctx: GraphicsContext, size: CGSize, scrollX: CGFloat) {
         let y: CGFloat = 0
         ctx.fill(Path(CGRect(x: 0, y: y, width: size.width, height: exportRowH)),
                  with: .color(theme.ccRow.opacity(0.6)))
@@ -1937,11 +1942,12 @@ struct StudioTimelineView: View {
         } else {
             ctx.draw(Text("drag to select a time range — use it for export or clip edits")
                         .font(.system(size: 8)).foregroundStyle(theme.mutedText.opacity(0.8)),
-                     at: CGPoint(x: scrollOffset.x + 10, y: y + exportRowH / 2), anchor: .leading)
+                     at: CGPoint(x: scrollX + 10, y: y + exportRowH / 2), anchor: .leading)
         }
     }
 
-    private func drawLane(_ row: TrackRow, ctx: GraphicsContext, size: CGSize) {
+    private func drawLane(_ row: TrackRow, ctx: GraphicsContext, size: CGSize,
+                          drawBounds: CGRect) {
         let y = laneTop(of: row)
         let h = height(of: row)
         let hidden = isHidden(row)
@@ -1956,14 +1962,14 @@ struct StudioTimelineView: View {
         }, with: .color(lightMode ? Color.black.opacity(0.22) : .black), lineWidth: lightMode ? 1 : 2)
 
         if case .background = row {} else {
-            drawPresenceStrip(row, y: y, ctx: ctx)
+            drawPresenceStrip(row, y: y, ctx: ctx, drawBounds: drawBounds)
         }
 
         var content = ctx
         if hidden { content.opacity = 0.3 }
         switch row {
         case .character(let i):
-            drawCharacterLane(i, y: y, h: h, ctx: content)
+            drawCharacterLane(i, y: y, h: h, ctx: content, drawBounds: drawBounds)
         case .audio(let i):
             for cue in model.scene.audioTracks[i].cues {
                 drawCueBar(start: cue.start, dur: cue.dur, y: y, h: h,
@@ -1971,10 +1977,12 @@ struct StudioTimelineView: View {
                            label: cue.label ?? assetName(cue.assetID),
                            assetID: cue.assetID,
                            selected: model.selectedImageCue == cue.id,
-                           animated: cue.to != nil, ctx: content)
+                           animated: cue.to != nil, ctx: content, drawBounds: drawBounds)
             }
             for clip in model.scene.audioTracks[i].clips {
-                drawClip(clip, top: y + presenceStripH + 2, height: h - presenceStripH - 6, ctx: content)
+                drawClip(clip, top: y + presenceStripH + 2,
+                         height: h - presenceStripH - 6, ctx: content,
+                         drawBounds: drawBounds)
             }
         case .image(let i):
             for cue in model.scene.imageTracks[i].cues {
@@ -1983,7 +1991,7 @@ struct StudioTimelineView: View {
                            label: cue.label ?? assetName(cue.assetID),
                            assetID: cue.assetID,
                            selected: model.selectedImageCue == cue.id,
-                           animated: cue.to != nil, ctx: content)
+                           animated: cue.to != nil, ctx: content, drawBounds: drawBounds)
             }
         case .light(let i):
             // Contiguous cue chains (recorded takes) render as ONE bar with
@@ -2001,7 +2009,8 @@ struct StudioTimelineView: View {
                 guard let first = run.first, let last = run.last else { continue }
                 let runStart = first.start
                 let runEnd = last.start + last.dur
-                guard timelineIntersects(start: runStart, duration: runEnd - runStart)
+                guard timelineIntersects(start: runStart, duration: runEnd - runStart,
+                                         drawBounds: drawBounds)
                 else { continue }
                 let anySelected = run.contains { model.selectedLightCue == $0.id }
                 // Skinny source bar at the top; the event lanes live below.
@@ -2012,14 +2021,14 @@ struct StudioTimelineView: View {
                            assetID: "",
                            selected: anySelected,
                            animated: run.contains { $0.to != nil },
-                           barHeight: barH, ctx: content)
+                           barHeight: barH, ctx: content, drawBounds: drawBounds)
                 // Selected segment inside a chain gets its own outline.
                 if run.count > 1, let sel = run.first(where: { model.selectedLightCue == $0.id }) {
                     let rect = CGRect(x: x(forTime: sel.start), y: y + presenceStripH + 2,
                                       width: max(4, xw(sel.start, sel.dur)),
                                       height: barH)
-                    if rect.maxX >= timelineDrawBounds.minX,
-                       rect.minX <= timelineDrawBounds.maxX {
+                    if rect.maxX >= drawBounds.minX,
+                       rect.minX <= drawBounds.maxX {
                         content.stroke(Path(roundedRect: rect, cornerRadius: 2),
                                        with: .color(.white.opacity(0.9)), lineWidth: 1)
                     }
@@ -2028,8 +2037,8 @@ struct StudioTimelineView: View {
                     guard let to = cue.to else { continue }
                     let x0 = x(forTime: cue.start)
                     let w = max(2, xw(cue.start, cue.dur))
-                    guard x0 + w >= timelineDrawBounds.minX,
-                          x0 <= timelineDrawBounds.maxX else { continue }
+                    guard x0 + w >= drawBounds.minX,
+                          x0 <= drawBounds.maxX else { continue }
                     let lanesTopY = y + presenceStripH + 2 + barH + 6
                     // Event lanes stretch to fill the row (easier targets).
                     let avail = max(9, y + h - 6 - lanesTopY)
@@ -2058,7 +2067,8 @@ struct StudioTimelineView: View {
             // motion bars, so they sit UNDER the image instead of over it.
             let imageH = max(12, h - presenceStripH - 6 - sceneCameraStripH)
             for cue in cues {
-                guard timelineIntersects(start: cue.start, duration: cue.dur) else { continue }
+                guard timelineIntersects(start: cue.start, duration: cue.dur,
+                                         drawBounds: drawBounds) else { continue }
                 let leadButt = cues.contains { abs(($0.start + $0.dur) - cue.start) < 0.02 }
                 let trailButt = cues.contains { abs($0.start - (cue.start + cue.dur)) < 0.02 }
                 // Camera-take chains: same asset butted together reads as one
@@ -2075,7 +2085,8 @@ struct StudioTimelineView: View {
                            animated: false,
                            squareLeading: leadButt, squareTrailing: trailButt,
                            barHeight: collapsedSections.contains(cue.id) ? nil : imageH,
-                           collapsed: collapsedSections.contains(cue.id), ctx: content)
+                           collapsed: collapsedSections.contains(cue.id), ctx: content,
+                           drawBounds: drawBounds)
                 // Camera motion bars in the reserved strip below the image:
                 // blue = the focus pans, purple = the zoom changes.
                 if let from = cue.camFrom, !collapsedSections.contains(cue.id) {
@@ -2107,25 +2118,27 @@ struct StudioTimelineView: View {
         var cursor = 0.0
         for (a, b) in visible.sorted(by: { $0.0 < $1.0 }) {
             if a > cursor {
-                shadeHidden(from: cursor, to: a, laneY: y, laneH: h, ctx: ctx)
+                shadeHidden(from: cursor, to: a, laneY: y, laneH: h, ctx: ctx,
+                            drawBounds: drawBounds)
             }
             cursor = max(cursor, b)
         }
         if cursor < model.duration {
-            shadeHidden(from: cursor, to: model.duration, laneY: y, laneH: h, ctx: ctx)
+            shadeHidden(from: cursor, to: model.duration, laneY: y, laneH: h, ctx: ctx,
+                        drawBounds: drawBounds)
         }
     }
 
     private func shadeHidden(from: Double, to: Double, laneY y: CGFloat, laneH h: CGFloat,
-                             ctx: GraphicsContext) {
+                             ctx: GraphicsContext, drawBounds: CGRect) {
         guard to > from else { return }
         let rect = CGRect(x: x(forTime: from), y: y + presenceStripH,
                           width: xw(from, to - from), height: h - presenceStripH)
-        guard rect.maxX >= timelineDrawBounds.minX,
-              rect.minX <= timelineDrawBounds.maxX else { return }
+        guard rect.maxX >= drawBounds.minX,
+              rect.minX <= drawBounds.maxX else { return }
         let visibleRect = rect.intersection(CGRect(
-            x: timelineDrawBounds.minX, y: rect.minY,
-            width: timelineDrawBounds.width, height: rect.height))
+            x: drawBounds.minX, y: rect.minY,
+            width: drawBounds.width, height: rect.height))
         ctx.fill(Path(visibleRect), with: .color(theme.shade))
     }
 
@@ -2174,7 +2187,8 @@ struct StudioTimelineView: View {
     }
 
     /// The global CC strip: every character's captions, tinted per speaker body color.
-    private func drawCaptionsRow(ctx: GraphicsContext, size: CGSize) {
+    private func drawCaptionsRow(ctx: GraphicsContext, size: CGSize,
+                                 drawBounds: CGRect) {
         let y = captionsTop
         ctx.fill(Path(CGRect(x: 0, y: y, width: size.width, height: captionsRowH)),
                  with: .color(theme.ccRow))
@@ -2188,8 +2202,8 @@ struct StudioTimelineView: View {
             for (si, sub) in character.subs.enumerated() {
                 let rect = CGRect(x: x(forTime: sub.start), y: y + 2,
                                   width: max(8, xw(sub.start, sub.dur)), height: captionsRowH - 4)
-                guard rect.maxX >= timelineDrawBounds.minX,
-                      rect.minX <= timelineDrawBounds.maxX else { continue }
+                guard rect.maxX >= drawBounds.minX,
+                      rect.minX <= drawBounds.maxX else { continue }
                 let selected = draggingSub?.char == ci && draggingSub?.index == si
                 ctx.fill(Path(roundedRect: rect, cornerRadius: 3),
                          with: .color(tint.opacity(selected ? 0.95 : 0.7)))
@@ -2225,14 +2239,15 @@ struct StudioTimelineView: View {
     }
 
     /// Presence strip: tinted spans while visible, eye/eye-slash markers at toggles.
-    private func drawPresenceStrip(_ row: TrackRow, y: CGFloat, ctx: GraphicsContext) {
+    private func drawPresenceStrip(_ row: TrackRow, y: CGFloat, ctx: GraphicsContext,
+                                   drawBounds: CGRect) {
         let events = presence(of: row).sorted { $0.t < $1.t }
         let stripRect = CGRect(x: 0, y: y, width: contentWidth + 40, height: presenceStripH)
         ctx.fill(Path(stripRect), with: .color(theme.stripTint))
         let rowKey = row.key(in: model.scene)
         for (i, ev) in events.enumerated() {
             let px = x(forTime: ev.t)
-            guard timelineContains(x: px, padding: 8) else { continue }
+            guard timelineContains(x: px, drawBounds: drawBounds, padding: 8) else { continue }
             if selectedPresence?.rowKey == rowKey, selectedPresence?.index == i {
                 ctx.stroke(Path(ellipseIn: CGRect(x: px - 7, y: y + presenceStripH / 2 - 7,
                                                   width: 14, height: 14)),
@@ -2249,7 +2264,8 @@ struct StudioTimelineView: View {
         }
     }
 
-    private func drawCharacterLane(_ i: Int, y: CGFloat, h: CGFloat, ctx: GraphicsContext) {
+    private func drawCharacterLane(_ i: Int, y: CGFloat, h: CGFloat,
+                                   ctx: GraphicsContext, drawBounds: CGRect) {
         let character = model.scene.characters[i]
         let zones = characterLaneZones(h: h)
         let reactionBand = CGRect(x: 0, y: y + zones.reactionTop,
@@ -2259,8 +2275,8 @@ struct StudioTimelineView: View {
             let rect = CGRect(x: x(forTime: block.start), y: reactionBand.minY + 1,
                               width: max(6, xw(block.start, block.dur)),
                               height: reactionBand.height - 2)
-            guard rect.maxX >= timelineDrawBounds.minX,
-                  rect.minX <= timelineDrawBounds.maxX else { continue }
+            guard rect.maxX >= drawBounds.minX,
+                  rect.minX <= drawBounds.maxX else { continue }
             let definition = model.scene.reactionLibrary.first { $0.id == block.reactionID }
             let selected = model.selectedReaction == ReactionSelection(character: i, id: block.id)
             let fill = lightMode ? Color(red: 0.52, green: 0.25, blue: 0.7)
@@ -2307,8 +2323,8 @@ struct StudioTimelineView: View {
                     y: mouthY,
                     width: max(1, xw(start, end - start)),
                     height: max(1, zones.subH - 1))
-                guard rect.maxX >= timelineDrawBounds.minX,
-                      rect.minX <= timelineDrawBounds.maxX else { continue }
+                guard rect.maxX >= drawBounds.minX,
+                      rect.minX <= drawBounds.maxX else { continue }
                 let opacity = character.speechVoice.automaticMouth
                     ? 0.52 : 0.12
                 ctx.fill(Path(roundedRect: rect, cornerRadius: 1),
@@ -2331,8 +2347,8 @@ struct StudioTimelineView: View {
         }
         for mark in TimelineMath.marks(for: character.events, character: i, duration: model.duration) {
             let rect = markDisplayRect(mark, rowY: y, zones: zones)
-            guard rect.maxX >= timelineDrawBounds.minX,
-                  rect.minX <= timelineDrawBounds.maxX else { continue }
+            guard rect.maxX >= drawBounds.minX,
+                  rect.minX <= drawBounds.maxX else { continue }
             ctx.fill(Path(rect), with: .color(mark.code.group.color(light: lightMode).opacity(
                 model.selectedMarks.contains(mark) ? 1 : 0.85)))
             if model.selectedMarks.contains(mark) {
@@ -2353,7 +2369,7 @@ struct StudioTimelineView: View {
         for (eventIndex, ev) in character.events.enumerated() {
             guard case .outfit(let t, _, _) = ev else { continue }
             let cx = x(forTime: t)
-            guard timelineContains(x: cx, padding: 7) else { continue }
+            guard timelineContains(x: cx, drawBounds: drawBounds, padding: 7) else { continue }
             let cy = stripY + wardrobeStripH / 2
             ctx.fill(Path(ellipseIn: CGRect(x: cx - 3, y: cy - 3, width: 6, height: 6)),
                      with: .color(lightMode ? .black : .white))
@@ -2385,7 +2401,7 @@ struct StudioTimelineView: View {
         for (ei, ev) in character.events.enumerated() {
             guard case .motion(let t, let s, let r, let w, let z) = ev else { continue }
             let cx = x(forTime: t)
-            guard timelineContains(x: cx, padding: 7) else { continue }
+            guard timelineContains(x: cx, drawBounds: drawBounds, padding: 7) else { continue }
             let cy = stripY + wardrobeStripH / 2
             let selected = model.selectedMotionEvent.map { $0.char == i && $0.index == ei } ?? false
             var diamond = Path()
@@ -2414,15 +2430,17 @@ struct StudioTimelineView: View {
             }
         }
         for clip in character.clips {
-            drawClip(clip, top: y + zones.clipTop, height: zones.clipH, ctx: ctx)
+            drawClip(clip, top: y + zones.clipTop, height: zones.clipH, ctx: ctx,
+                     drawBounds: drawBounds)
         }
     }
 
-    private func drawClip(_ clip: AudioClip, top: CGFloat, height clipH: CGFloat, ctx: GraphicsContext) {
+    private func drawClip(_ clip: AudioClip, top: CGFloat, height clipH: CGFloat,
+                          ctx: GraphicsContext, drawBounds: CGRect) {
         let rect = CGRect(x: x(forTime: clip.start), y: top,
                           width: max(4, xw(clip.start, clip.dur)), height: clipH)
-        guard rect.maxX >= timelineDrawBounds.minX,
-              rect.minX <= timelineDrawBounds.maxX else { return }
+        guard rect.maxX >= drawBounds.minX,
+              rect.minX <= drawBounds.maxX else { return }
         let selected = model.selectedClips.contains(clip.id)
         ctx.fill(Path(roundedRect: rect, cornerRadius: 3),
                  with: .color(Color(red: 0.16, green: 0.38, blue: 0.33)))
@@ -2436,9 +2454,9 @@ struct StudioTimelineView: View {
             // pixels wide. Sample only the columns that can reach this small
             // viewport canvas.
             let firstColumn = max(0, Int(
-                floor(max(rect.minX, timelineDrawBounds.minX) - rect.minX)))
+                floor(max(rect.minX, drawBounds.minX) - rect.minX)))
             let lastColumn = min(fullColumns, Int(
-                ceil(min(rect.maxX, timelineDrawBounds.maxX) - rect.minX)))
+                ceil(min(rect.maxX, drawBounds.maxX) - rect.minX)))
             for px in firstColumn..<max(firstColumn, lastColumn) {
                 let idx = start + Int(
                     Double(px) / Double(fullColumns) * Double(count))
@@ -2477,7 +2495,7 @@ struct StudioTimelineView: View {
             ctx.stroke(Path(roundedRect: rect.insetBy(dx: -1, dy: -1), cornerRadius: 3),
                        with: .color(.white), lineWidth: 1.5)
         }
-        let labelX = max(rect.minX + 4, timelineDrawBounds.minX + 4)
+        let labelX = max(rect.minX + 4, drawBounds.minX + 4)
         if labelX < rect.maxX - 4 {
             var labelContext = ctx
             labelContext.clip(to: Path(rect.insetBy(dx: 3, dy: 0)))
@@ -2493,12 +2511,12 @@ struct StudioTimelineView: View {
                             squareLeading: Bool = false, squareTrailing: Bool = false,
                             barHeight: CGFloat? = nil,
                             collapsed: Bool = false,
-                            ctx: GraphicsContext) {
+                            ctx: GraphicsContext, drawBounds: CGRect) {
         let rect = CGRect(x: x(forTime: start), y: y + presenceStripH + 2,
                           width: max(collapsed ? 2 : 6, xw(start, dur)),
                           height: barHeight ?? (h - presenceStripH - 6))
-        guard rect.maxX >= timelineDrawBounds.minX,
-              rect.minX <= timelineDrawBounds.maxX else { return }
+        guard rect.maxX >= drawBounds.minX,
+              rect.minX <= drawBounds.maxX else { return }
         if collapsed {
             // Shrunken-scene chip: inset slot with accordion pleats and
             // outward chevrons — reads as "squeezed, click to expand".
@@ -2538,8 +2556,8 @@ struct StudioTimelineView: View {
             tiled.opacity = 0.85
             let tileH = rect.height
             let tileW = max(1, tileH * CGFloat(thumb.width) / CGFloat(max(1, thumb.height)))
-            let visibleMinX = max(rect.minX, timelineDrawBounds.minX)
-            let visibleMaxX = min(rect.maxX, timelineDrawBounds.maxX)
+            let visibleMinX = max(rect.minX, drawBounds.minX)
+            let visibleMaxX = min(rect.maxX, drawBounds.maxX)
             let firstTile = floor((visibleMinX - rect.minX) / tileW)
             var tx = rect.minX + max(0, firstTile) * tileW
             while tx < visibleMaxX {
@@ -2554,7 +2572,7 @@ struct StudioTimelineView: View {
         let text = Text(label + (animated ? " →" : "")).font(.system(size: 9, weight: .medium))
             .foregroundStyle(.white)
         let size = ctx.resolve(text).measure(in: CGSize(width: 200, height: 20))
-        let labelX = max(rect.minX + 3, timelineDrawBounds.minX + 3)
+        let labelX = max(rect.minX + 3, drawBounds.minX + 3)
         guard labelX < rect.maxX - 3 else { return }
         var labelContext = ctx
         labelContext.clip(to: Path(rect.insetBy(dx: 2, dy: 0)))
@@ -4338,13 +4356,13 @@ struct GutterWheelRedirect: NSViewRepresentable {
 /// invalidating all of the timeline's editing and drawing structure.
 private struct TimelinePlayhead: View {
     @Bindable var model: StudioModel
+    let offsets: TLOffsets
     let laneLabelWidth: CGFloat
-    let scrollX: CGFloat
     let color: Color
     let xForTime: (Double) -> CGFloat
 
     var body: some View {
-        let px = laneLabelWidth + xForTime(model.time) - scrollX
+        let px = laneLabelWidth + xForTime(model.time) - offsets.x
         Rectangle()
             .fill(color)
             .frame(width: 1.5)
@@ -4353,6 +4371,23 @@ private struct TimelinePlayhead: View {
             .opacity(px >= laneLabelWidth ? 1 : 0)
             .allowsHitTesting(false)
     }
+}
+
+/// Observation boundaries keep scroll-position invalidations inside the small
+/// pinned overlays which actually need them. In particular, the timeline tile
+/// tree remains unchanged while the native scroll view moves it.
+private struct TimelineHorizontalOffset<Content: View>: View {
+    let offsets: TLOffsets
+    @ViewBuilder let content: (CGFloat) -> Content
+
+    var body: some View { content(offsets.x) }
+}
+
+private struct TimelineVerticalOffset<Content: View>: View {
+    let offsets: TLOffsets
+    @ViewBuilder let content: (CGFloat) -> Content
+
+    var body: some View { content(offsets.y) }
 }
 
 private struct TimelineClockLabel: View {
