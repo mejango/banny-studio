@@ -48,6 +48,7 @@ struct HoldButton: View {
     var big = false
 
     @State private var held = false
+    @GestureState private var gestureActive = false
     @AppStorage("studioLightMode") private var lightMode = false
 
     private var theme: Theme { .studio(lightMode: lightMode) }
@@ -68,6 +69,7 @@ struct HoldButton: View {
             .foregroundStyle(held ? Color.black.opacity(0.88) : Color.primary)
             .shadow(color: .black.opacity(0.22), radius: 6, y: 2)
             .gesture(DragGesture(minimumDistance: 0)
+                .updating($gestureActive) { _, active, _ in active = true }
                 .onChanged { _ in
                     guard !held else { return }
                     held = true
@@ -77,10 +79,24 @@ struct HoldButton: View {
                         model.liveKey(code: code, down: false)
                     }
                 }
-                .onEnded { _ in
-                    held = false
-                    if !tapOnly { model.liveKey(code: code, down: false) }
-                })
+                .onEnded { _ in release() })
+            // GestureState resets even when UIKit cancels a touch instead of
+            // delivering a normal drag end (navigation, interruption, etc.).
+            // Never leave a live performance key logically held after that.
+            .onChange(of: gestureActive) { wasActive, isActive in
+                if wasActive && !isActive { release() }
+            }
+            .onDisappear { release() }
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(label)
+            .accessibilityIdentifier("performance-\(code.rawValue)")
+            .accessibilityAddTraits(.isButton)
+    }
+
+    private func release() {
+        guard held else { return }
+        held = false
+        if !tapOnly { model.liveKey(code: code, down: false) }
     }
 }
 
@@ -89,6 +105,7 @@ struct HoldButton: View {
 struct WalkStick: View {
     @Bindable var model: StudioModel
     @State private var offset: CGSize = .zero
+    @GestureState private var gestureActive = false
     @AppStorage("studioLightMode") private var lightMode = false
     private let radius: CGFloat = 62
     private var theme: Theme { .studio(lightMode: lightMode) }
@@ -105,6 +122,7 @@ struct WalkStick: View {
                 .offset(offset)
         }
         .gesture(DragGesture(minimumDistance: 0)
+            .updating($gestureActive) { _, active, _ in active = true }
             .onChanged { value in
                 let dx = value.translation.width
                 let dy = value.translation.height
@@ -113,10 +131,15 @@ struct WalkStick: View {
                 offset = CGSize(width: dx / len * clamped, height: dy / len * clamped)
                 sync(dx: dx, dy: dy)
             }
-            .onEnded { _ in
-                offset = .zero
-                sync(dx: 0, dy: 0)
-            })
+            .onEnded { _ in release() })
+        .onChange(of: gestureActive) { wasActive, isActive in
+            if wasActive && !isActive { release() }
+        }
+        .onDisappear { release() }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Move character")
+        .accessibilityValue(model.freeformActive ? "Movement active" : "Centered")
+        .accessibilityIdentifier("performance-move-stick")
     }
 
     private var held: Set<EventCode> { model.heldCodes }
@@ -127,6 +150,11 @@ struct WalkStick: View {
         set(.arrowLeft, dx < -dead)
         set(.arrowUp, dy < -dead)    // push up = walk away (farther)
         set(.arrowDown, dy > dead)
+    }
+
+    private func release() {
+        offset = .zero
+        sync(dx: 0, dy: 0)
     }
 
     private func set(_ code: EventCode, _ active: Bool) {

@@ -484,6 +484,52 @@ final class SmokeTests: XCTestCase {
 
 #if !os(macOS)
 extension SmokeTests {
+    /// App Review 2.1(a) regression: the original iOS submission could stop
+    /// responding after the reviewer first tried to move a character. Exercise
+    /// the real touch stick, prove it reaches the model, then immediately use a
+    /// separate editor control. This runs unchanged on iPhone and iPad.
+    @MainActor
+    func testTouchMovementKeepsEditorResponsive() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["-ApplePersistenceIgnoreState", "YES"]
+        app.launch()
+
+        let create = app.buttons["Create Document"].firstMatch
+        if create.waitForExistence(timeout: 8) { create.tap() }
+
+        let stick = app.descendants(matching: .any)["performance-move-stick"]
+        XCTAssertTrue(stick.waitForExistence(timeout: 10), "movement stick missing")
+        XCTAssertTrue(stick.isHittable, "movement stick is not hittable")
+
+        let center = stick.coordinate(
+            withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+        let right = stick.coordinate(
+            withNormalizedOffset: CGVector(dx: 0.88, dy: 0.5))
+        center.press(forDuration: 0.25, thenDragTo: right)
+
+        XCTAssertEqual(stick.value as? String, "Movement active",
+                       "touch movement never reached the character model")
+        XCTAssertEqual(app.state, .runningForeground)
+
+        if UIDevice.current.userInterfaceIdiom == .pad {
+            let browse = app.buttons["workspace-browse"]
+            XCTAssertTrue(browse.waitForExistence(timeout: 3),
+                          "editor did not respond after movement")
+            browse.tap()
+            XCTAssertTrue(app.descendants(matching: .any)["workspace-drawer"]
+                .waitForExistence(timeout: 3),
+                          "Browse did not open after movement")
+        } else {
+            let timeline = app.buttons["Timeline"]
+            XCTAssertTrue(timeline.waitForExistence(timeout: 3),
+                          "editor did not respond after movement")
+            timeline.tap()
+            XCTAssertTrue(app.descendants(matching: .any)["studio-timeline"]
+                .waitForExistence(timeout: 3),
+                          "Timeline did not open after movement")
+        }
+    }
+
     /// Screenshot harness: open the seeded show (via BANNY_OPEN_DOC) and hold
     /// it on screen while the host grabs simctl screenshots.
     @MainActor
