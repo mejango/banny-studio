@@ -20,6 +20,9 @@ public struct FrameRenderer: Sendable {
     /// Optional interactive-only cache. Export omits it and continues drawing
     /// every source layer at full resolution.
     let characterSpriteCache: CharacterSpriteCache?
+    /// Optional derived performance snapshot. Interactive and offline callers
+    /// can build this once instead of rescanning every event for every frame.
+    let preparedPerformance: PreparedScenePerformance?
     /// Slot render order between BODY layers, per web RENDER constant.
     private static let renderOrder: [Slot] = [
         .outfit(2), .body, .outfit(3), .outfit(4), .eyes, .outfit(6), .mouth,
@@ -32,10 +35,12 @@ public struct FrameRenderer: Sendable {
     }
 
     public init(assets: AssetCatalog, assetMaxPixelSize: Int? = nil,
-                characterSpriteCache: CharacterSpriteCache? = nil) {
+                characterSpriteCache: CharacterSpriteCache? = nil,
+                preparedPerformance: PreparedScenePerformance? = nil) {
         self.assets = assets
         self.assetMaxPixelSize = assetMaxPixelSize
         self.characterSpriteCache = characterSpriteCache
+        self.preparedPerformance = preparedPerformance
     }
 
     /// Renders scene state at time t into `ctx`. `size` is the output frame (16:9).
@@ -57,7 +62,7 @@ public struct FrameRenderer: Sendable {
         let W = Double(size.width)
         let outH = Double(size.height)
         let H = StageLayout.virtualHeight(outputHeight: outH)
-        let sim = SceneSimulator(state: scene)
+        let sim = SceneSimulator(state: scene, prepared: preparedPerformance)
 
         ctx.saveGState()
         if flipped {
@@ -127,10 +132,11 @@ public struct FrameRenderer: Sendable {
                                               scene: scene, stageWidth: W, virtualHeight: H)
             entries.append((i, pose, placement))
         }
+        entries.sort { $0.placement.zIndex < $1.placement.zIndex }
 
         // Shadows first (web z = char z - 1, under every character).
         if let shadow = assets.shadowImage(maxPixelSize: assetMaxPixelSize) {
-            for e in entries.sorted(by: { $0.placement.zIndex < $1.placement.zIndex }) {
+            for e in entries {
                 for light in lights where light.intensity > 0.01 {
                     let s = StageLayout.shadow(for: e.placement, pose: e.pose,
                                                light: Light(x: light.x, y: light.y),
@@ -152,7 +158,7 @@ public struct FrameRenderer: Sendable {
             }
         }
 
-        for e in entries.sorted(by: { $0.placement.zIndex < $1.placement.zIndex }) {
+        for e in entries {
             drawCharacter(
                 scene.characters[e.index],
                 pose: e.pose,
@@ -177,6 +183,26 @@ public struct FrameRenderer: Sendable {
         drawCaptions(captionLines, W: W, outH: outH, in: ctx)
 
         ctx.restoreGState()
+    }
+
+    /// Populates appearance-only sprites outside the live Canvas callback.
+    /// A cache miss may decode and flatten several large alpha layers; doing
+    /// that from a background preparation task prevents first-use frame stalls.
+    public func prewarmCharacterSprites(scene: SceneState, at time: Double) {
+        guard let cache = characterSpriteCache else { return }
+        let simulator = SceneSimulator(state: scene, prepared: preparedPerformance)
+        for index in scene.characters.indices {
+            if Task.isCancelled { return }
+            let character = scene.characters[index]
+            guard !character.hidden, character.presence.isPresent(at: time) else { continue }
+            let pose = simulator.pose(characterIndex: index, at: time)
+            let key = characterSpriteKey(character: character, pose: pose, time: time,
+                                         pixelSize: cache.pixelSize)
+            _ = cache.image(for: key) {
+                rasterizedCharacter(character, pose: pose, time: time,
+                                    pixelSize: cache.pixelSize)
+            }
+        }
     }
 
     // MARK: - Floating media

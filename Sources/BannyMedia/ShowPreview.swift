@@ -25,8 +25,10 @@ public enum ShowPreview {
                                 at t: Double,
                                 to url: URL) throws {
         let options = ShowExporter.Options.p1080.fitted(aspect: document.settings.frameAspect)
+        let prepared = PreparedScenePerformance(scene: document.stage, through: t)
         let image = try render(document: document, assets: assets,
-                               assetURL: assetURL, at: t, options: options)
+                               assetURL: assetURL, at: t, options: options,
+                               preparedPerformance: prepared)
         guard let dest = CGImageDestinationCreateWithURL(
             url as CFURL, UTType.png.identifier as CFString, 1, nil)
         else { throw PreviewError.encodeFailed }
@@ -60,10 +62,13 @@ public enum ShowPreview {
         else { throw PreviewError.contextFailed }
         context.setFillColor(CGColor(gray: 0.04, alpha: 1))
         context.fill(CGRect(x: 0, y: 0, width: width, height: height))
+        let prepared = PreparedScenePerformance(
+            scene: document.stage, through: times.max() ?? 0)
         for (index, time) in times.enumerated() {
             let image = try render(
                 document: document, assets: assets,
-                assetURL: { contents.assetURLs[$0] }, at: time, options: options)
+                assetURL: { contents.assetURLs[$0] }, at: time, options: options,
+                preparedPerformance: prepared)
             let column = index % columns
             let row = index / columns
             let rect = CGRect(
@@ -90,8 +95,10 @@ public enum ShowPreview {
                                      at t: Double,
                                      maxBytes: Int = 2_000_000) throws -> Data {
         let options = ShowExporter.Options.p720.fitted(aspect: document.settings.frameAspect)
+        let prepared = PreparedScenePerformance(scene: document.stage, through: t)
         let image = try render(document: document, assets: assets,
-                               assetURL: assetURL, at: t, options: options)
+                               assetURL: assetURL, at: t, options: options,
+                               preparedPerformance: prepared)
         for quality in [0.9, 0.78, 0.66, 0.54] {
             let data = NSMutableData()
             guard let destination = CGImageDestinationCreateWithData(
@@ -112,7 +119,8 @@ public enum ShowPreview {
                                assets: AssetCatalog,
                                assetURL: @escaping (String) -> URL?,
                                at t: Double,
-                               options: ShowExporter.Options) throws -> CGImage {
+                               options: ShowExporter.Options,
+                               preparedPerformance: PreparedScenePerformance) throws -> CGImage {
         let width = Int(options.size.width), height = Int(options.size.height)
         guard let ctx = CGContext(data: nil, width: width, height: height,
                                   bitsPerComponent: 8, bytesPerRow: 0,
@@ -122,7 +130,7 @@ public enum ShowPreview {
         }
         let media = ShowExporter.AssetSampler(assets: document.assets,
                                               assetURL: assetURL)
-        FrameRenderer(assets: assets).draw(
+        FrameRenderer(assets: assets, preparedPerformance: preparedPerformance).draw(
             scene: document.stage, at: t, size: options.size,
             background: document.stage.activeBackgroundCue(at: t)
                 .flatMap { media.frame(cue: $0, at: t) },

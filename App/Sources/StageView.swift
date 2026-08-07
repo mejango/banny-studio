@@ -16,6 +16,7 @@ struct StageView: View {
     /// Placement and animation remain dynamic, but steady frames draw one
     /// sprite per character instead of several large transparent layers.
     @State private var characterSprites = CharacterSpriteCache(pixelSize: 800)
+    @State private var spritePrewarmTask: Task<Void, Never>?
     /// Wall-clock of the previous canvas draw — light/media pen ticks use real
     /// elapsed time. Character puppeteering owns a separate monotonic clock.
     /// (Reference type: mutating it inside the Canvas doesn't re-invalidate.)
@@ -150,7 +151,8 @@ struct StageView: View {
                 // then the framed result). Resolve each recorded pose once per
                 // canvas frame so event-dense shows do not simulate the cast
                 // twice while the user is arranging it.
-                let stageSimulator = SceneSimulator(state: scene)
+                let stageSimulator = SceneSimulator(
+                    state: scene, prepared: model.preparedPerformance)
                 var basePoses: [Int: CharacterPose] = [:]
                 let poseProvider: (Int) -> CharacterPose = { i in
                     if let cached = basePoses[i] { return cached }
@@ -165,7 +167,8 @@ struct StageView: View {
                     FrameRenderer(
                         assets: SharedAssets.catalog,
                         assetMaxPixelSize: characterSprites.pixelSize,
-                        characterSpriteCache: characterSprites
+                        characterSpriteCache: characterSprites,
+                        preparedPerformance: model.preparedPerformance
                     ).draw(
                         scene: drawScene, at: model.time, size: frameSize,
                         background: bg,
@@ -239,9 +242,32 @@ struct StageView: View {
         }
         .background(Color.black)
         .gesture(stageDrag)
+        .onChange(of: model.performancePreparationVersion, initial: true) { _, _ in
+            prewarmCharacterSprites()
+        }
+        .onDisappear {
+            spritePrewarmTask?.cancel()
+            spritePrewarmTask = nil
+        }
         #if os(macOS)
         .help(stageDragHelp)
         #endif
+    }
+
+    private func prewarmCharacterSprites() {
+        spritePrewarmTask?.cancel()
+        let prepared = model.preparedPerformance
+        let scene = model.scene
+        let time = model.time
+        let cache = characterSprites
+        spritePrewarmTask = Task.detached(priority: .utility) {
+            FrameRenderer(
+                assets: SharedAssets.catalog,
+                assetMaxPixelSize: cache.pixelSize,
+                characterSpriteCache: cache,
+                preparedPerformance: prepared
+            ).prewarmCharacterSprites(scene: scene, at: time)
+        }
     }
 
     /// Frame overview while a scene cue is selected (paused): the whole

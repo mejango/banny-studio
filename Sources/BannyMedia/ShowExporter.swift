@@ -84,6 +84,7 @@ public enum ShowExporter {
                               assets: AssetCatalog,
                               audioURL: @escaping (String) -> URL?,
                               assetURL: @escaping (String) -> URL?,
+                              preparedPerformance: PreparedScenePerformance? = nil,
                               options: Options = .p1080,
                               to outputURL: URL,
                               progress: ((Double) -> Void)? = nil,
@@ -91,6 +92,10 @@ public enum ShowExporter {
         if shouldCancel?() == true { throw ExportError.cancelled }
         let segments = resolveSegments(document: document)
         guard !segments.isEmpty else { throw ExportError.nothingToExport }
+        let stage = document.stage
+        let performance = preparedPerformance ?? PreparedScenePerformance(
+            scene: stage,
+            through: segments.map(\.to).max() ?? contentDuration(of: stage))
 
         try? FileManager.default.removeItem(at: outputURL)
         let writer = try AVAssetWriter(outputURL: outputURL, fileType: .mp4)
@@ -117,6 +122,7 @@ public enum ShowExporter {
         let audioFormat = AVAudioFormat(standardFormatWithSampleRate: 44100, channels: 2)!
         let audioBuffers = try bounceAudio(document: document, segments: segments,
                                            format: audioFormat, audioURL: audioURL,
+                                           preparedPerformance: performance,
                                            shouldCancel: shouldCancel)
         if shouldCancel?() == true {
             writer.cancelWriting()
@@ -168,8 +174,7 @@ public enum ShowExporter {
 
         // Video frames.
         let fps = options.fps
-        let renderer = FrameRenderer(assets: assets)
-        let stage = document.stage
+        let renderer = FrameRenderer(assets: assets, preparedPerformance: performance)
         let media = AssetSampler(assets: document.assets, assetURL: assetURL)
         let totalFrames = segments.reduce(0) { $0 + Int(((($1.to - $1.from) * Double(fps)).rounded(.up))) }
         var frameIndex = 0
@@ -262,6 +267,7 @@ public enum ShowExporter {
     private static func bounceAudio(document: ShowDocument, segments: [ResolvedSegment],
                                     format: AVAudioFormat,
                                     audioURL: (String) -> URL?,
+                                    preparedPerformance: PreparedScenePerformance,
                                     shouldCancel: (() -> Bool)?) throws -> [AVAudioPCMBuffer] {
         var out: [AVAudioPCMBuffer] = []
         let stage = document.stage
@@ -289,7 +295,7 @@ public enum ShowExporter {
             try graph.engine.start()
             graph.schedule(from: segment.from)
             // Static pan per segment (follow pans update per-frame only in live playback).
-            let sim = SceneSimulator(state: stage)
+            let sim = SceneSimulator(state: stage, prepared: preparedPerformance)
             graph.updatePans { i in
                 stage.characters.indices.contains(i)
                     ? sim.pose(characterIndex: i, at: segment.from).x : nil

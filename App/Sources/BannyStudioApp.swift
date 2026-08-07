@@ -96,7 +96,7 @@ private struct DebugDocOpener: View {
             }
             file.audio = media("audio")
             file.assetsMedia = media("bg").merging(media("assets")) { _, new in new }
-            file.model.document = doc
+            file.model.replaceDocument(doc)
             dlog("applied: \(file.audio.count) audio, \(file.assetsMedia.count) assets")
         }
     }

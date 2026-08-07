@@ -456,14 +456,17 @@ private func writePNG(_ image: CGImage, to url: URL) throws {
         lights: [Light(x: 0.8, y: 0.18)])
 
     let size = CGSize(width: 1280, height: 720)
-    func render() throws -> CGImage {
+    func render(prepared: PreparedScenePerformance? = nil) throws -> CGImage {
         let ctx = makeContext(size)
-        FrameRenderer(assets: catalog).draw(scene: scene, at: 2.25, size: size, flipped: true, in: ctx)
+        FrameRenderer(assets: catalog, preparedPerformance: prepared).draw(
+            scene: scene, at: 2.25, size: size, flipped: true, in: ctx)
         return try #require(ctx.makeImage())
     }
     let a = try render()
-    let b = try render()
-    #expect(a.dataProvider?.data as Data? == b.dataProvider?.data as Data?, "render must be deterministic")
+    let prepared = PreparedScenePerformance(scene: scene, through: 3)
+    let b = try render(prepared: prepared)
+    #expect(a.dataProvider?.data as Data? == b.dataProvider?.data as Data?,
+            "prepared rendering must remain pixel-identical")
 
     // Persist for visual inspection / snapshot reference.
     let out = ProcessInfo.processInfo.environment["RENDER_TEST_OUT"]

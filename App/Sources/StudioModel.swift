@@ -65,7 +65,10 @@ struct SpeechMouthPreview: Equatable {
 @Observable
 final class StudioModel {
     var document: ShowDocument {
-        didSet { file?.updateDocumentSnapshot(document) }
+        didSet {
+            file?.updateDocumentSnapshot(document)
+            refreshPreparedPerformance()
+        }
     }
     weak var file: ShowDocumentFile? {
         didSet {
@@ -124,6 +127,13 @@ final class StudioModel {
     var backgroundRevision = 0
     @ObservationIgnored private var visualDurationCache: [String: Double] = [:]
     @ObservationIgnored private var visualAspectCache: [String: Double] = [:]
+    /// Immutable character indexes are built away from the main actor and
+    /// replaced only when performance-relevant document inputs change.
+    private(set) var preparedPerformance: PreparedScenePerformance?
+    private(set) var performancePreparationVersion = 0
+    @ObservationIgnored private var preparedPerformanceSource:
+        PreparedScenePerformance.Source?
+    @ObservationIgnored private var performancePreparationTask: Task<Void, Never>?
 
     // Timeline selection (shared with keyboard shortcuts).
     var selectedMarks: Set<PerfMark> = []
@@ -1207,6 +1217,7 @@ final class StudioModel {
         if doc.version < 4 { doc.version = 4 }
         self.document = doc
         self.activeSceneIndex = 0
+        refreshPreparedPerformance()
     }
 
     /// The single stage/timeline (v3+).
@@ -1215,7 +1226,47 @@ final class StudioModel {
         set { document.stage = newValue }
     }
 
-    var simulator: SceneSimulator { SceneSimulator(state: scene) }
+    var simulator: SceneSimulator {
+        SceneSimulator(state: scene, prepared: preparedPerformance)
+    }
+
+    /// Prepared sources compare shared event/reaction array storage first, so
+    /// unrelated editor changes validate in O(character count) without adding
+    /// transient state to the persisted document model.
+    private func refreshPreparedPerformance(minimumHorizon: Double? = nil) {
+        let existingHorizon = preparedPerformanceSource?.horizon
+            ?? PreparedScenePerformance.Source.recommendedHorizon(for: document.stage)
+        let currentAtExistingHorizon = PreparedScenePerformance.Source(
+            scene: document.stage, through: existingHorizon)
+        let performanceInputsChanged = currentAtExistingHorizon != preparedPerformanceSource
+        let requestedHorizon = max(
+            existingHorizon,
+            minimumHorizon ?? 0,
+            performanceInputsChanged
+                ? PreparedScenePerformance.Source.recommendedHorizon(for: document.stage)
+                : existingHorizon)
+        let source = PreparedScenePerformance.Source(
+            scene: document.stage, through: requestedHorizon)
+        guard source != preparedPerformanceSource else { return }
+        preparedPerformanceSource = source
+        preparedPerformance = nil
+        performancePreparationVersion &+= 1
+        performancePreparationTask?.cancel()
+        performancePreparationTask = Task.detached(priority: .userInitiated) { [weak self] in
+            guard let prepared = try? await PreparedScenePerformance.prepare(source: source),
+                  !Task.isCancelled else { return }
+            await MainActor.run { [weak self] in
+                guard let self, self.preparedPerformanceSource == source else { return }
+                self.preparedPerformance = prepared
+                self.performancePreparationVersion &+= 1
+                self.performancePreparationTask = nil
+            }
+        }
+    }
+
+    func replaceDocument(_ replacement: ShowDocument) {
+        document = replacement
+    }
 
     /// Timeline duration: web tlDurNeeded — max content end + 3s, clamped 20..3600.
     var duration: Double {
@@ -1227,8 +1278,13 @@ final class StudioModel {
     func tick(now: TimeInterval) {
         guard playing else { return }
         time = (now - startWall) * transportPlaybackRate
-        if time >= duration {
-            time = duration
+        let end = duration
+        if let horizon = preparedPerformanceSource?.horizon,
+           time >= horizon - 1, end > horizon {
+            refreshPreparedPerformance(minimumHorizon: end)
+        }
+        if time >= end {
+            time = end
             pause()
         }
     }

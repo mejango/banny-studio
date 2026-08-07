@@ -474,20 +474,35 @@ public final class AssetCatalog: @unchecked Sendable {
             return thumbnail(named: file, maxPixelSize: max(1, maxPixelSize))
         }
         lock.lock()
-        defer { lock.unlock() }
-        if let hit = cache[file] { return hit }
+        if let hit = cache[file] {
+            lock.unlock()
+            return hit
+        }
+        lock.unlock()
+
         let url = pngDirectory.appendingPathComponent(file)
         guard let src = CGImageSourceCreateWithURL(url as CFURL, nil),
               let img = CGImageSourceCreateImageAtIndex(src, 0, nil) else { return nil }
+
+        lock.lock()
+        if let hit = cache[file] {
+            lock.unlock()
+            return hit
+        }
         cache[file] = img
+        lock.unlock()
         return img
     }
 
     private func thumbnail(named file: String, maxPixelSize: Int = 400) -> CGImage? {
         let key = "\(file)#thumb-\(maxPixelSize)"
         lock.lock()
-        defer { lock.unlock() }
-        if let hit = cache[key] { return hit }
+        if let hit = cache[key] {
+            lock.unlock()
+            return hit
+        }
+        lock.unlock()
+
         let url = pngDirectory.appendingPathComponent(file)
         guard let src = CGImageSourceCreateWithURL(url as CFURL, nil) else { return nil }
         let options: [CFString: Any] = [
@@ -498,7 +513,14 @@ public final class AssetCatalog: @unchecked Sendable {
         ]
         guard let image = CGImageSourceCreateThumbnailAtIndex(
             src, 0, options as CFDictionary) else { return nil }
+
+        lock.lock()
+        if let hit = cache[key] {
+            lock.unlock()
+            return hit
+        }
         cache[key] = image
+        lock.unlock()
         return image
     }
 

@@ -251,11 +251,14 @@ struct ShipButton: View {
             do {
                 let media = try ShippingSupport.materialize(
                     audio: audio, assets: assetsMedia, in: dir)
+                let prepared = try await PreparedScenePerformance.prepare(
+                    source: PreparedScenePerformance.Source(scene: document.stage))
                 try ShowExporter.export(
                     document: document,
                     assets: SharedAssets.catalog,
                     audioURL: { media.audioURLs[$0] },
                     assetURL: { media.assetURLs[$0] },
+                    preparedPerformance: prepared,
                     options: options,
                     to: out,
                     progress: { p in

@@ -518,11 +518,14 @@ struct YouTubePublishView: View {
                     let media = try ShippingSupport.materialize(
                         audio: audio, assets: assetMedia, in: directory)
                     let movie = directory.appendingPathComponent("banny-show.mp4")
+                    let performance = try await PreparedScenePerformance.prepare(
+                        source: PreparedScenePerformance.Source(scene: document.stage))
                     try ShowExporter.export(
                         document: document,
                         assets: SharedAssets.catalog,
                         audioURL: { media.audioURLs[$0] },
                         assetURL: { media.assetURLs[$0] },
+                        preparedPerformance: performance,
                         options: renderOptions,
                         to: movie,
                         progress: { renderProgress in

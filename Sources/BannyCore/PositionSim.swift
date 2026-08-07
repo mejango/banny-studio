@@ -162,31 +162,30 @@ public func simulatePosition(events: [PerfEvent], recStart: StartPose?, speed: D
                    spin: s.spin, zoom: s.zoom)
 }
 
-/// Checkpointed position timeline for one character's event stream: pose
-/// queries integrate at most ~10 s from the nearest checkpoint instead of the
-/// full show — hour-long shows answer as fast as short ones. Bit-identical to
-/// `simulatePosition` (checkpoints sit on full-step boundaries only).
+/// Checkpointed position timeline for one character's event stream. The shared
+/// on-demand cache uses ten-second spacing; long-lived prepared playback uses
+/// one-second spacing. Both remain bit-identical to `simulatePosition` because
+/// checkpoints sit on full-step boundaries only.
 public final class PositionTimeline: @unchecked Sendable { // immutable after init
     private let events: [PerfEvent]
     private let gScale: Double
-    private let checkpoints: [SimState] // [0] is the t=0 state; ~10s apart
+    private let checkpoints: [SimState] // [0] is the t=0 state
     let horizon: Double
-
-    /// Steps between checkpoints: 600 full steps = 10 s of show time.
-    private static let strideSteps = 600
 
     init(events: [PerfEvent], recStart: StartPose?, speed: Double, rotationSpeed: Double = 90,
          gScale: Double,
-         upTo horizon: Double) {
+         upTo horizon: Double,
+         checkpointStrideSteps requestedStride: Int = 600) {
         self.events = events
         self.gScale = gScale
         self.horizon = horizon
+        let strideSteps = max(1, requestedStride)
         var s = initialSimState(recStart: recStart, speed: speed, rotationSpeed: rotationSpeed)
         var cps = [s]
         var step = 0
         integrate(&s, events: events, gScale: gScale, to: horizon) { st in
             step += 1
-            if step % Self.strideSteps == 0 { cps.append(st) }
+            if step % strideSteps == 0 { cps.append(st) }
         }
         self.checkpoints = cps
     }
@@ -231,22 +230,39 @@ public final class PositionTimelineCache: @unchecked Sendable {
         let key = Key(events: events, recStart: recStart, speed: speed,
                       rotationSpeed: rotationSpeed, gScale: gScale)
         lock.lock()
-        defer { lock.unlock() }
         if let i = entries.firstIndex(where: { $0.key == key && $0.timeline.horizon >= t }) {
             let hit = entries.remove(at: i)
             entries.insert(hit, at: 0) // LRU front
+            lock.unlock()
             return hit.timeline
         }
-        entries.removeAll { $0.key == key } // stale horizon
+        lock.unlock()
+
         // Playback builds well past t so it rebuilds at most every ~2 minutes.
         // Interactive callers can request a much shorter lookahead: their
         // synthetic event stream changes on every key edge, so speculatively
         // integrating two minutes there only blocks the editor's main thread.
+        // Construction deliberately happens outside the cache lock. An export,
+        // another document, or another character can prepare independently
+        // instead of serializing every caller behind the longest cold build.
         let timeline = PositionTimeline(events: events, recStart: recStart, speed: speed,
                                         rotationSpeed: rotationSpeed,
                                         gScale: gScale, upTo: t + max(0, lookahead))
+
+        lock.lock()
+        // A concurrent caller may have completed the same (or a longer) build
+        // first. Prefer that entry and discard this duplicate without changing
+        // observable simulation behavior.
+        if let i = entries.firstIndex(where: { $0.key == key && $0.timeline.horizon >= t }) {
+            let hit = entries.remove(at: i)
+            entries.insert(hit, at: 0)
+            lock.unlock()
+            return hit.timeline
+        }
+        entries.removeAll { $0.key == key } // stale horizon
         entries.insert((key, timeline), at: 0)
         if entries.count > Self.capacity { entries.removeLast() }
+        lock.unlock()
         return timeline
     }
 }

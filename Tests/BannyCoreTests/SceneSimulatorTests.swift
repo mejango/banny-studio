@@ -275,3 +275,111 @@ private func makeScene(_ character: Character, gravity: Double = 1) -> SceneStat
     let elapsed = ContinuousClock.now - t0
     #expect(elapsed < .milliseconds(5), "pose query took \(elapsed)")
 }
+
+@Test func preparedPerformanceMatchesLegacyAcrossDenseEventStates() async throws {
+    var events: [PerfEvent] = []
+    for index in 0..<180 {
+        let time = Double(index) * 0.08
+        switch index % 20 {
+        case 0: events.append(.key(t: time, code: .arrowRight, down: true))
+        case 1: events.append(.key(t: time, code: .arrowRight, down: false))
+        case 2: events.append(.key(t: time, code: .arrowUp, down: true))
+        case 3: events.append(.key(t: time, code: .arrowUp, down: false))
+        case 4: events.append(.key(t: time, code: .keyM, down: true))
+        case 5: events.append(.key(t: time, code: .keyM, down: false))
+        case 6: events.append(.key(t: time, code: .keyT, down: true))
+        case 7: events.append(.key(t: time, code: .keyT, down: false))
+        case 8: events.append(.key(t: time, code: .comma, down: true))
+        case 9: events.append(.key(t: time, code: .comma, down: false))
+        case 10:
+            events.append(.motion(t: time, speed: 180 + Double(index),
+                                  rotationSpeed: 70 + Double(index % 30),
+                                  wobble: Double(index % 12), size: 0.8 + Double(index % 5) / 10))
+        case 11:
+            events.append(.outfit(t: time, slot: 10,
+                                  name: index.isMultiple(of: 2) ? "jacket" : nil))
+        case 12: events.append(.key(t: time, code: .keyJ, down: true))
+        case 13: events.append(.key(t: time, code: .keyF, down: true))
+        case 14: events.append(.key(t: time, code: .keyD, down: true))
+        case 15: events.append(.key(t: time, code: .rotateRight, down: true))
+        case 16: events.append(.key(t: time, code: .rotateRight, down: false))
+        case 17: events.append(.key(t: time, code: .zoomIn, down: true))
+        case 18: events.append(.key(t: time, code: .zoomIn, down: false))
+        default: events.append(.key(t: time, code: .spinReset, down: true))
+        }
+    }
+    let reaction = ReactionDefinition(
+        id: "nod", name: "Nod", dur: 0.8,
+        events: [
+            .key(t: 0.1, code: .keyB, down: true),
+            .key(t: 0.5, code: .keyB, down: false),
+        ])
+    let character = Character(
+        body: .orange,
+        x: 0.37,
+        depth: -0.2,
+        size: 1.1,
+        baseOutfit: [3: "chain"],
+        subs: [Subtitle(text: "prepared", start: 2, dur: 3)],
+        events: events,
+        reactions: [
+            ReactionInstance(id: "later", reactionID: "nod", start: 8, dur: 1.2),
+            ReactionInstance(id: "earlier", reactionID: "nod", start: 4, dur: 0.8),
+        ],
+        speed: 310,
+        rotationSpeed: 95,
+        wobble: 5)
+    let scene = SceneState(
+        characters: [character], reactionLibrary: [reaction],
+        gScale: 0.83, gravity: 0.9, gSize: 1.15)
+    let prepared = try await PreparedScenePerformance.prepare(
+        source: .init(scene: scene, through: 20))
+    let legacySimulator = SceneSimulator(state: scene)
+    let preparedSimulator = SceneSimulator(state: scene, prepared: prepared)
+
+    for time in stride(from: 0.0, through: 16.0, by: 0.037) {
+        #expect(preparedSimulator.pose(characterIndex: 0, at: time)
+                == legacySimulator.pose(characterIndex: 0, at: time),
+                "prepared pose differs at \(time)")
+        #expect(prepared.characters[0].events.replayedEventCount(at: time) < 64)
+    }
+}
+
+@Test func preparedSourceTracksOnlyInputsWhichInvalidatePreparedWork() {
+    var scene = SceneState(characters: [Character(body: .pink, events: [
+        .key(t: 0, code: .arrowLeft, down: true),
+    ])])
+    let original = PreparedScenePerformance.Source(scene: scene, through: 20)
+
+    scene.markers.append(TimelineMarker(id: "note", name: "Beat", start: 1))
+    scene.backgroundTracks = [BackgroundTrack(id: "bg", name: "Scenes")]
+    scene.lights = [Light(x: 0.2, y: 0.3)]
+    scene.characters[0].subs.append(Subtitle(text: "Caption", start: 1, dur: 1))
+    scene.characters[0].name = "Renamed"
+    #expect(PreparedScenePerformance.Source(scene: scene, through: 20) == original)
+
+    scene.characters[0].events.append(.key(t: 1, code: .arrowLeft, down: false))
+    #expect(PreparedScenePerformance.Source(scene: scene, through: 20) != original)
+}
+
+@Test func concurrentPreparationPreservesCharacterOrder() async throws {
+    let characters = (0..<10).map { index in
+        Character(
+            body: Body.allCases[index % Body.allCases.count],
+            x: Double(index) / 10,
+            events: [
+                .key(t: 0, code: .arrowRight, down: true),
+                .key(t: Double(index + 1), code: .arrowRight, down: false),
+            ])
+    }
+    let scene = SceneState(characters: characters)
+    let prepared = try await PreparedScenePerformance.prepare(
+        source: .init(scene: scene, through: 20))
+    let simulator = SceneSimulator(state: scene, prepared: prepared)
+
+    #expect(prepared.characters.count == characters.count)
+    for index in characters.indices {
+        #expect(simulator.pose(characterIndex: index, at: 0.5)
+                == SceneSimulator(state: scene).pose(characterIndex: index, at: 0.5))
+    }
+}

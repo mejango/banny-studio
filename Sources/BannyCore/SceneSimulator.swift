@@ -104,9 +104,11 @@ public struct CharacterPose: Equatable, Sendable {
 /// Live playback, scrubbing, and export all call this — no drift, ever.
 public struct SceneSimulator: Sendable {
     public let state: SceneState
+    private let prepared: PreparedScenePerformance?
 
-    public init(state: SceneState) {
+    public init(state: SceneState, prepared: PreparedScenePerformance? = nil) {
         self.state = state
+        self.prepared = prepared
     }
 
     /// One-shot action windows are shared with stopped-stage preview timing so
@@ -133,18 +135,25 @@ public struct SceneSimulator: Sendable {
     public func pose(characterIndex: Int, at t: Double,
                      timelineLookahead: Double = 120) -> CharacterPose {
         let c = state.characters[characterIndex]
+        let preparedCharacter = prepared.flatMap {
+            $0.characters.indices.contains(characterIndex) ? $0.characters[characterIndex] : nil
+        }
         let base = Self.basePose(for: c, in: state, at: t,
-                                 timelineLookahead: timelineLookahead)
+                                 timelineLookahead: timelineLookahead,
+                                 prepared: preparedCharacter)
         var resolved = base
-        let definitions = Dictionary(state.reactionLibrary.map { ($0.id, $0) },
-                                     uniquingKeysWith: { first, _ in first })
+        let definitions = prepared?.definitions
+            ?? Dictionary(state.reactionLibrary.map { ($0.id, $0) },
+                          uniquingKeysWith: { first, _ in first })
+        let reactions = preparedCharacter?.reactions ?? c.reactions.sorted {
+            $0.start == $1.start ? $0.id < $1.id : $0.start < $1.start
+        }
 
         // Later blocks win when two active reactions own the same channel.
         // Different channels compose, and every value is relative to the raw
         // performance so removing/ending a block reveals it unchanged.
-        for instance in c.reactions.sorted(by: {
-            $0.start == $1.start ? $0.id < $1.id : $0.start < $1.start
-        }) where instance.dur > 0 && t >= instance.start && t < instance.start + instance.dur {
+        for instance in reactions
+        where instance.dur > 0 && t >= instance.start && t < instance.start + instance.dur {
             guard let definition = definitions[instance.reactionID], definition.dur > 0 else { continue }
             let localT = min(definition.dur,
                              max(0, (t - instance.start) * definition.dur / instance.dur))
@@ -159,13 +168,14 @@ public struct SceneSimulator: Sendable {
             performer.reactions = []
             performer.wobble = base.wobble
             performer.size = base.size
-            let motion = Self.motionRates(for: c, at: t)
+            let motion = Self.motionRates(for: c, at: t, prepared: preparedCharacter)
             performer.speed = motion.speed
             performer.rotationSpeed = motion.rotationSpeed
             performer.recStart = StartPose(x: 0.5, depth: 0, face: base.face,
                                            spin: 0, zoom: 1)
             let reaction = Self.basePose(for: performer, in: state, at: localT,
-                                         timelineLookahead: timelineLookahead)
+                                         timelineLookahead: timelineLookahead,
+                                         prepared: nil)
             Self.overlay(reaction, definition: definition, intensity: instance.intensity,
                          on: &resolved, relativeTo: base)
         }
@@ -174,63 +184,30 @@ public struct SceneSimulator: Sendable {
 
     /// Pose from the character's ordinary event stream, before reaction blocks.
     private static func basePose(for c: Character, in state: SceneState,
-                                 at t: Double, timelineLookahead: Double) -> CharacterPose {
+                                 at t: Double, timelineLookahead: Double,
+                                 prepared: PreparedCharacterPerformance?) -> CharacterPose {
         // Checkpointed + cached: bit-identical to simulatePosition, but a
         // query costs ~10s of integration, not t — hour-long shows stay 60fps.
-        let sim = PositionTimelineCache.shared.timeline(
-            events: c.events,
-            recStart: c.recStart ?? StartPose(x: c.x, depth: c.depth, face: c.face),
-            speed: c.speed, rotationSpeed: c.rotationSpeed,
-            gScale: state.gScale, coveringAtLeast: t,
-            lookahead: timelineLookahead)
-            .pose(at: t)
-
-        // State scan (web resetToTime): last-writer-wins over events strictly before t.
-        var eye = EyeExpression.open
-        var tilt = 0.0
-        var tiltPrev = 0.0
-        var tiltChangeT = -1000.0
-        var manualMouthOpen = false
-        var outfit = c.baseOutfit
-        var wobble = c.wobble
-        var size = c.size
-        var lastOutfitChange: [Int: (t: Double, prev: String?)] = [:]
-        var lastJumpDown: Double?
-        var lastFlipDown: (time: Double, direction: Double)?
-        var heldLeft = false, heldRight = false, heldUp = false, heldDown = false
-
-        for ev in c.events {
-            guard ev.t < t else { break }
-            switch ev {
-            case .motion(_, _, _, let w, let z):
-                if let w { wobble = w }
-                if let z { size = z }
-            case .outfit(let et, let slot, let name):
-                lastOutfitChange[slot] = (et, outfit[slot])
-                if let name { outfit[slot] = name } else { outfit.removeValue(forKey: slot) }
-            case .key(let te, let code, let down):
-                if let blink = code.blinkExpression {
-                    eye = down ? blink : .open
-                } else {
-                    switch code {
-                    case .keyM: manualMouthOpen = down
-                    case .keyT: tiltPrev = tilt; tilt = down ? 9 : 0; tiltChangeT = te
-                    case .keyB: tiltPrev = tilt; tilt = down ? -9 : 0; tiltChangeT = te
-                    case .keyJ: if down { lastJumpDown = te }
-                    case .keyF: if down { lastFlipDown = (te, 1) }
-                    case .keyD: if down { lastFlipDown = (te, -1) }
-                    case .arrowLeft: heldLeft = down
-                    case .arrowRight: heldRight = down
-                    case .arrowUp: heldUp = down
-                    case .arrowDown: heldDown = down
-                    default: break
-                    }
-                }
-            }
+        let sim: SimPose
+        if let prepared, t <= prepared.position.horizon {
+            sim = prepared.position.pose(at: t)
+        } else {
+            sim = PositionTimelineCache.shared.timeline(
+                events: c.events,
+                recStart: c.recStart ?? StartPose(x: c.x, depth: c.depth, face: c.face),
+                speed: c.speed, rotationSpeed: c.rotationSpeed,
+                gScale: state.gScale, coveringAtLeast: t,
+                lookahead: timelineLookahead)
+                .pose(at: t)
         }
 
+        // Last-writer state is checkpointed in prepared playback. Direct API
+        // callers retain the exact original break-on-first-future-event scan.
+        let performance = prepared?.events.state(at: t)
+            ?? PreparedEventTimeline.state(for: c, at: t)
+
         var jump: CharacterPose.JumpState?
-        if let tj = lastJumpDown {
+        if let tj = performance.lastJumpDown {
             // Web: dur = round(460/gravity) ms, height 30/gravity.
             let safeGravity = max(0.1, state.gravity)
             let dur = Self.jumpDuration(gravity: safeGravity)
@@ -241,7 +218,7 @@ public struct SceneSimulator: Sendable {
         }
 
         var flip: CharacterPose.FlipState?
-        if let action = lastFlipDown {
+        if let action = performance.lastFlipDown {
             let safeGravity = max(0.1, state.gravity)
             let dur = Self.flipDuration(gravity: safeGravity)
             let progress = (t - action.time) / dur
@@ -262,19 +239,22 @@ public struct SceneSimulator: Sendable {
 
         // Eased lean: tilt ramps to its target over 0.15s (ease-out) rather
         // than snapping. `tilt` stays the instant value for logic/fidelity.
-        var leanTilt = tilt
-        let sinceTilt = t - tiltChangeT
+        var leanTilt = performance.tilt
+        let sinceTilt = t - performance.tiltChangeTime
         if sinceTilt >= 0, sinceTilt < 0.15 {
             let e = sinceTilt / 0.15
             let k = 1 - e
-            leanTilt = tiltPrev + (tilt - tiltPrev) * (1 - k * k * k)
+            leanTilt = performance.tiltPrevious
+                + (performance.tilt - performance.tiltPrevious) * (1 - k * k * k)
         }
 
         // Pixel-chunk dissolve for any slot changed within the last 0.8s.
         var outfitAnim: [Int: CharacterPose.OutfitAnim] = [:]
-        for (slot, change) in lastOutfitChange {
+        for (slot, change) in performance.lastOutfitChange {
             let p = (t - change.t) / CharacterPose.outfitDissolve
-            if p >= 0, p < 1 { outfitAnim[slot] = .init(prev: change.prev, progress: p) }
+            if p >= 0, p < 1 {
+                outfitAnim[slot] = .init(prev: change.previous, progress: p)
+            }
         }
 
         var mouthShape: MouthShape = .closed
@@ -295,13 +275,17 @@ public struct SceneSimulator: Sendable {
         // Automatic intervals above and manual input below are the exact same
         // binary M-key action. A held physical M wins; releasing it hands
         // control back to the baked virtual presses.
-        if manualMouthOpen { mouthShape = .open }
+        if performance.manualMouthOpen { mouthShape = .open }
 
-        return CharacterPose(x: sim.x, depth: sim.depth, phase: sim.phase, tilt: tilt,
-                             face: sim.face, eye: eye, talking: mouthShape != .closed, jump: jump,
-                             outfit: outfit, activeSubtitle: sub?.text,
-                             moving: heldLeft || heldRight || heldUp || heldDown,
-                             spin: sim.spin, zoom: sim.zoom, wobble: wobble, size: size,
+        return CharacterPose(x: sim.x, depth: sim.depth, phase: sim.phase,
+                             tilt: performance.tilt,
+                             face: sim.face, eye: performance.eye,
+                             talking: mouthShape != .closed, jump: jump,
+                             outfit: performance.outfit, activeSubtitle: sub?.text,
+                             moving: performance.heldLeft || performance.heldRight
+                                || performance.heldUp || performance.heldDown,
+                             spin: sim.spin, zoom: sim.zoom,
+                             wobble: performance.wobble, size: performance.size,
                              outfitAnim: outfitAnim, leanTilt: leanTilt,
                              mouthShape: mouthShape, flip: flip)
     }
@@ -363,8 +347,12 @@ public struct SceneSimulator: Sendable {
         }
     }
 
-    private static func motionRates(for character: Character, at t: Double)
+    private static func motionRates(for character: Character, at t: Double,
+                                    prepared: PreparedCharacterPerformance?)
         -> (speed: Double, rotationSpeed: Double) {
+        if let state = prepared?.events.state(at: t) {
+            return (state.speed, state.rotationSpeed)
+        }
         var speed = character.speed
         var rotationSpeed = character.rotationSpeed
         for event in character.events {
