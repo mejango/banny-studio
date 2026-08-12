@@ -322,6 +322,16 @@ struct StudioTimelineView: View {
                             Color.clear.preference(key: TLOffsetKey.self,
                                                    value: geo.frame(in: .named("tlScroll")).origin)
                         }
+                        #if os(macOS)
+                        // The preference route above silently stops reporting
+                        // when this measured subtree changes shape, which
+                        // strands the band, gutter, and playhead against a
+                        // scrolling canvas. The clip view's bounds
+                        // notification is what AppKit actually guarantees;
+                        // both write the same value, so whichever survives
+                        // keeps the pinned chrome locked to the content.
+                        ClipBoundsObserver(offsets: offsets)
+                        #endif
                         timelineCanvas
                         popoverAnchors
                         if let editing = editingLabel, editing.kind != .caption {
@@ -378,7 +388,7 @@ struct StudioTimelineView: View {
                 #if os(macOS)
                 GutterWheelRedirect(gutterWidth: laneLabelWidth)
                 #endif
-                gutterCanvas
+                gutterCanvas(scrollY: scrollY)
                 // Every track's card: face + popover inspector (the old right panel).
                 ForEach(Array(rows.enumerated()), id: \.offset) { _, row in
                     let isCharacter: Bool = { if case .character = row { return true }; return false }()
@@ -1233,12 +1243,17 @@ struct StudioTimelineView: View {
     }
 
     /// Pinned label gutter: names, eye toggles, track-height pills, width handle.
-    private var gutterCanvas: some View {
+    /// Takes the offset as a parameter, exactly like `headerBand(scrollX:)`.
+    /// Reading `scrollOffset.y` inside the draw closure instead would sidestep
+    /// the TimelineVerticalOffset observation boundary — Observation registers
+    /// reads made while evaluating `body`, not while a Canvas renders — so the
+    /// gutter would keep its last drawing and drift out of step with the lanes.
+    private func gutterCanvas(scrollY: CGFloat) -> some View {
         Canvas { ctx0, size in
             ctx0.fill(Path(CGRect(origin: .zero, size: size)),
                       with: .color(theme.gutterBase))
             var ctx = ctx0
-            ctx.translateBy(x: 0, y: -scrollOffset.y)
+            ctx.translateBy(x: 0, y: -scrollY)
             for row in rows {
                 let y = laneTop(of: row)
                 let h = height(of: row)
@@ -4346,6 +4361,53 @@ struct GutterWheelRedirect: NSViewRepresentable {
             }
             walk(root)
             return found
+        }
+    }
+}
+#endif
+
+#if os(macOS)
+/// Reports the enclosing scroll view's real scroll position into `offsets`.
+/// `clipView.bounds.origin` is exactly the value the preference route derives
+/// (content origin negated, gutter padding removed), so the two agree when
+/// both are live. Read-only: writing the bounds instead would desync
+/// SwiftUI's own scroll bookkeeping — see `keepTime(_:atViewX:fy:)`.
+private struct ClipBoundsObserver: NSViewRepresentable {
+    let offsets: TLOffsets
+
+    func makeNSView(context: Context) -> NSView {
+        let v = NSView(frame: .zero)
+        context.coordinator.attach(to: v, offsets: offsets)
+        return v
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {}
+
+    func makeCoordinator() -> Coordinator { Coordinator() }
+
+    final class Coordinator {
+        private var observer: NSObjectProtocol?
+
+        func attach(to view: NSView, offsets: TLOffsets) {
+            // enclosingScrollView is nil until the view joins the window.
+            DispatchQueue.main.async { [weak self, weak view] in
+                guard let self, let clip = view?.enclosingScrollView?.contentView,
+                      self.observer == nil else { return }
+                clip.postsBoundsChangedNotifications = true
+                self.observer = NotificationCenter.default.addObserver(
+                    forName: NSView.boundsDidChangeNotification,
+                    object: clip, queue: .main
+                ) { [weak clip] _ in
+                    guard let clip else { return }
+                    let o = clip.bounds.origin
+                    if abs(offsets.x - o.x) >= 0.25 { offsets.x = o.x }
+                    if abs(offsets.y - o.y) >= 0.25 { offsets.y = o.y }
+                }
+            }
+        }
+
+        deinit {
+            if let observer { NotificationCenter.default.removeObserver(observer) }
         }
     }
 }
