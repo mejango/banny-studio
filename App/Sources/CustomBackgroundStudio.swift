@@ -710,36 +710,45 @@ struct CustomBackgroundStudio: View {
 
     private var frameStrip: some View {
         HStack(spacing: 8) {
-            ForEach(Array(canvas.frames.indices), id: \.self) { index in
-                Button {
-                    canvas.activeFrame = index
-                    playing = false
-                } label: {
-                    VStack(spacing: 3) {
-                        if let image = canvas.image(frame: index) {
-                            Image(decorative: image, scale: 1)
-                                .resizable()
-                                .interpolation(.none)
-                                .aspectRatio(contentMode: .fit)
+            // Scrolls so the thumbnails never set the dialog's width. Five
+            // fixed 88pt cells plus the frame actions demand more than the
+            // middle column has, and the overflow pushed the controls and
+            // preview panels off both edges the moment a GIF imported.
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    ForEach(Array(canvas.frames.indices), id: \.self) { index in
+                        Button {
+                            canvas.activeFrame = index
+                            playing = false
+                        } label: {
+                            VStack(spacing: 3) {
+                                if let image = canvas.image(frame: index) {
+                                    Image(decorative: image, scale: 1)
+                                        .resizable()
+                                        .interpolation(.none)
+                                        .aspectRatio(contentMode: .fit)
+                                }
+                                Text("\(index + 1)").font(.caption2.bold())
+                            }
+                            .frame(width: 88, height: 70)
+                            .padding(4)
+                            .background(
+                                canvas.activeFrame == index
+                                    ? Color.orange.opacity(0.18)
+                                    : Color.primary.opacity(0.05),
+                                in: RoundedRectangle(cornerRadius: 7)
+                            )
+                            .overlay(RoundedRectangle(cornerRadius: 7).stroke(
+                                canvas.activeFrame == index ? Color.orange : Color.clear,
+                                lineWidth: 2
+                            ))
                         }
-                        Text("\(index + 1)").font(.caption2.bold())
+                        .buttonStyle(.plain)
                     }
-                    .frame(width: 88, height: 70)
-                    .padding(4)
-                    .background(
-                        canvas.activeFrame == index
-                            ? Color.orange.opacity(0.18)
-                            : Color.primary.opacity(0.05),
-                        in: RoundedRectangle(cornerRadius: 7)
-                    )
-                    .overlay(RoundedRectangle(cornerRadius: 7).stroke(
-                        canvas.activeFrame == index ? Color.orange : Color.clear,
-                        lineWidth: 2
-                    ))
                 }
-                .buttonStyle(.plain)
+                .padding(.vertical, 2)
             }
-            Spacer()
+            .frame(maxWidth: .infinity, alignment: .leading)
             Button { canvas.addBlankFrame() } label: {
                 Label("Blank", systemImage: "plus")
             }
