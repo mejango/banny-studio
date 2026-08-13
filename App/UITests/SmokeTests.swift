@@ -1,4 +1,7 @@
 import XCTest
+#if os(macOS)
+import AppKit
+#endif
 
 final class SmokeTests: XCTestCase {
     @MainActor
@@ -55,18 +58,35 @@ final class SmokeTests: XCTestCase {
         XCTAssertTrue(trackCard.waitForExistence(timeout: 10), "character track card missing")
         trackCard.click()
 
-        let drawer = app.otherElements["workspace-drawer"]
+        // SwiftUI maps an `.accessibilityElement(children: .contain)` container
+        // to a Group, not an "other" element, so match on identifier alone.
+        let drawer = app.descendants(matching: .any)["workspace-drawer"]
         XCTAssertTrue(drawer.waitForExistence(timeout: 5), "shared inspector drawer did not open")
+        // ADVANCED is the inspector's last section. Its row exists in the
+        // hierarchy while still scrolled out of the drawer, and clicking it
+        // there lands outside the window and toggles nothing — so scroll it
+        // into reach first, then click.
+        let inspectorScroll = drawer.scrollViews.firstMatch
+        XCTAssertTrue(inspectorScroll.waitForExistence(timeout: 5), "inspector scroll view missing")
         let advanced = app.disclosureTriangles["advanced-disclosure"]
-        if advanced.waitForExistence(timeout: 2) {
-            advanced.click()
-        } else {
-            let fallback = app.buttons["advanced-disclosure"]
-            XCTAssertTrue(fallback.waitForExistence(timeout: 3), "advanced disclosure missing")
-            fallback.click()
-        }
+        let fallback = app.buttons["advanced-disclosure"]
+        XCTAssertTrue(advanced.waitForExistence(timeout: 3) || fallback.exists,
+                      "advanced disclosure missing")
+        let toggle = advanced.exists ? advanced : fallback
+        for _ in 0..<10 where !toggle.isHittable { inspectorScroll.swipeUp() }
+        XCTAssertTrue(toggle.isHittable, "ADVANCED never scrolled into reach")
+        // Only the chevron toggles a macOS DisclosureGroup — clicking the label
+        // does nothing. Worse, the row's accessibility frame sits ~25pt left of
+        // where it draws, so clicking by fraction-of-element lands outside the
+        // drawer entirely. Measure in from the drawer's own left edge instead.
+        drawer.coordinate(withNormalizedOffset: .zero)
+            .withOffset(CGVector(dx: 15, dy: toggle.frame.midY - drawer.frame.minY))
+            .click()
+        // `value` arrives as a number, not a string — compare its description.
+        XCTAssertEqual("\(toggle.value ?? "")", "1", "ADVANCED did not expand")
 
         let editJSON = app.buttons["edit-advanced-json"]
+        for _ in 0..<6 where !editJSON.exists { inspectorScroll.swipeUp() }
         XCTAssertTrue(editJSON.waitForExistence(timeout: 5), "advanced control missing")
         editJSON.click()
 
@@ -438,6 +458,132 @@ final class SmokeTests: XCTestCase {
         app.typeKey("z", modifierFlags: .command)
         XCTAssertTrue(window.buttons["cast-card-0"].waitForExistence(timeout: 5),
                       "Undo did not restore the inspector-removed character")
+    }
+
+    /// The band, gutter, and playhead all read one scroll-offset source, and it
+    /// has silently frozen twice when the measured subtree changed shape (see
+    /// 7de8eeb). Frozen, the chrome welds to the viewport while the lanes scroll
+    /// underneath. The track cards are real views and catch a dead offset; the
+    /// gutter's names and pills are Canvas pixels, and only they catch a draw
+    /// closure that never registered the offset as a dependency.
+    @MainActor
+    func testTimelineChromeTracksScrolling() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["-ApplePersistenceIgnoreState", "YES"]
+        app.launch()
+        openSampleShow(app)
+
+        // DocumentGroup also opens an Untitled window at launch; both carry a
+        // timeline, so every query has to name the one holding the show.
+        let window = app.windows["ep1.bannyshow"]
+        XCTAssertTrue(window.waitForExistence(timeout: 15), "sample show did not open")
+        // A scroll aimed at a background window goes nowhere. Click the title
+        // bar — not the content — to make sure this window is the one listening.
+        window.coordinate(withNormalizedOffset: .zero)
+            .withOffset(CGVector(dx: 120, dy: 12)).click()
+        let timeline = window.descendants(matching: .any)["studio-timeline"]
+        XCTAssertTrue(timeline.waitForExistence(timeout: 15), "timeline missing")
+        let card = window.buttons["track-card-c-0"]
+        XCTAssertTrue(card.waitForExistence(timeout: 10), "character track card missing")
+
+        let gutterBefore = strip(of: timeline, .gutter)
+        attach(timeline.screenshot(), named: "timeline-before-scroll")
+        XCTAssertTrue(scrollLanes(timeline, byDeltaX: 0, deltaY: -140),
+                      "lanes never scrolled; the test proves nothing about the gutter")
+        attach(timeline.screenshot(), named: "timeline-after-vertical-scroll")
+        XCTAssertNotEqual(gutterBefore, strip(of: timeline, .gutter),
+                          "gutter kept its last drawing while the lanes scrolled")
+
+        // The ruler band rides the same offsets on the other axis, and it was
+        // reported stuck alongside the gutter. Prove that half too.
+        let bandBefore = strip(of: timeline, .band)
+        XCTAssertTrue(scrollLanes(timeline, byDeltaX: -200, deltaY: 0),
+                      "lanes never scrolled sideways; the band check proves nothing")
+        attach(timeline.screenshot(), named: "timeline-after-horizontal-scroll")
+        XCTAssertNotEqual(bandBefore, strip(of: timeline, .band),
+                          "ruler band stayed welded to the viewport while the lanes scrolled")
+    }
+
+    /// Scrolls until the lane pixels actually move, and reports whether they
+    /// did. The gesture silently no-ops when the window isn't key yet, and a
+    /// still gutter beside still lanes is evidence about the gesture, not the
+    /// gutter — so the caller asserts on this before reading the chrome.
+    @MainActor
+    private func scrollLanes(_ timeline: XCUIElement,
+                             byDeltaX dx: CGFloat, deltaY dy: CGFloat) -> Bool {
+        for _ in 0..<4 {
+            let before = strip(of: timeline, .lanes)
+            timeline.coordinate(withNormalizedOffset: CGVector(dx: 0.6, dy: 0.6))
+                .scroll(byDeltaX: dx, deltaY: dy)
+            sleep(1)
+            if strip(of: timeline, .lanes) != before { return true }
+        }
+        return false
+    }
+
+    private enum TimelineStrip {
+        /// The pinned label gutter, `laneLabelWidth` wide.
+        case gutter
+        /// Scrolling lane content, just right of the gutter.
+        case lanes
+        /// The pinned ruler band above the lanes.
+        case band
+    }
+
+    @MainActor
+    private func strip(of timeline: XCUIElement, _ which: TimelineStrip) -> Data? {
+        let image = timeline.screenshot().image
+        guard let cg = image.cgImage(forProposedRect: nil, context: nil, hints: nil)
+        else { return nil }
+        let scale = CGFloat(cg.width) / image.size.width
+        // Start below the ruler so the playhead can't stand in for live pixels.
+        let top = 60 * scale
+        let height = min(CGFloat(cg.height) - top, 300 * scale)
+        let box: CGRect
+        switch which {
+        case .gutter:
+            box = CGRect(x: 0, y: top, width: 110 * scale, height: height)
+        case .lanes:
+            box = CGRect(x: 130 * scale, y: top, width: 400 * scale, height: height)
+        case .band:
+            box = CGRect(x: 130 * scale, y: 0, width: 400 * scale, height: 30 * scale)
+        }
+        guard let cropped = cg.cropping(to: box) else { return nil }
+        return NSBitmapImageRep(cgImage: cropped).representation(using: .png, properties: [:])
+    }
+
+    @MainActor
+    private func attach(_ shot: XCUIScreenshot, named name: String) {
+        let a = XCTAttachment(screenshot: shot)
+        a.name = name
+        a.lifetime = .keepAlways
+        add(a)
+    }
+
+    /// Opens the repo's checked-in show, which has enough lanes to overflow the
+    /// timeline vertically. A fresh document does not.
+    @MainActor
+    private func openSampleShow(_ app: XCUIApplication) {
+        let repo = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()   // UITests
+            .deletingLastPathComponent()   // App
+            .deletingLastPathComponent()   // repo root
+        let show = repo.appendingPathComponent("ep1.bannyshow")
+
+        let opened = app.windows["ep1.bannyshow"]
+        if opened.exists { return }
+
+        app.typeKey("o", modifierFlags: .command)
+        // The open panel lands as a plain window, a dialog, or a sheet
+        // depending on the document state; wait for the sidebar it always has.
+        _ = app.staticTexts["Applications"].waitForExistence(timeout: 10)
+        app.typeKey("g", modifierFlags: [.command, .shift])
+        app.typeText(show.path)
+        app.typeKey(.return, modifierFlags: [])
+        sleep(1)
+        app.typeKey(.return, modifierFlags: [])
+        XCTAssertTrue(opened.waitForExistence(timeout: 15),
+                      "sample show did not open; windows = \(app.windows.allElementsBoundByIndex.map(\.title))")
     }
 
     /// Native popover materials used to stay in the system appearance while

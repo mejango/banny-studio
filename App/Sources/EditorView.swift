@@ -400,10 +400,13 @@ struct TrackInspector: View {
                     AdvancedJSONSection(model: model, file: file, characterIndex: i)
                         .padding(.top, 8)
                 } label: {
+                    // On the label, not the group: an identifier on the whole
+                    // DisclosureGroup overwrites every identifier inside its
+                    // content, which silently killed `edit-advanced-json`.
                     Label("ADVANCED", systemImage: "curlybraces")
                         .font(.caption.bold()).foregroundStyle(.secondary)
+                        .accessibilityIdentifier("advanced-disclosure")
                 }
-                .accessibilityIdentifier("advanced-disclosure")
             case .audio(let i):
                 VisualLayerControl(model: model, kind: kind)
                 MixSection(model: model, kind: kind)
