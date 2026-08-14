@@ -37,6 +37,7 @@ usage: banny <command>              (read-only commands accept .bs or .bs.zip)
   unpack <in.bs.zip> <project.bs>                  — extract for editing
   import <v1.json> <out.bs>                        — web v1 → native
   stylize <in.png> <out.png> [gridWidth] [dither]  — pixel-art stylizer
+  shimmer <in.png> <out.gif> [options]             — sparse point-light loop
   skill [install|print] [--target TARGET]          — AI production skill
 
 Use `banny capabilities --json` for exact command contracts and vocabulary.
@@ -160,6 +161,9 @@ public func runCLI(arguments args: [String]) async throws -> Int32 {
 
     case "stylize":
         try stylizeCommand(tail)
+
+    case "shimmer":
+        try shimmerCommand(tail)
 
     case "catalog":
         var options = CLIOptions(tail)

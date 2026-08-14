@@ -52,8 +52,10 @@ private func characterSetStartCommand(_ args: [String]) throws {
     guard let characterNumber else {
         throw CLIError.invalid("missing required option --character")
     }
-    guard x == nil || (0...1).contains(x!) else {
-        throw CLIError.invalid("--x must be inside 0...1")
+    // A scene with wings is walkable past the frame edges, so a start pose may
+    // legitimately sit offstage. The widest legal stage is wings = 1.
+    guard x == nil || (-1.0...2.0).contains(x!) else {
+        throw CLIError.invalid("--x must be inside -1...2 (outside 0...1 needs stage wings)")
     }
     guard depth == nil || (-12...1).contains(depth!) else {
         throw CLIError.invalid("--depth must be inside -12...1")

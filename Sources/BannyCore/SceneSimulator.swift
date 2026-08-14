@@ -196,7 +196,7 @@ public struct SceneSimulator: Sendable {
                 events: c.events,
                 recStart: c.recStart ?? StartPose(x: c.x, depth: c.depth, face: c.face),
                 speed: c.speed, rotationSpeed: c.rotationSpeed,
-                gScale: state.gScale, coveringAtLeast: t,
+                gScale: state.gScale, wings: state.wings, coveringAtLeast: t,
                 lookahead: timelineLookahead)
                 .pose(at: t)
         }

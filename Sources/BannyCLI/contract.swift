@@ -144,7 +144,9 @@ let commandCapabilities: [CommandCapability] = [
           usage: "banny character set-start <project.bs> --character N [start options] [mutation options]",
           mutatesProject: true, acceptsArchive: false, jsonOutput: "StartPoseReport", progress: nil,
           options: [.init("--character", value: "N", required: true, "One-based character index.", minimum: 1, maximum: 10),
-                    .init("--x", value: "N", "Normalized horizontal position.", minimum: 0, maximum: 1),
+                    .init("--x", value: "N",
+                          "Stage position; may sit outside 0...1 when the scene has wings.",
+                          minimum: -1, maximum: 2),
                     .init("--depth", value: "N", "Stage depth.", minimum: -12, maximum: 1),
                     .init("--face", value: "SIDE", "Facing direction.", allowed: ["left", "right", "-1", "1"]),
                     .init("--spin", value: "DEGREES", "Initial free rotation."),
@@ -375,7 +377,8 @@ let showSchemaJSON = #"""
       "required": ["t", "visible"],
       "properties": {
         "t": {"$ref": "#/$defs/nonnegative"},
-        "visible": {"type": "boolean"}
+        "visible": {"type": "boolean"},
+        "fade": {"type": "number", "minimum": 0, "maximum": 10}
       }
     },
     "pivot": {
@@ -814,6 +817,7 @@ let showSchemaJSON = #"""
         "gScale": {"type": "number"},
         "gravity": {"type": "number", "exclusiveMinimum": 0},
         "gSize": {"type": "number", "exclusiveMinimum": 0},
+        "wings": {"type": "number", "minimum": 0, "maximum": 1},
         "background": {"anyOf": [{"$ref": "#/$defs/legacyBackground"}, {"type": "null"}]},
         "rowOrder": {"type": "array", "items": {"type": "string"}}
       }

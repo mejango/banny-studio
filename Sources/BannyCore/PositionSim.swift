@@ -2,7 +2,9 @@ import Foundation
 
 /// Position/orientation of a character derived purely from its recorded events at time t.
 public struct SimPose: Equatable, Sendable {
-    /// Foot X, fraction of stage width (clamped to the edge margin 0.044..0.956).
+    /// Foot X, fraction of stage width. Normally clamped to the edge margin
+    /// 0.044..0.956; a scene with `wings` widens that by the same amount on
+    /// each side so performers can stand and walk fully off-frame.
     public var x: Double
     public var depth: Double
     /// Accumulated gait phase (radians); advances at speed/22 while moving.
@@ -50,10 +52,16 @@ let simResetDuration = 0.3
 /// partial final step. ONE implementation — the one-shot query, the timeline
 /// builder, and checkpoint resume all run this same code.
 @inline(__always)
-func integrate(_ s: inout SimState, events: [PerfEvent], gScale: Double, to t: Double,
+func integrate(_ s: inout SimState, events: [PerfEvent], gScale: Double,
+               wings: Double = 0, to t: Double,
                onFullStep: ((SimState) -> Void)? = nil) {
     let dt = 1.0 / 60.0
+    // Off-stage room on each side. Zero reproduces the web app exactly, so
+    // every existing show and the golden determinism fixtures are untouched.
+    let wing = max(0, wings)
     let edge = 0.044
+    let minX = edge - wing
+    let maxX = 1 - edge + wing
     while s.tt < t - 1e-9 {
         while s.ei < events.count, events[s.ei].t <= s.tt {
             let ev = events[s.ei]
@@ -95,7 +103,7 @@ func integrate(_ s: inout SimState, events: [PerfEvent], gScale: Double, to t: D
         let dz = (s.heldUp ? 1.0 : 0) - (s.heldDown ? 1.0 : 0)
         if s.heldRight && s.face == 1 && s.tt >= s.turnUntil { dx = 1 }
         else if s.heldLeft && s.face == -1 && s.tt >= s.turnUntil { dx = -1 }
-        s.x = min(1 - edge, max(edge, s.x + s.speed / 900 * dx * h))
+        s.x = min(maxX, max(minX, s.x + s.speed / 900 * dx * h))
         s.depth = min(1, max(-12, s.depth + dz * h * depthRate))
         if dx != 0 || dz != 0 { s.phase += h * s.speed / 22 }
         // Rotate at the independent rotation rate; zoom multiplicatively
@@ -155,9 +163,10 @@ func simDepthRate(speed: Double, gScale: Double) -> Double {
 /// `PositionTimelineCache` (SceneSimulator does), which answers in O(10s).
 public func simulatePosition(events: [PerfEvent], recStart: StartPose?, speed: Double,
                              rotationSpeed: Double = 90,
-                             gScale: Double, at t: Double) -> SimPose {
+                             gScale: Double, wings: Double = 0,
+                             at t: Double) -> SimPose {
     var s = initialSimState(recStart: recStart, speed: speed, rotationSpeed: rotationSpeed)
-    integrate(&s, events: events, gScale: gScale, to: t)
+    integrate(&s, events: events, gScale: gScale, wings: wings, to: t)
     return SimPose(x: s.x, depth: s.depth, phase: s.phase, face: s.face,
                    spin: s.spin, zoom: s.zoom)
 }
@@ -169,21 +178,23 @@ public func simulatePosition(events: [PerfEvent], recStart: StartPose?, speed: D
 public final class PositionTimeline: @unchecked Sendable { // immutable after init
     private let events: [PerfEvent]
     private let gScale: Double
+    private let wings: Double
     private let checkpoints: [SimState] // [0] is the t=0 state
     let horizon: Double
 
     init(events: [PerfEvent], recStart: StartPose?, speed: Double, rotationSpeed: Double = 90,
-         gScale: Double,
+         gScale: Double, wings: Double = 0,
          upTo horizon: Double,
          checkpointStrideSteps requestedStride: Int = 600) {
         self.events = events
         self.gScale = gScale
+        self.wings = wings
         self.horizon = horizon
         let strideSteps = max(1, requestedStride)
         var s = initialSimState(recStart: recStart, speed: speed, rotationSpeed: rotationSpeed)
         var cps = [s]
         var step = 0
-        integrate(&s, events: events, gScale: gScale, to: horizon) { st in
+        integrate(&s, events: events, gScale: gScale, wings: wings, to: horizon) { st in
             step += 1
             if step % strideSteps == 0 { cps.append(st) }
         }
@@ -199,7 +210,7 @@ public final class PositionTimeline: @unchecked Sendable { // immutable after in
             if checkpoints[mid].tt <= t { lo = mid } else { hi = mid - 1 }
         }
         var s = checkpoints[lo]
-        integrate(&s, events: events, gScale: gScale, to: t)
+        integrate(&s, events: events, gScale: gScale, wings: wings, to: t)
         return SimPose(x: s.x, depth: s.depth, phase: s.phase, face: s.face,
                        spin: s.spin, zoom: s.zoom)
     }
@@ -217,6 +228,7 @@ public final class PositionTimelineCache: @unchecked Sendable {
         var speed: Double
         var rotationSpeed: Double
         var gScale: Double
+        var wings: Double
     }
 
     private let lock = NSLock()
@@ -225,10 +237,11 @@ public final class PositionTimelineCache: @unchecked Sendable {
 
     public func timeline(events: [PerfEvent], recStart: StartPose?, speed: Double,
                          rotationSpeed: Double = 90,
-                         gScale: Double, coveringAtLeast t: Double,
+                         gScale: Double, wings: Double = 0,
+                         coveringAtLeast t: Double,
                          lookahead: Double = 120) -> PositionTimeline {
         let key = Key(events: events, recStart: recStart, speed: speed,
-                      rotationSpeed: rotationSpeed, gScale: gScale)
+                      rotationSpeed: rotationSpeed, gScale: gScale, wings: wings)
         lock.lock()
         if let i = entries.firstIndex(where: { $0.key == key && $0.timeline.horizon >= t }) {
             let hit = entries.remove(at: i)
@@ -247,7 +260,8 @@ public final class PositionTimelineCache: @unchecked Sendable {
         // instead of serializing every caller behind the longest cold build.
         let timeline = PositionTimeline(events: events, recStart: recStart, speed: speed,
                                         rotationSpeed: rotationSpeed,
-                                        gScale: gScale, upTo: t + max(0, lookahead))
+                                        gScale: gScale, wings: wings,
+                                        upTo: t + max(0, lookahead))
 
         lock.lock()
         // A concurrent caller may have completed the same (or a longer) build

@@ -124,21 +124,52 @@ extension ShowDocument: Codable {
 public struct VisibilityEvent: Codable, Equatable, Sendable {
     public var t: Double
     public var visible: Bool
+    /// Seconds to fade across this toggle. Omitted or 0 is the original hard
+    /// cut; a positive value spawns the performer in (or dissolves them out)
+    /// centred on `t`, for entrances that do not need a walk from the wings.
+    public var fade: Double?
 
-    public init(t: Double, visible: Bool) {
+    public init(t: Double, visible: Bool, fade: Double? = nil) {
         self.t = t
         self.visible = visible
+        self.fade = fade
     }
 }
 
 public extension Array where Element == VisibilityEvent {
     /// Presence at time t: last toggle at or before t wins; default visible.
     func isPresent(at t: Double) -> Bool {
+        opacity(at: t) > 0
+    }
+
+    /// Presence as a 0...1 alpha so a toggle can dissolve instead of cutting.
+    /// The fade is centred on the toggle time, so the moment reads as the
+    /// instant of arrival rather than the start of a wait.
+    func opacity(at t: Double) -> Double {
+        let sorted = self.sorted(by: { $0.t < $1.t })
         var visible = true
-        for ev in self.sorted(by: { $0.t < $1.t }) {
-            if ev.t <= t { visible = ev.visible } else { break }
+        var alpha = 1.0
+        for ev in sorted {
+            let fade = Swift.max(0, ev.fade ?? 0)
+            if fade <= 0 {
+                if ev.t <= t { visible = ev.visible; alpha = visible ? 1 : 0 } else { break }
+                continue
+            }
+            let start = ev.t - fade / 2
+            let end = ev.t + fade / 2
+            if t >= end {
+                visible = ev.visible
+                alpha = visible ? 1 : 0
+            } else if t > start {
+                let k = (t - start) / fade
+                alpha = ev.visible ? k : 1 - k
+                visible = ev.visible
+                break
+            } else {
+                break
+            }
         }
-        return visible
+        return Swift.min(1, Swift.max(0, alpha))
     }
 }
 
@@ -808,6 +839,11 @@ public struct SceneState: Equatable, Sendable {
     public var gravity: Double
     /// Base size multiplier (0.3..2.5).
     public var gSize: Double
+    /// Off-stage room on each side of the frame, as a fraction of stage
+    /// width. Performers may walk out to `-wings` / `1 + wings` and wait
+    /// there, so entrances and exits carry them fully out of shot instead of
+    /// being hidden mid-frame. 0 keeps the original web-app edge margin.
+    public var wings: Double
     /// v2 per-scene background (decode-only; migration turns it into a cue).
     public var background: BackgroundSpec?
     /// Display order of timeline rows (track keys); empty = type order.
@@ -820,6 +856,7 @@ public struct SceneState: Equatable, Sendable {
                 lights: [Light] = [], cropAnchors: [Double] = [],
                 markers: [TimelineMarker] = [],
                 gScale: Double = 0.6, gravity: Double = 1, gSize: Double = 1,
+                wings: Double = 0,
                 background: BackgroundSpec? = nil, rowOrder: [String] = []) {
         self.characters = characters
         self.reactionLibrary = reactionLibrary
@@ -833,6 +870,7 @@ public struct SceneState: Equatable, Sendable {
         self.gScale = gScale
         self.gravity = gravity
         self.gSize = gSize
+        self.wings = wings
         self.background = background
         self.rowOrder = rowOrder
     }
@@ -895,7 +933,7 @@ public struct SceneState: Equatable, Sendable {
 extension SceneState: Codable {
     private enum CodingKeys: String, CodingKey {
         case characters, reactionLibrary, audioTracks, imageTracks, backgroundTracks, lightTracks, lights,
-             cropAnchors, markers, gScale, gravity, gSize, background, rowOrder
+             cropAnchors, markers, gScale, gravity, gSize, wings, background, rowOrder
     }
 
     public init(from decoder: Decoder) throws {
@@ -913,6 +951,7 @@ extension SceneState: Codable {
         gScale = try c.decodeIfPresent(Double.self, forKey: .gScale) ?? 0.6
         gravity = try c.decodeIfPresent(Double.self, forKey: .gravity) ?? 1
         gSize = try c.decodeIfPresent(Double.self, forKey: .gSize) ?? 1
+        wings = try c.decodeIfPresent(Double.self, forKey: .wings) ?? 0
         background = try c.decodeIfPresent(BackgroundSpec.self, forKey: .background)
         rowOrder = try c.decodeIfPresent([String].self, forKey: .rowOrder) ?? []
     }

@@ -90,3 +90,77 @@ func stylizeCommand(_ args: [String]) throws {
         print("stylized → \(positional[1]) (grid \(styled.width)x\(styled.height))")
     }
 }
+
+/// Wraps `PixelStyler.sparkleFrames` — the sparse point-light loop the house
+/// backdrops use — and writes an animated GIF the background track can import.
+/// Under 1% of pixels move per frame, so the still reads as a still that
+/// happens to breathe.
+func shimmerCommand(_ args: [String]) throws {
+    let usage = "banny shimmer <in.png> <out.gif> [--frames N] [--delay S] [--scale N] [--json]"
+    guard args.count >= 2 else { throw CLIError.usage(usage) }
+    let positional = [args[0], args[1]]
+    var options = CLIOptions(Array(args.dropFirst(2)))
+    let frames = try options.int("--frames") ?? 8
+    let delay = try options.double("--delay") ?? 0.14
+    let scale = try options.int("--scale") ?? 2
+    let json = try options.flag("--json")
+    try options.finish(usage: usage)
+
+    guard (2...24).contains(frames) else {
+        throw CLIError.invalid("--frames must be an integer inside 2...24")
+    }
+    guard delay.isFinite, (0.04...2).contains(delay) else {
+        throw CLIError.invalid("--delay must be a number inside 0.04...2 seconds")
+    }
+    guard (1...8).contains(scale) else {
+        throw CLIError.invalid("--scale must be an integer inside 1...8")
+    }
+
+    let data = try Data(contentsOf: URL(fileURLWithPath: positional[0]))
+    guard let source = CGImageSourceCreateWithData(data as CFData, nil),
+          let still = CGImageSourceCreateImageAtIndex(source, 0, nil) else {
+        throw CLIError.invalid("cannot decode image: \(positional[0])")
+    }
+    let loop = PixelStyler.sparkleFrames(still, frames: frames, scale: scale)
+    guard loop.count > 1 else {
+        throw CLIError.invalid(
+            "no point lights found in \(positional[0]) — try a larger --scale")
+    }
+    let output = URL(fileURLWithPath: positional[1])
+    guard output.pathExtension.lowercased() == "gif" else {
+        throw CLIError.invalid("shimmer output must end in .gif")
+    }
+    guard let destination = CGImageDestinationCreateWithURL(
+        output as CFURL, UTType.gif.identifier as CFString, loop.count, nil) else {
+        throw CLIError.invalid("could not create GIF output: \(positional[1])")
+    }
+    CGImageDestinationSetProperties(destination, [
+        kCGImagePropertyGIFDictionary: [kCGImagePropertyGIFLoopCount: 0],
+    ] as CFDictionary)
+    for frame in loop {
+        CGImageDestinationAddImage(destination, frame, [
+            kCGImagePropertyGIFDictionary: [
+                kCGImagePropertyGIFDelayTime: delay,
+                kCGImagePropertyGIFUnclampedDelayTime: delay,
+            ],
+        ] as CFDictionary)
+    }
+    guard CGImageDestinationFinalize(destination) else {
+        throw CLIError.invalid("could not finish GIF output: \(positional[1])")
+    }
+    if json {
+        struct ShimmerReport: Codable {
+            let source: String, output: String
+            let frames: Int, delay: Double, loopSeconds: Double
+            let width: Int, height: Int
+        }
+        try printJSON(ShimmerReport(
+            source: positional[0], output: positional[1],
+            frames: loop.count, delay: delay,
+            loopSeconds: (delay * Double(loop.count) * 1000).rounded() / 1000,
+            width: still.width, height: still.height))
+    } else {
+        print("shimmer → \(positional[1]) (\(loop.count) frames, "
+              + "\(delay * Double(loop.count))s loop)")
+    }
+}

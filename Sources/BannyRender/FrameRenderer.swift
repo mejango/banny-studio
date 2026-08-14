@@ -123,14 +123,18 @@ public struct FrameRenderer: Sendable {
         drawVisualTracks(on: .behindCast)
 
         // Poses + placements for every character, painter-sorted by depth.
-        var entries: [(index: Int, pose: CharacterPose, placement: StageLayout.Placement)] = []
-        for i in scene.characters.indices
-            where !scene.characters[i].hidden && scene.characters[i].presence.isPresent(at: t) {
+        var entries: [(index: Int, pose: CharacterPose,
+                       placement: StageLayout.Placement, opacity: Double)] = []
+        for i in scene.characters.indices where !scene.characters[i].hidden {
+            // A presence toggle with a fade dissolves instead of cutting, so a
+            // performer can spawn in place rather than walk in from the wings.
+            let opacity = scene.characters[i].presence.opacity(at: t)
+            guard opacity > 0.001 else { continue }
             var pose = poseProvider?(i) ?? sim.pose(characterIndex: i, at: t)
             if let poseOverride { pose = poseOverride(i, pose) }
             let placement = StageLayout.place(pose: pose, character: scene.characters[i],
                                               scene: scene, stageWidth: W, virtualHeight: H)
-            entries.append((i, pose, placement))
+            entries.append((i, pose, placement, opacity))
         }
         entries.sort { $0.placement.zIndex < $1.placement.zIndex }
 
@@ -141,13 +145,13 @@ public struct FrameRenderer: Sendable {
                     let s = StageLayout.shadow(for: e.placement, pose: e.pose,
                                                light: Light(x: light.x, y: light.y),
                                                stageWidth: W, virtualHeight: H)
-                    guard s.opacity > 0 else { continue }
+                    guard s.opacity > 0, e.opacity > 0.001 else { continue }
                     // Bigger lights cast wider shadows (120 = neutral).
                     // Size never changes darkness — intensity owns that.
                     let f = light.size / 120
                     let widen = 0.85 + 0.15 * f
                     ctx.saveGState()
-                    ctx.setAlpha(CGFloat(s.opacity * light.intensity))
+                    ctx.setAlpha(CGFloat(s.opacity * light.intensity * e.opacity))
                     ctx.translateBy(x: CGFloat(s.x + 75), y: CGFloat(s.y + StageLayout.shadowSize.height / 2))
                     ctx.scaleBy(x: CGFloat(s.scaleX * widen), y: CGFloat(s.scaleY))
                     drawImage(shadow, in: CGRect(x: -75, y: -StageLayout.shadowSize.height / 2,
@@ -159,11 +163,21 @@ public struct FrameRenderer: Sendable {
         }
 
         for e in entries {
+            // A spawn uses the same stepped "fuzz" scatter the wardrobe uses to
+            // equip an item, not a smooth alpha ramp — same grit, same 4 steps.
+            var fuzz: (seed: Int, density: Double)?
+            if e.opacity < 0.999 {
+                let n = Self.fuzzSteps
+                let step = min(n - 1, max(0, Int(e.opacity * Double(n))))
+                fuzz = (seed: e.index * 977 + step,
+                        density: Double(step + 1) / Double(n) * Self.fuzzMaxDensity)
+            }
             drawCharacter(
                 scene.characters[e.index],
                 pose: e.pose,
                 placement: e.placement,
                 time: t,
+                fuzz: fuzz,
                 in: ctx
             )
         }
@@ -373,6 +387,7 @@ public struct FrameRenderer: Sendable {
 
     private func drawCharacter(_ character: Character, pose: CharacterPose,
                                placement p: StageLayout.Placement, time: Double,
+                               fuzz: (seed: Int, density: Double)? = nil,
                                in ctx: CGContext) {
         ctx.saveGState()
         // .char: translate(tx,ty) scale(s), origin 0 0
@@ -419,12 +434,16 @@ public struct FrameRenderer: Sendable {
                 rasterizedCharacter(character, pose: pose, time: time,
                                     pixelSize: cache.pixelSize)
             }) {
-                drawImage(sprite, in: box, ctx: ctx)
+                withOptionalFuzz(fuzz, box: box, ctx: ctx) {
+                    drawImage(sprite, in: box, ctx: ctx)
+                }
                 ctx.restoreGState()
                 return
             }
         }
-        drawCharacterLayers(character, pose: pose, time: time, box: box, in: ctx)
+        withOptionalFuzz(fuzz, box: box, ctx: ctx) {
+            drawCharacterLayers(character, pose: pose, time: time, box: box, in: ctx)
+        }
         ctx.restoreGState()
     }
 
@@ -576,6 +595,13 @@ public struct FrameRenderer: Sendable {
         h = h &+ UInt64(truncatingIfNeeded: seed) &* 2246822519
         h ^= h >> 15; h = h &* 2654435761; h ^= h >> 13
         return Double(h % 100_000) / 100_000.0
+    }
+
+    /// Applies the wardrobe fuzz to a whole character when one is supplied.
+    private func withOptionalFuzz(_ fuzz: (seed: Int, density: Double)?, box: CGRect,
+                                  ctx: CGContext, _ draw: () -> Void) {
+        guard let fuzz else { draw(); return }
+        withFuzzClip(box: box, seed: fuzz.seed, density: fuzz.density, ctx: ctx, draw)
     }
 
     /// Reveals `draw` through a fresh random scatter of chunks covering

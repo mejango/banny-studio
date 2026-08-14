@@ -71,6 +71,7 @@ public struct PreparedScenePerformance: Sendable {
         fileprivate var characters: [CharacterSource]
         fileprivate var reactionLibrary: [ReactionDefinition]
         fileprivate var gScale: Double
+        fileprivate var wings: Double
         fileprivate var through: Double
         public var horizon: Double { through }
 
@@ -78,11 +79,13 @@ public struct PreparedScenePerformance: Sendable {
             characters = scene.characters.map(CharacterSource.init)
             reactionLibrary = scene.reactionLibrary
             gScale = scene.gScale
+            wings = scene.wings
             through = max(0, requestedHorizon ?? Self.recommendedHorizon(for: scene))
         }
 
         public static func == (lhs: Self, rhs: Self) -> Bool {
             lhs.gScale == rhs.gScale
+                && lhs.wings == rhs.wings
                 && lhs.through == rhs.through
                 && lhs.characters.elementsEqual(rhs.characters)
                 && preparedArraysEqual(lhs.reactionLibrary, rhs.reactionLibrary)
@@ -104,7 +107,8 @@ public struct PreparedScenePerformance: Sendable {
     public init(source: Source) {
         through = source.through
         characters = source.characters.map {
-            PreparedCharacterPerformance(source: $0, gScale: source.gScale,
+PreparedCharacterPerformance(source: $0, gScale: source.gScale,
+                                         wings: source.wings,
                                          through: source.through)
         }
         definitions = Dictionary(source.reactionLibrary.map { ($0.id, $0) },
@@ -127,6 +131,7 @@ public struct PreparedScenePerformance: Sendable {
                     return (index, PreparedCharacterPerformance(
                         source: character,
                         gScale: source.gScale,
+                        wings: source.wings,
                         through: source.through))
                 }
             }
@@ -157,7 +162,7 @@ struct PreparedCharacterPerformance: Sendable {
     let reactions: [ReactionInstance]
 
     init(source: PreparedScenePerformance.Source.CharacterSource,
-         gScale: Double, through: Double) {
+         gScale: Double, wings: Double = 0, through: Double) {
         events = PreparedEventTimeline(source: source)
         position = PositionTimeline(
             events: source.events,
@@ -166,6 +171,7 @@ struct PreparedCharacterPerformance: Sendable {
             speed: source.speed,
             rotationSpeed: source.rotationSpeed,
             gScale: gScale,
+            wings: wings,
             upTo: through,
             // Prepared playback/export is long-lived derived state. One-second
             // checkpoints trade a small, bounded amount of memory for at most
