@@ -205,10 +205,19 @@ public struct FrameRenderer: Sendable {
                 guard (-0.05...1.05).contains(pose.x),
                       scene.characters[i].presence.opacity(at: t) > 0.05
                 else { continue }
+                // A caption that tracks a walk exactly slides across the frame
+                // at walking pace and cannot be read. It trails instead.
+                let settled = Self.readableSpeakerX(
+                    at: t, live: pose.x,
+                    sample: { when in
+                        (poseProvider.map { _ in sim.pose(characterIndex: i, at: when) }
+                         ?? sim.pose(characterIndex: i, at: when)).x
+                    })
                 let anchor = Self.captionAnchor(cue: cue, pose: pose,
                                                 character: scene.characters[i],
                                                 scene: scene, stageWidth: W,
-                                                virtualHeight: H, outputHeight: outH)
+                                                virtualHeight: H, outputHeight: outH,
+                                                anchorX: settled)
                 placedCaptions.append((cue, anchor.x, anchor.y))
             } else {
                 captionLines.append((scene.characters[i], text))
@@ -764,17 +773,50 @@ public struct FrameRenderer: Sendable {
     /// above the speaker's head, worked out from the same placement that draws
     /// them — so it tracks every step, and cannot drift out of agreement with
     /// the artwork the way a separately-computed guess would.
+    /// How long a caption takes to catch up with a walking speaker, and how far
+    /// it is ever allowed to fall behind.
+    public static let captionLag = 0.75
+    public static let captionSlack = 0.09
+
+    /// A speaker's position with the walk smoothed out of it.
+    ///
+    /// The caption belongs over whoever is talking, but a box moving at walking
+    /// pace is unreadable — the eye keeps chasing it. Averaging the last
+    /// three-quarters of a second, weighted towards now, leaves the box drifting
+    /// gently behind a walk and still over the speaker. The result is clamped
+    /// close to the live position so a performer who has just walked on from the
+    /// wings cannot drag their own caption off the frame.
+    static func readableSpeakerX(at t: Double, live: Double,
+                                 sample: (Double) -> Double) -> Double {
+        guard t > 0 else { return live }
+        let steps = 6
+        var total = 0.0, weight = 0.0
+        for step in 0...steps {
+            let age = captionLag * Double(step) / Double(steps)
+            let when = t - age
+            guard when >= 0 else { continue }
+            // Recent moments count for more, so the box follows rather than lags.
+            let w = Double(steps - step + 1)
+            total += sample(when) * w
+            weight += w
+        }
+        guard weight > 0 else { return live }
+        let smoothed = total / weight
+        return min(live + captionSlack, max(live - captionSlack, smoothed))
+    }
+
     static func captionAnchor(cue: Subtitle, pose: CharacterPose, character: Character,
                               scene: SceneState, stageWidth W: Double,
                               virtualHeight H: Double,
-                              outputHeight outH: Double) -> (x: Double, y: Double) {
+                              outputHeight outH: Double,
+                              anchorX: Double? = nil) -> (x: Double, y: Double) {
         guard cue.follow == true else { return (cue.x ?? 0.5, cue.y ?? 0.85) }
         let placement = StageLayout.place(pose: pose, character: character, scene: scene,
                                           stageWidth: W, virtualHeight: H)
         // The head fills the art box down to about y60 of 400; sit clear above it.
         let headY = (placement.ty + 60 * placement.scale) / H
         let clearance = 0.055 * (outH > 0 ? H / outH : 1)
-        return (min(0.97, max(0.03, pose.x)),
+        return (min(0.97, max(0.03, anchorX ?? pose.x)),
                 min(0.95, max(0.05, headY - clearance)))
     }
 

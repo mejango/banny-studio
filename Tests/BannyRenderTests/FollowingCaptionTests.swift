@@ -87,3 +87,55 @@ struct FollowingCaptionTests {
         #expect(cue?.y == nil)
     }
 }
+
+/// A caption that tracks a walk exactly slides at walking pace and cannot be
+/// read. It trails, without ever detaching from the speaker.
+struct ReadableCaptionTests {
+    /// Someone walking left to right at the compiler's own pace.
+    func walking(from x0: Double, rate: Double) -> (Double) -> Double {
+        { t in x0 + rate * max(0, t) }
+    }
+
+    @Test func aCaptionTrailsAWalkInsteadOfMatchingIt() {
+        let rate = 110.0 / 900          // the compiler's walk rate
+        let walk = walking(from: 0.2, rate: rate)
+        let t = 5.0
+        let live = walk(t)
+        let settled = FrameRenderer.readableSpeakerX(at: t, live: live, sample: walk)
+        #expect(settled < live, "the caption kept pace with the walk")
+        // Behind, but by a readable amount rather than a jump.
+        #expect(live - settled > 0.01)
+        #expect(live - settled <= FrameRenderer.captionSlack + 1e-9)
+    }
+
+    @Test func standingStillMovesNothing() {
+        let still: (Double) -> Double = { _ in 0.42 }
+        let settled = FrameRenderer.readableSpeakerX(at: 9, live: 0.42, sample: still)
+        #expect(abs(settled - 0.42) < 1e-9, "a caption drifted off a standing speaker")
+    }
+
+    /// The clamp is the safety: an arrival from the wings must not drag its own
+    /// caption off the frame.
+    @Test func aCaptionNeverDetachesFromItsSpeaker() {
+        // Just walked on from far off the left edge.
+        let arrival: (Double) -> Double = { t in t < 4.5 ? -0.2 : 0.5 }
+        let settled = FrameRenderer.readableSpeakerX(at: 5, live: 0.5, sample: arrival)
+        #expect(settled >= 0.5 - FrameRenderer.captionSlack - 1e-9,
+                "the caption was dragged back towards the wings: \(settled)")
+        #expect(settled > 0.3)
+    }
+
+    @Test func theOpeningInstantHasNothingToAverage() {
+        let walk = walking(from: 0.2, rate: 0.12)
+        #expect(FrameRenderer.readableSpeakerX(at: 0, live: 0.2, sample: walk) == 0.2)
+    }
+
+    /// Determinism matters: the same frame must resolve the same way whenever
+    /// it is rendered, because export does not run in order.
+    @Test func theSameFrameAlwaysResolvesTheSame() {
+        let walk = walking(from: 0.1, rate: 0.12)
+        let a = FrameRenderer.readableSpeakerX(at: 3.7, live: walk(3.7), sample: walk)
+        let b = FrameRenderer.readableSpeakerX(at: 3.7, live: walk(3.7), sample: walk)
+        #expect(a == b)
+    }
+}
