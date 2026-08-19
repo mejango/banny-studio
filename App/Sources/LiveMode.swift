@@ -13,14 +13,16 @@ import UniformTypeIdentifiers
 /// Live is a scene you describe once and then watch — a model writes the script
 /// as it plays, the studio stages it, and the result is written to a .bs as it
 /// goes, so a live scene always ends up as an ordinary editable project.
+/// Two ways of producing the same show, meant to alternate rather than to be
+/// chosen once: prompt a section, fine-tune it on the timeline, prompt the next.
 enum StudioMode: String, CaseIterable, Identifiable {
     case produce, live
     var id: String { rawValue }
-    var title: String { self == .produce ? "Produce" : "Live" }
+    var title: String { self == .produce ? "By hand" : "Prompt" }
     var blurb: String {
         self == .produce
-            ? "Author every beat yourself."
-            : "Describe a scene and watch a model perform it."
+            ? "Place every beat yourself on the timeline."
+            : "Describe what happens next and let a model write it."
     }
 }
 

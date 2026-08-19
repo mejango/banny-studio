@@ -16,6 +16,8 @@ struct EditorView: View {
     /// macOS only: a live scene needs a model on this machine to write it.
     #if os(macOS)
     @State private var live: LiveSession?
+    /// A scene put down to be fine-tuned by hand. Prompting picks it back up.
+    @State private var suspended: LiveSession?
     #endif
 
     var body: some View {
@@ -24,13 +26,15 @@ struct EditorView: View {
             #if os(macOS)
             if let live {
                 LiveStageView(model: model, file: file, brief: live.brief,
-                              beats: live.endpoint.beats(for:),
-                              backingTrackURL: live.backingTrack,
-                              room: live.room) {
+                              director: live.director,
+                              backingTrackURL: live.backingTrack) {
+                    // Suspended, not ended: the session keeps its director.
+                    self.suspended = live
                     self.live = nil
                 }
             } else {
-                WideEditor(model: model, file: file, showDeck: false, live: $live)
+                WideEditor(model: model, file: file, showDeck: false,
+                           live: $live, suspended: $suspended)
                     .frame(minWidth: 1000, minHeight: 700)
             }
             #else
@@ -60,6 +64,7 @@ struct WideEditor: View {
     /// Owned by EditorView: switching mode swaps the whole window, not a
     /// control inside it.
     @Binding var live: LiveSession?
+    @Binding var suspended: LiveSession?
     #endif
 
     @AppStorage("timelineHeight") private var timelineHeight: Double = 230
@@ -195,7 +200,8 @@ struct WideEditor: View {
                                            : Color(red: 0.92, green: 0.92, blue: 0.92))
             #if os(macOS)
             Divider().frame(height: 18)
-            StudioModeSelector(model: model, file: file, live: $live)
+            StudioModeSelector(model: model, file: file, live: $live,
+                               suspended: $suspended)
             #endif
             Divider().frame(height: 18)
             ProjectMenu(model: model, file: file)

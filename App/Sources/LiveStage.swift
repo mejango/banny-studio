@@ -22,7 +22,9 @@ struct LiveStageView: View {
     let backingTrackURL: URL?
     var onExit: () -> Void
 
-    @StateObject private var director: LiveDirector
+    /// Owned by the session, not by this view, so leaving for the editor
+    /// suspends the scene rather than ending it.
+    @ObservedObject var director: LiveDirector
     @State private var startedAt = Date()
     @State private var music: AVAudioPlayer?
     /// Clock for the waiting counter, ticked with the playhead.
@@ -37,16 +39,14 @@ struct LiveStageView: View {
     @State private var replayStartedAt = Date()
 
     init(model: StudioModel, file: ShowDocumentFile, brief: LiveBrief,
-         beats: @escaping @Sendable (String) async throws -> [LiveBeat],
-         backingTrackURL: URL?, room: LiveSet? = nil,
+         director: LiveDirector, backingTrackURL: URL?,
          onExit: @escaping () -> Void) {
         self.model = model
         self.file = file
         self.brief = brief
+        self.director = director
         self.backingTrackURL = backingTrackURL
         self.onExit = onExit
-        _director = StateObject(wrappedValue: LiveDirector(
-            brief: brief, document: model.document, beats: beats, room: room))
     }
 
     var body: some View {
@@ -208,7 +208,9 @@ struct LiveStageView: View {
                 .accessibilityIdentifier("live-status")
             Spacer()
             Text(clock).font(.callout.monospacedDigit()).foregroundStyle(.secondary)
-            Button("Stop", action: onExit)
+            Button("Fine-tune by hand", action: onExit)
+                .help("Edit this on the timeline, then come back and prompt the next section")
+                .accessibilityIdentifier("live-hand-off")
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 10)
@@ -282,6 +284,8 @@ struct LiveStageView: View {
 
     private func begin() {
         startedAt = Date()
+        // Coming back from the editor: adopt whatever was changed there.
+        if director.writtenThrough > 0 { director.resume(with: model.document) }
         model.playing = false          // the live clock drives the playhead
         model.cleanFrame = true        // watched, not arranged: no wings
         model.time = 0

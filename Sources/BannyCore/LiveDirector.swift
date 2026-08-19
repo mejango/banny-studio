@@ -200,6 +200,26 @@ public final class LiveDirector: ObservableObject {
         state = writtenThrough >= commissioned ? .awaitingReview : .performing
     }
 
+    /// Picks the scene back up after it has been edited by hand.
+    ///
+    /// Prompting and fine-tuning are meant to alternate, so suspending a scene
+    /// must not throw the evening away: the transcript, the notes and the
+    /// approved mark all stand. What cannot stand is the compiler's belief
+    /// about the stage, because the document has been edited since — so it is
+    /// rebuilt from the document rather than trusted.
+    public func resume(with document: ShowDocument) {
+        self.document = document
+        writtenThrough = max(writtenThrough, chunkStart)
+        compiler.resync(with: document, at: writtenThrough)
+        // What was written is what was approved: hand edits are never a draft
+        // waiting to be thrown away by a later Try again.
+        approved = Checkpoint(document: document, compiler: compiler, rng: rng,
+                              transcript: transcript, writtenThrough: writtenThrough)
+        chunkStart = writtenThrough
+        commissioned = writtenThrough
+        state = .awaitingReview
+    }
+
     // MARK: - Review
 
     /// Accepts the stretch under review and commissions the next half minute.

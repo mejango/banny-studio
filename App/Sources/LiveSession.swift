@@ -10,12 +10,21 @@ import ImageIO
 import BannyMedia
 
 /// Everything a running live scene needs, once setup is done.
+///
+/// The director is held here rather than by the view, so switching to By hand
+/// suspends the scene instead of ending it: the transcript, the notes and the
+/// approved mark are all still there when prompting resumes.
 struct LiveSession: Equatable {
     var brief: LiveBrief
     var endpoint: LiveModelEndpoint
     var backingTrack: URL?
     /// The stage as read from the backdrop, when the scene read it.
     var room: LiveSet?
+    var director: LiveDirector
+
+    static func == (a: LiveSession, b: LiveSession) -> Bool {
+        a.director === b.director && a.brief == b.brief
+    }
 }
 
 /// The Produce/Live control, sitting in the header beside the project name
@@ -26,16 +35,35 @@ struct StudioModeSelector: View {
     @Bindable var model: StudioModel
     let file: ShowDocumentFile
     @Binding var live: LiveSession?
+    @Binding var suspended: LiveSession?
 
     @State private var setup = LiveSetup()
 
     var body: some View {
+        HStack(spacing: 6) {
+            Text("Produce:")
+                .font(.system(size: 11, weight: .semibold, design: .rounded))
+                .foregroundStyle(.secondary)
+            modes
+        }
+    }
+
+    private var modes: some View {
         HStack(spacing: 2) {
             ForEach(StudioMode.allCases) { mode in
                 Button {
                     switch mode {
-                    case .produce: live = nil
-                    case .live: setup.open()
+                    case .produce:
+                        if let live { suspended = live }
+                        live = nil
+                    case .live:
+                        // Picking a scene back up, not starting another one.
+                        if let suspended {
+                            live = suspended
+                            self.suspended = nil
+                        } else {
+                            setup.open(from: model.document, file: file)
+                        }
                     }
                 } label: {
                     Text(mode.title)
@@ -54,6 +82,7 @@ struct StudioModeSelector: View {
         .padding(2)
         .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 7))
         .liveSetup($setup, model: model, file: file, live: $live)
+        .help(suspended == nil ? "" : "Pick the scene back up where you left it")
     }
 
     private func isCurrent(_ mode: StudioMode) -> Bool {
@@ -70,7 +99,7 @@ struct LiveModeButton: View {
     @State private var setup = LiveSetup()
 
     var body: some View {
-        Button { setup.open() } label: {
+        Button { setup.open(from: model.document, file: file) } label: {
             Label("Live", systemImage: "dot.radiowaves.left.and.right")
         }
         .help("Describe a scene and let a model perform it")
@@ -96,8 +125,32 @@ struct LiveSetup {
     /// True once a band has been dragged. A reading in flight loses to it.
     var handPlaced = false
 
-    mutating func open() {
-        if brief.cast.isEmpty { brief = LiveBrief.starter() }
+    /// Opens the sheet on the show that is already here.
+    ///
+    /// Prompting is not a fresh start — it is a thing you reach for partway
+    /// through. Arriving at a starter cast and a stock backdrop when the
+    /// document already has its own people and its own set means retyping what
+    /// is on screen behind the sheet.
+    mutating func open(from document: ShowDocument, file: ShowDocumentFile) {
+        if !document.stage.characters.isEmpty {
+            brief.cast = document.stage.characters.map { character in
+                let outfit = Dictionary(uniqueKeysWithValues:
+                    character.baseOutfit.map { (String($0.key), $0.value) })
+                return LiveCastMember(
+                    name: character.name, body: character.body, outfit: outfit,
+                    // Keep whatever description they already had for this name.
+                    prompt: brief.cast.first { $0.name == character.name }?.prompt ?? "",
+                    speed: character.speed,
+                    // Costumes already on the cast are the director's choice.
+                    outfitIsChosen: !outfit.isEmpty)
+            }
+        } else if brief.cast.isEmpty {
+            brief = LiveBrief.starter()
+        }
+        // The set the show is already playing on, ahead of any default.
+        if let existing = LiveSetup.backdrop(of: document, in: file) {
+            backgroundURL = existing
+        }
         // Open on a real room. An empty set editor teaches nobody anything,
         // and this is the one we know stages well.
         if backgroundURL == nil { backgroundURL = BuiltInBackdrops.sunsetBar }
@@ -121,6 +174,24 @@ struct LiveSetup {
         }
         #endif
         showing = true
+    }
+}
+
+extension LiveSetup {
+    /// The backdrop a document is already using, written somewhere the file
+    /// picker's world can see it. The bytes live inside the package, and the
+    /// sheet works in file URLs.
+    static func backdrop(of document: ShowDocument, in file: ShowDocumentFile) -> URL? {
+        guard let cue = document.stage.backgroundTracks.first?.cues.first,
+              let asset = document.assets.first(where: { $0.id == cue.assetID }),
+              let media = file.assetsMedia[asset.id]
+        else { return nil }
+        let out = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("banny-current-set-\(asset.id).\(media.1)")
+        if !FileManager.default.fileExists(atPath: out.path) {
+            try? media.0.write(to: out)
+        }
+        return FileManager.default.fileExists(atPath: out.path) ? out : nil
     }
 }
 
@@ -228,7 +299,10 @@ private struct LiveSetupModifier: ViewModifier {
                 model.time = 0
                 setup.showing = false
                 live = LiveSession(brief: brief, endpoint: endpoint,
-                                   backingTrack: track, room: room)
+                                   backingTrack: track, room: room,
+                                   director: LiveDirector(
+                                       brief: brief, document: document,
+                                       beats: endpoint.beats(for:), room: room))
             } catch {
                 setup.problem = error.localizedDescription
             }

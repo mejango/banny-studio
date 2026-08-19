@@ -80,6 +80,42 @@ public struct LiveCompiler {
         dissolveNext = false
     }
 
+    /// Re-agrees with a document that has been edited by hand.
+    ///
+    /// The compiler carries its own belief about where everyone is standing,
+    /// and every bug worth the name in this system came from that belief
+    /// drifting from the simulator's. Once a scene has been fine-tuned in the
+    /// editor — somebody dragged, an event trimmed — the belief is stale, so it
+    /// is thrown away and rebuilt from what the simulator actually reports at
+    /// `t`. Nothing here guesses: it asks.
+    public mutating func resync(with document: ShowDocument, at t: Double) {
+        now = t
+        let sim = SceneSimulator(state: document.stage)
+        for (i, character) in document.stage.characters.enumerated() {
+            let pose = sim.pose(characterIndex: i, at: t)
+            let visible = character.presence.opacity(at: t) > 0.5
+            var performer = cast[character.name]
+                ?? Performer(index: i, x: pose.x, zone: .offstage,
+                             speed: character.speed, onstage: false, walkEnd: -1)
+            performer.index = i
+            performer.x = pose.x
+            performer.speed = character.speed
+            performer.onstage = visible
+            if !visible { performer.zone = .offstage }
+            // No walk is in flight at a moment the user chose to stop at.
+            performer.walkEnd = t
+            performer.walks = []
+            performer.looks = []
+            // Whatever is on their face now is what taking the headset off
+            // should give them back.
+            let worn = pose.outfit[LiveCompiler.glassesSlot]
+            performer.wearingVisor = worn == LiveCompiler.visor
+            if !performer.wearingVisor { performer.glasses = worn }
+            cast[character.name] = performer
+            if !order.contains(character.name) { order.append(character.name) }
+        }
+    }
+
     /// Brings someone into the company mid-scene. They start offstage, exactly
     /// as the opening cast does, and walk on when the script says so.
     public mutating func register(name: String, index: Int, x: Double, speed: Double) {
