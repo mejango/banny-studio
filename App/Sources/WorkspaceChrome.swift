@@ -265,15 +265,13 @@ struct PlaybackSpeedMenu: View {
                 }
             }
         } label: {
-            HStack(spacing: 2) {
-                Text(Self.label(for: model.playbackRate))
-                    .monospacedDigit()
-                Image(systemName: "chevron.down")
-                    .font(.system(size: 7, weight: .bold))
-            }
-            .font(.system(size: 10, weight: .semibold))
-            .frame(minWidth: 36, minHeight: 24)
-            .contentShape(Rectangle())
+            // The rate alone. A chevron beside a two-character label is more
+            // furniture than affordance — the whole thing is the button.
+            Text(Self.label(for: model.playbackRate))
+                .monospacedDigit()
+                .font(.system(size: 10, weight: .semibold))
+                .frame(minWidth: 30, minHeight: 24)
+                .contentShape(Rectangle())
         }
         .menuStyle(.button)
         .buttonStyle(.borderless)

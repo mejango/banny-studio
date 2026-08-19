@@ -10,20 +10,34 @@ struct EditorView: View {
     #if !os(macOS)
     @Environment(\.horizontalSizeClass) private var sizeClass
     #endif
+    /// Produce is the editor. Live hands the same document to a model, which
+    /// writes the scene while it plays. Both modes edit one document — a live
+    /// scene is an ordinary project that happens to be getting longer.
+    @State private var live: LiveSession?
 
     var body: some View {
         let model = file.model
         Group {
+            if let live {
+                LiveStageView(model: model, file: file, brief: live.brief,
+                              beats: live.endpoint.beats(for:),
+                              backingTrackURL: live.backingTrack,
+                              room: live.room) {
+                    self.live = nil
+                }
+            } else {
             #if os(macOS)
-            WideEditor(model: model, file: file, showDeck: false)
+            WideEditor(model: model, file: file, showDeck: false, live: $live)
                 .frame(minWidth: 1000, minHeight: 700)
             #else
             if sizeClass == .regular {
-                WideEditor(model: model, file: file, showDeck: true)
+                WideEditor(model: model, file: file, showDeck: true, live: $live)
             } else {
                 CompactEditor(model: model, file: file)
+                    .toolbar { LiveModeButton(model: model, file: file, live: $live) }
             }
             #endif
+            }
         }
         .onAppear { model.undoManager = undoManager }
         .onChange(of: undoManager) { model.undoManager = $1 }
@@ -40,6 +54,7 @@ struct WideEditor: View {
     @Bindable var model: StudioModel
     let file: ShowDocumentFile
     let showDeck: Bool
+    @Binding var live: LiveSession?
 
     @AppStorage("timelineHeight") private var timelineHeight: Double = 230
     @AppStorage("studioLightMode") private var lightMode = false
@@ -172,6 +187,8 @@ struct WideEditor: View {
                 // Match the logo art: black in light mode, off-white in dark.
                 .foregroundStyle(lightMode ? Color.black
                                            : Color(red: 0.92, green: 0.92, blue: 0.92))
+            Divider().frame(height: 18)
+            StudioModeSelector(model: model, file: file, live: $live)
             Divider().frame(height: 18)
             ProjectMenu(model: model, file: file)
             Spacer(minLength: 8)

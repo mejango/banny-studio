@@ -388,6 +388,10 @@ extension PixelStyler {
         guard let base = rgba(of: still, width: w, height: h) else { return [still] }
         let s = max(1, scale)
         let gw = w / s, gh = h / s
+        // Tiny valid images have no interior grid cell. Avoid constructing an
+        // inverted half-open range and let the caller fall back to camera
+        // drift instead of crashing while probing for point lights.
+        guard frames >= 2, gw >= 3, gh >= 3 else { return [still] }
 
         func cellLum(_ x: Int, _ y: Int) -> Float {
             let i = ((y * s) * w + (x * s)) * 4

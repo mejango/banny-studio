@@ -1,11 +1,12 @@
 import Foundation
 import BannyCore
+import BannyLive
 
 // Public machine contract for GUI-free and agent-driven production.
 
 enum BannyCLIContract {
-    static let version = "2.0.0"
-    static let contractVersion = 2
+    static let version = "2.1.0"
+    static let contractVersion = 3
     static let schemaVersion = 4
     static let patchStandard = "RFC 6902"
 }
@@ -243,6 +244,78 @@ let commandCapabilities: [CommandCapability] = [
           usage: "banny stylize <in.png> <out.png> [gridWidth] [dither] [--json]",
           mutatesProject: false, acceptsArchive: true, jsonOutput: "StylizeReport", progress: nil,
           options: [jsonOption]),
+    .init(name: "shimmer", summary: "Turn sparse point lights in a still into a subtle looping GIF.",
+          usage: "banny shimmer <in.png> <out.gif> [--frames N] [--delay S] [--scale N] [--json]",
+          mutatesProject: false, acceptsArchive: true, jsonOutput: "ShimmerEncoder.Report",
+          progress: nil,
+          options: [.init("--frames", value: "N", "Animation frame count.",
+                          minimum: 2, maximum: 24, defaultValue: "8"),
+                    .init("--delay", value: "SECONDS", "Delay per frame.",
+                          minimum: 0.04, maximum: 2, defaultValue: "0.14"),
+                    .init("--scale", value: "N", "Point-light detection scale.",
+                          minimum: 1, maximum: 8, defaultValue: "2"),
+                    jsonOption]),
+    .init(name: "room contract", summary: "Describe the deprecated participant-local AI protocol.",
+          usage: "banny room contract [--json]", mutatesProject: false,
+          acceptsArchive: false, jsonOutput: "RoomAgentContractReport", progress: nil,
+          options: [jsonOption]),
+    .init(name: "room serve", summary: "Host live rooms and the bundled room site.",
+          usage: "banny room serve [--storage DIR] [--bind HOST] [--port N] [--allowed-host HOST ...] [--director built-in|ollama] [--director-url URL] [--director-model MODEL] [--max-rooms N] [--max-storage-bytes BYTES] [--json]",
+          mutatesProject: true, acceptsArchive: false,
+          jsonOutput: "RoomServeReadyReport",
+          progress: "Prints one ready record, then serves until the process stops.",
+          options: [
+            .init("--storage", value: "DIR", "Persistent room/package directory.",
+                  defaultValue: "~/Library/Application Support/Banny Studio/Live Rooms"),
+            .init("--bind", value: "HOST", "Listener address; use a TLS reverse proxy when exposed.",
+                  defaultValue: "127.0.0.1"),
+            .init("--allowed-host", value: "HOST",
+                  "Repeatable exact Host authority accepted from browsers/proxies; required for non-loopback binds."),
+            .init("--director", value: "PROVIDER",
+                  "Host-wide browser-character director.",
+                  allowed: ["built-in", "ollama"], defaultValue: "built-in"),
+            .init("--director-url", value: "URL",
+                  "Ollama HTTP numeric-loopback origin; valid only with --director ollama.",
+                  defaultValue: "http://127.0.0.1:11434"),
+            .init("--director-model", value: "MODEL",
+                  "Installed Ollama model; valid only with --director ollama.",
+                  defaultValue: "llama3.2:3b"),
+            .init("--max-rooms", value: "N",
+                  "Maximum persisted or currently hosted rooms; reaching it rejects creation without deleting recordings.",
+                  minimum: 1,
+                  defaultValue: String(LiveRoomHostLimits.defaultMaximumRooms)),
+            .init("--max-storage-bytes", value: "BYTES",
+                  "Maximum logical bytes admitted under room storage; symlink targets are never counted or followed.",
+                  minimum: 1,
+                  defaultValue: String(LiveRoomHostLimits.defaultMaximumStorageBytes)),
+            .init("--port", value: "N", "Listener port (0 asks the system to choose).",
+                  minimum: 0, maximum: 65535, defaultValue: "7330"),
+            jsonOption,
+          ]),
+    .init(name: "room join", summary: "Deprecated legacy bridge for a participant-local AI; prefer browser join.",
+          usage: "banny room join <room-url> --agent URL --name NAME --character FILE [--credentials-file FILE] [options]",
+          mutatesProject: false, acceptsArchive: false,
+          jsonOutput: "RoomJoinReadyReport",
+          progress: "Skipped local-agent decisions are written as JSONL to stderr with --json.",
+          options: [
+            .init("--agent", value: "URL", required: true,
+                  "Local AI origin; numeric loopback is required by default."),
+            .init("--credentials-file", value: "FILE",
+                  "Private 0600 JSON containing identity, invite, and/or agent_token."),
+            .init("--agent-token", value: "TOKEN",
+                  "Deprecated inline local-AI bearer; prefer --credentials-file."),
+            .init("--name", value: "NAME", required: true, "Participant display name."),
+            .init("--character", value: "FILE", required: true,
+                  "avatar.json or a sanitized character .bannytrack."),
+            .init("--identity", value: "ID", "Identity used by an allowlisted room."),
+            .init("--invite", value: "TOKEN",
+                  "Deprecated inline invitation; prefer --credentials-file."),
+            .init("--allow-remote-agent",
+                  "Explicitly allow a non-loopback HTTPS AI endpoint."),
+            .init("--allow-insecure-room",
+                  "Explicitly allow plaintext HTTP to a non-loopback room host."),
+            jsonOption,
+          ]),
     .init(name: "skill", summary: "Print or install the current AI production skill.",
           usage: "banny skill [print|install] [--target codex|claude|all] [--json]",
           mutatesProject: true, acceptsArchive: true, jsonOutput: "SkillInstallReport", progress: nil,
@@ -552,7 +625,12 @@ let showSchemaJSON = #"""
       "properties": {
         "text": {"type": "string"},
         "start": {"$ref": "#/$defs/nonnegative"},
-        "dur": {"type": "number", "exclusiveMinimum": 0}
+        "dur": {"type": "number", "exclusiveMinimum": 0},
+        "x": {"$ref": "#/$defs/normalized"},
+        "y": {"$ref": "#/$defs/normalized"},
+        "size": {"type": "number", "minimum": 0.2, "maximum": 4},
+        "width": {"type": "number", "minimum": 0.08, "maximum": 1},
+        "follow": {"type": "boolean"}
       }
     },
     "performanceEvent": {

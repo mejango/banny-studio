@@ -187,14 +187,59 @@ public struct FrameRenderer: Sendable {
         // Captions gate on track visibility only — a presence-hidden character
         // still speaks (its audio plays), so its line still shows.
         var captionLines: [(speaker: Character, text: String)] = []
+        // Each placed caption with the anchor it should be drawn at. A caption
+        // that follows its speaker takes that anchor from the live pose, so it
+        // travels with them instead of labelling the spot they left.
+        var placedCaptions: [(cue: Subtitle, anchorX: Double, anchorY: Double)] = []
         for i in scene.characters.indices where !scene.characters[i].hidden {
             let pose = entries.first(where: { $0.index == i })?.pose
                 ?? sim.pose(characterIndex: i, at: t)
-            if let text = pose.activeSubtitle {
+            guard let text = pose.activeSubtitle else { continue }
+            // A caption that names its own spot renders independently; one that
+            // does not joins the shared block exactly as before.
+            if let cue = pose.activeSubtitleCue, cue.isPlaced {
+                // A placed caption is anchored to its speaker, so it leaves with
+                // them — whether they walked into the wings or dissolved out.
+                // An unplaced caption still shows for an absent speaker, which
+                // is deliberate: that is how an offscreen voice is captioned.
+                guard (-0.05...1.05).contains(pose.x),
+                      scene.characters[i].presence.opacity(at: t) > 0.05
+                else { continue }
+                let anchor = Self.captionAnchor(cue: cue, pose: pose,
+                                                character: scene.characters[i],
+                                                scene: scene, stageWidth: W,
+                                                virtualHeight: H, outputHeight: outH)
+                placedCaptions.append((cue, anchor.x, anchor.y))
+            } else {
                 captionLines.append((scene.characters[i], text))
             }
         }
         drawCaptions(captionLines, W: W, outH: outH, in: ctx)
+        // Lowest first, so a caption keeps its place next to whoever said it and
+        // anything clashing with it stacks upward. Deterministic order means the
+        // same frame always resolves the same way.
+        let gap = outH * 0.012
+        var placedLayouts: [CaptionLayoutEngine.Layout] = []
+        for placed in placedCaptions.sorted(by: { ($0.anchorY, $0.anchorX) > ($1.anchorY, $1.anchorX) }) {
+            let cue = placed.cue
+            if let layout = CaptionLayoutEngine.placed(
+                text: cue.text, frameWidth: W, outputHeight: outH,
+                anchorX: placed.anchorX, anchorY: placed.anchorY,
+                size: cue.size ?? 1, maxWidth: cue.width) {
+                placedLayouts.append(layout)
+            }
+        }
+        // Concurrent captions must all stay readable, so nudge each clear of
+        // whatever is already on screen rather than letting them pile up.
+        let boxes = CaptionLayoutEngine.stack(
+            placedLayouts.map { CGRect(x: $0.boxX, y: $0.boxY,
+                                       width: $0.boxWidth, height: $0.boxHeight) },
+            gap: gap, height: outH)
+        for (var layout, box) in zip(placedLayouts, boxes) {
+            layout.boxX = box.minX
+            layout.boxY = box.minY
+            drawCaptionBox(layout, in: ctx)
+        }
 
         ctx.restoreGState()
     }
@@ -708,6 +753,33 @@ public struct FrameRenderer: Sendable {
             frameWidth: W,
             outputHeight: outH)
         else { return }
+        drawCaptionBox(layout, in: ctx)
+    }
+
+    /// Paints one laid-out caption box. Shared by the stacked block at the
+    /// bottom of frame and by individually placed captions.
+    /// Where a placed caption belongs, as a fraction of the frame.
+    ///
+    /// A fixed caption keeps the spot it was given. A following one is put just
+    /// above the speaker's head, worked out from the same placement that draws
+    /// them — so it tracks every step, and cannot drift out of agreement with
+    /// the artwork the way a separately-computed guess would.
+    static func captionAnchor(cue: Subtitle, pose: CharacterPose, character: Character,
+                              scene: SceneState, stageWidth W: Double,
+                              virtualHeight H: Double,
+                              outputHeight outH: Double) -> (x: Double, y: Double) {
+        guard cue.follow == true else { return (cue.x ?? 0.5, cue.y ?? 0.85) }
+        let placement = StageLayout.place(pose: pose, character: character, scene: scene,
+                                          stageWidth: W, virtualHeight: H)
+        // The head fills the art box down to about y60 of 400; sit clear above it.
+        let headY = (placement.ty + 60 * placement.scale) / H
+        let clearance = 0.055 * (outH > 0 ? H / outH : 1)
+        return (min(0.97, max(0.03, pose.x)),
+                min(0.95, max(0.05, headY - clearance)))
+    }
+
+    private func drawCaptionBox(_ layout: CaptionLayoutEngine.Layout,
+                                in ctx: CGContext) {
         let font = CTFontCreateWithName(
             "Helvetica-Bold" as CFString,
             layout.fontSize,

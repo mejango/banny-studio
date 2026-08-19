@@ -29,6 +29,8 @@ public struct CharacterPose: Equatable, Sendable {
     /// (in `outfit`) fades in. Empty once transitions settle.
     public var outfitAnim: [Int: OutfitAnim]
     public var activeSubtitle: String?
+    /// The whole active caption, so the renderer can honour placement.
+    public var activeSubtitleCue: Subtitle?
     /// True while any movement key is held (drives gait bob/sway rendering).
     public var moving: Bool
     /// Free rotation (degrees) from shift+←/→, on top of gait/tilt rotation.
@@ -75,7 +77,9 @@ public struct CharacterPose: Equatable, Sendable {
 
     public init(x: Double, depth: Double, phase: Double, tilt: Double, face: Int,
                 eye: EyeExpression, talking: Bool, jump: JumpState?, outfit: [Int: String],
-                activeSubtitle: String?, moving: Bool, spin: Double = 0, zoom: Double = 1,
+                activeSubtitle: String?, moving: Bool,
+                activeSubtitleCue: Subtitle? = nil,
+                spin: Double = 0, zoom: Double = 1,
                 wobble: Double = 7, size: Double = 1, outfitAnim: [Int: OutfitAnim] = [:],
                 leanTilt: Double? = nil, mouthShape: MouthShape? = nil,
                 flip: FlipState? = nil) {
@@ -92,6 +96,7 @@ public struct CharacterPose: Equatable, Sendable {
         self.outfit = outfit
         self.outfitAnim = outfitAnim
         self.activeSubtitle = activeSubtitle
+        self.activeSubtitleCue = activeSubtitleCue
         self.moving = moving
         self.spin = spin
         self.zoom = zoom
@@ -284,6 +289,7 @@ public struct SceneSimulator: Sendable {
                              outfit: performance.outfit, activeSubtitle: sub?.text,
                              moving: performance.heldLeft || performance.heldRight
                                 || performance.heldUp || performance.heldDown,
+                             activeSubtitleCue: sub,
                              spin: sim.spin, zoom: sim.zoom,
                              wobble: performance.wobble, size: performance.size,
                              outfitAnim: outfitAnim, leanTilt: leanTilt,

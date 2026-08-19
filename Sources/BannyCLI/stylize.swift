@@ -1,4 +1,5 @@
 import BannyRender
+import BannyMedia
 import CoreGraphics
 import Foundation
 import ImageIO
@@ -116,51 +117,20 @@ func shimmerCommand(_ args: [String]) throws {
         throw CLIError.invalid("--scale must be an integer inside 1...8")
     }
 
-    let data = try Data(contentsOf: URL(fileURLWithPath: positional[0]))
-    guard let source = CGImageSourceCreateWithData(data as CFData, nil),
-          let still = CGImageSourceCreateImageAtIndex(source, 0, nil) else {
-        throw CLIError.invalid("cannot decode image: \(positional[0])")
-    }
-    let loop = PixelStyler.sparkleFrames(still, frames: frames, scale: scale)
-    guard loop.count > 1 else {
-        throw CLIError.invalid(
-            "no point lights found in \(positional[0]) — try a larger --scale")
-    }
     let output = URL(fileURLWithPath: positional[1])
-    guard output.pathExtension.lowercased() == "gif" else {
-        throw CLIError.invalid("shimmer output must end in .gif")
-    }
-    guard let destination = CGImageDestinationCreateWithURL(
-        output as CFURL, UTType.gif.identifier as CFString, loop.count, nil) else {
-        throw CLIError.invalid("could not create GIF output: \(positional[1])")
-    }
-    CGImageDestinationSetProperties(destination, [
-        kCGImagePropertyGIFDictionary: [kCGImagePropertyGIFLoopCount: 0],
-    ] as CFDictionary)
-    for frame in loop {
-        CGImageDestinationAddImage(destination, frame, [
-            kCGImagePropertyGIFDictionary: [
-                kCGImagePropertyGIFDelayTime: delay,
-                kCGImagePropertyGIFUnclampedDelayTime: delay,
-            ],
-        ] as CFDictionary)
-    }
-    guard CGImageDestinationFinalize(destination) else {
-        throw CLIError.invalid("could not finish GIF output: \(positional[1])")
+    let report: ShimmerEncoder.Report
+    do {
+        report = try ShimmerEncoder.encode(
+            source: URL(fileURLWithPath: positional[0]),
+            to: output,
+            options: .init(frames: frames, frameDelay: delay, scale: scale))
+    } catch let error as ShimmerEncoder.EncodingError {
+        throw CLIError.invalid(error.localizedDescription)
     }
     if json {
-        struct ShimmerReport: Codable {
-            let source: String, output: String
-            let frames: Int, delay: Double, loopSeconds: Double
-            let width: Int, height: Int
-        }
-        try printJSON(ShimmerReport(
-            source: positional[0], output: positional[1],
-            frames: loop.count, delay: delay,
-            loopSeconds: (delay * Double(loop.count) * 1000).rounded() / 1000,
-            width: still.width, height: still.height))
+        try printJSON(report)
     } else {
-        print("shimmer → \(positional[1]) (\(loop.count) frames, "
-              + "\(delay * Double(loop.count))s loop)")
+        print("shimmer → \(positional[1]) (\(report.frames) frames, "
+              + "\(report.loopSeconds)s loop)")
     }
 }

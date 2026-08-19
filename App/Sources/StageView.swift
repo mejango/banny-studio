@@ -277,7 +277,7 @@ struct StageView: View {
     private func overviewShrink(frameSize: CGSize, canvas: CGSize) -> CGFloat? {
         // Overview is for ARRANGING and puppeteering — the wings stay up while
         // paused; playback and recording show the clean framed view.
-        guard !model.playing, !model.recording else { return nil }
+        guard !model.playing, !model.recording, !model.cleanFrame else { return nil }
         // Any paused edit shows the wings: the selected scene cue, else the
         // one under the playhead — useful for staging things outside the
         // frame that enter it later.

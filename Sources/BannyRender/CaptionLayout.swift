@@ -1,4 +1,5 @@
 import Foundation
+import CoreGraphics
 import CoreText
 
 /// Deterministic, frame-relative subtitle layout shared by the editor preview,
@@ -133,6 +134,63 @@ enum CaptionLayoutEngine {
         }
         cache.insert(best.layout, for: key)
         return best.layout
+    }
+
+    /// Lays out one caption in its own box centred on a normalized anchor.
+    ///
+    /// Placed captions do not shrink to share a type size with anyone else —
+    /// each is independent, which is the point: two conversations can be
+    /// captioned at once, each over the pair having it.
+    static func placed(text: String, frameWidth W: Double, outputHeight outH: Double,
+                       anchorX: Double, anchorY: Double,
+                       size: Double = 1, maxWidth: Double? = nil) -> Layout? {
+        guard W > 0, outH > 0 else { return nil }
+        let caption = normalized(text)
+        guard !caption.isEmpty else { return nil }
+        let fontSize = max(1, StageLayout.captionFontSize(frameWidth: W, outputHeight: outH)
+                              * max(0.2, min(4, size)))
+        let safeWidth = min(StageLayout.captionSafeWidth(frameWidth: W),
+                            W * max(0.08, min(1, maxWidth ?? 0.42)))
+        var layout = candidate(captions: [caption], fontSize: fontSize,
+                               safeWidth: safeWidth, frameWidth: W,
+                               outputHeight: outH).layout
+        // Centre on the anchor, then keep the whole box on screen.
+        layout.boxX = anchorX * W - layout.boxWidth / 2
+        layout.boxY = anchorY * outH - layout.boxHeight / 2
+        let margin = outH * 0.02
+        layout.boxX = max(margin, min(W - layout.boxWidth - margin, layout.boxX))
+        layout.boxY = max(margin, min(outH - layout.boxHeight - margin, layout.boxY))
+        return layout
+    }
+
+    /// Nudges placed caption boxes clear of each other so every concurrent line
+    /// stays readable. Input must already be ordered lowest-first — the one that
+    /// keeps its place comes first, and later ones stack above it. Results are
+    /// returned in the SAME order as the input, so callers can zip them back to
+    /// their captions.
+    static func stack(_ boxes: [CGRect], gap: Double, height outH: Double) -> [CGRect] {
+        let margin = outH * 0.02
+        var laid: [CGRect] = []
+        for var rect in boxes {
+            for _ in 0..<boxes.count {
+                guard let hit = laid.first(where: {
+                    $0.insetBy(dx: -gap, dy: -gap).intersects(rect)
+                }) else { break }
+                rect.origin.y = hit.minY - rect.height - gap
+            }
+            if rect.minY < margin {
+                rect.origin.y = margin                     // out of headroom above
+                for _ in 0..<boxes.count {
+                    guard let hit = laid.first(where: {
+                        $0.insetBy(dx: -gap, dy: -gap).intersects(rect)
+                    }) else { break }
+                    rect.origin.y = hit.maxY + gap
+                }
+            }
+            rect.origin.y = max(margin, min(outH - rect.height - margin, rect.origin.y))
+            laid.append(rect)
+        }
+        return laid
     }
 
     private static func candidate(captions: [String], fontSize: Double,

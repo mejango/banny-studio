@@ -1171,12 +1171,41 @@ public struct Subtitle: Codable, Equatable, Sendable {
     public var text: String
     public var start: Double
     public var dur: Double
+    /// Optional placement. With `x`/`y` set the caption is drawn in its own box
+    /// centred on that normalized point instead of joining the stacked block at
+    /// the bottom of frame, so concurrent conversations can be captioned side
+    /// by side and attributed to whoever is speaking. Omitted keeps the
+    /// original single-block behaviour.
+    public var x: Double?
+    public var y: Double?
+    /// Type size multiplier for a placed caption (1 = the usual caption size).
+    public var size: Double?
+    /// Widest the placed box may get, as a fraction of frame width.
+    public var width: Double?
+    /// Track the speaker instead of sitting at a fixed point. A caption on a
+    /// performer who walks has to walk with them, or it ends up labelling
+    /// whoever happens to be standing where the line was written. `x`/`y` are
+    /// ignored while this is set; the anchor comes from the live pose.
+    public var follow: Bool?
 
-    public init(text: String, start: Double, dur: Double) {
+    public init(text: String, start: Double, dur: Double,
+                x: Double? = nil, y: Double? = nil,
+                size: Double? = nil, width: Double? = nil,
+                follow: Bool? = nil) {
         self.text = text
         self.start = start
         self.dur = dur
+        self.x = x
+        self.y = y
+        self.size = size
+        self.width = width
+        self.follow = follow
     }
+
+    /// A caption with its own place on screen renders independently; one
+    /// without joins the shared block. A following caption is placed too — the
+    /// renderer works out where from the speaker's live pose.
+    public var isPlaced: Bool { (x != nil && y != nil) || follow == true }
 }
 
 /// A recorded performance event. Serializes as `{t, code, down}` or `{t, outfit: {slot, name}}`.

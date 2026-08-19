@@ -84,6 +84,11 @@ final class StudioModel {
     // Transport (web TL).
     var time: Double = 0
     var playing = false
+    /// Show the framed picture alone, with no wings around it. The editor
+    /// reveals the area outside the frame while stopped so things can be staged
+    /// off-camera; a live scene is being watched, not arranged, so it fills the
+    /// view instead.
+    var cleanFrame = false
     var recording = false
     static let playbackRateOptions: [Double] = [0.5, 1, 1.5, 2]
     private(set) var playbackRate: Double = 1

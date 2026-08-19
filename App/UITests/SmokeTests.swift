@@ -706,5 +706,242 @@ extension SmokeTests {
         sleep(75)
         XCTAssertEqual(app.state, .runningForeground)
     }
+
+    /// Live mode is reached from the header, not the title bar, and its setup
+    /// sheet must offer a model for the command-line agents.
+    @MainActor
+    func testLiveModeSelectorOpensSetupWithModelChoice() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["-ApplePersistenceIgnoreState", "YES"]
+        app.launch()
+        if !app.windows.firstMatch.waitForExistence(timeout: 3) {
+            app.typeKey("n", modifierFlags: .command)
+        }
+        let window = app.windows.firstMatch
+        XCTAssertTrue(window.waitForExistence(timeout: 10), "no window appeared")
+
+        XCTAssertTrue(window.buttons["studio-mode-produce"].waitForExistence(timeout: 10),
+                      "Produce control missing from the header")
+        let liveControl = window.buttons["studio-mode-live"]
+        XCTAssertTrue(liveControl.exists, "Live control missing from the header")
+        liveControl.click()
+
+        XCTAssertTrue(app.staticTexts["live-setup-title"].waitForExistence(timeout: 8),
+                      "Live setup sheet did not open")
+        let picker = app.popUpButtons["live-model-picker"]
+        XCTAssertTrue(picker.waitForExistence(timeout: 5),
+                      "no model choice for the command-line agent")
+        // Claude Code is the first preset, so its aliases are what should be on
+        // offer — the point of the picker, not merely that a control exists.
+        picker.click()
+        for alias in ["Default", "Opus", "Sonnet", "Fable", "Haiku"] {
+            XCTAssertTrue(app.menuItems[alias].waitForExistence(timeout: 3),
+                          "\(alias) missing from the model choices")
+        }
+        app.typeKey(.escape, modifierFlags: [])
+
+        let shot = XCTAttachment(screenshot: app.screenshot())
+        shot.name = "live-setup"
+        shot.lifetime = .keepAlways
+        add(shot)
+    }
+
+
+    /// Two .fileImporter modifiers on one view leave only one working, which is
+    /// how the backdrop button silently died. Prove it opens a panel.
+    @MainActor
+    func testLiveBackdropButtonOpensAPicker() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["-ApplePersistenceIgnoreState", "YES"]
+        app.launch()
+        if !app.windows.firstMatch.waitForExistence(timeout: 3) {
+            app.typeKey("n", modifierFlags: .command)
+        }
+        let window = app.windows.firstMatch
+        XCTAssertTrue(window.waitForExistence(timeout: 10), "no window appeared")
+        window.buttons["studio-mode-live"].click()
+        XCTAssertTrue(app.staticTexts["live-setup-title"].waitForExistence(timeout: 8),
+                      "Live setup sheet did not open")
+
+        let chooser = app.buttons["live-choose-backdrop"]
+        XCTAssertTrue(chooser.waitForExistence(timeout: 5), "backdrop button missing")
+        chooser.click()
+
+        // A real NSOpenPanel is its own window carrying an Open button; a bare
+        // "Cancel" match is not proof, several sheets have one.
+        let panel = app.windows.containing(.button, identifier: "OKButton").firstMatch
+        let openButton = app.buttons["OKButton"]
+        XCTAssertTrue(openButton.waitForExistence(timeout: 10),
+                      "backdrop button did not open a file picker")
+        XCTAssertTrue(panel.exists, "no open-panel window appeared")
+        app.typeKey(.escape, modifierFlags: [])
+    }
+
+
+    /// Pressing Play runs a command-line agent through NSUserUnixTask. Every
+    /// handle it is given must be backed by a real file descriptor, or encoding
+    /// them for the task helper aborts the process — this drives that path.
+    @MainActor
+    func testLiveModePlayDoesNotCrash() throws {
+        // A backdrop to choose. The picker is the only way in, and it grants the
+        // sandbox access the scene builder then reads through.
+        let backdrop = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("banny-live-test-backdrop.png")
+        let image = NSImage(size: NSSize(width: 640, height: 360))
+        image.lockFocus()
+        NSColor.systemTeal.drawSwatch(in: NSRect(x: 0, y: 0, width: 640, height: 360))
+        image.unlockFocus()
+        if let tiff = image.tiffRepresentation,
+           let rep = NSBitmapImageRep(data: tiff),
+           let png = rep.representation(using: .png, properties: [:]) {
+            try png.write(to: backdrop)
+        }
+
+        let app = XCUIApplication()
+        app.launchArguments = ["-ApplePersistenceIgnoreState", "YES"]
+        app.launch()
+        if !app.windows.firstMatch.waitForExistence(timeout: 3) {
+            app.typeKey("n", modifierFlags: .command)
+        }
+        let window = app.windows.firstMatch
+        XCTAssertTrue(window.waitForExistence(timeout: 10), "no window appeared")
+        window.buttons["studio-mode-live"].click()
+        XCTAssertTrue(app.staticTexts["live-setup-title"].waitForExistence(timeout: 8),
+                      "Live setup sheet did not open")
+
+        app.buttons["live-choose-backdrop"].click()
+        XCTAssertTrue(app.buttons["OKButton"].waitForExistence(timeout: 10), "no file picker")
+        // Go-to-folder is the reliable way to reach an arbitrary path.
+        app.typeKey("g", modifierFlags: [.command, .shift])
+        app.typeText(backdrop.path)
+        app.typeKey(.enter, modifierFlags: [])
+        app.typeKey(.enter, modifierFlags: [])
+
+        let play = app.buttons["Play"]
+        XCTAssertTrue(play.waitForExistence(timeout: 8), "Play button missing")
+        XCTAssertTrue(play.isEnabled, "Play stayed disabled after choosing a backdrop")
+        play.click()
+
+        XCTAssertTrue(app.descendants(matching: .any)["live-transport"]
+            .waitForExistence(timeout: 10), "live transport never appeared")
+        // Waiting on an agent must look like waiting, not like a hang.
+        XCTAssertTrue(app.descendants(matching: .any)["live-opening-curtain"]
+            .waitForExistence(timeout: 10),
+                      "no loading indicator while writing the opening")
+        // The agent takes a while to answer; what matters is that asking it does
+        // not take the app down.
+        sleep(20)
+        XCTAssertEqual(app.state, .runningForeground, "Live mode crashed after Play")
+        // Report what the director actually did, so a green test cannot hide a
+        // model that was never reached.
+        let status = app.descendants(matching: .any)["live-status"]
+        XCTAssertTrue(status.exists, "no status shown")
+        let text = status.value as? String ?? status.label
+        XCTAssertTrue(text.contains("Performing") || text.contains("Writing"),
+                      "director never reached the model — status was: '\(text)'")
+    }
+
+
+    /// Writing stops after the first stretch so it can be judged — which means
+    /// watching it. The controls to do that must be present and the playhead
+    /// must go back to the top on its own.
+    @MainActor
+    func testLiveReviewOffersPlaybackOfTheWrittenStretch() throws {
+        let backdrop = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("banny-live-review-backdrop.png")
+        let image = NSImage(size: NSSize(width: 640, height: 360))
+        image.lockFocus()
+        NSColor.systemIndigo.drawSwatch(in: NSRect(x: 0, y: 0, width: 640, height: 360))
+        image.unlockFocus()
+        if let tiff = image.tiffRepresentation,
+           let rep = NSBitmapImageRep(data: tiff),
+           let png = rep.representation(using: .png, properties: [:]) {
+            try png.write(to: backdrop)
+        }
+
+        let app = XCUIApplication()
+        app.launchArguments = ["-ApplePersistenceIgnoreState", "YES"]
+        app.launch()
+        if !app.windows.firstMatch.waitForExistence(timeout: 3) {
+            app.typeKey("n", modifierFlags: .command)
+        }
+        let window = app.windows.firstMatch
+        XCTAssertTrue(window.waitForExistence(timeout: 10), "no window appeared")
+        window.buttons["studio-mode-live"].click()
+        XCTAssertTrue(app.staticTexts["live-setup-title"].waitForExistence(timeout: 8),
+                      "Live setup sheet did not open")
+        app.buttons["live-choose-backdrop"].click()
+        XCTAssertTrue(app.buttons["OKButton"].waitForExistence(timeout: 10), "no file picker")
+        app.typeKey("g", modifierFlags: [.command, .shift])
+        app.typeText(backdrop.path)
+        app.typeKey(.enter, modifierFlags: [])
+        app.typeKey(.enter, modifierFlags: [])
+        app.buttons["Play"].click()
+
+        // The agent writes the first 30s; give it room, then expect the review.
+        let review = app.descendants(matching: .any)["live-review"]
+        XCTAssertTrue(review.waitForExistence(timeout: 300),
+                      "never reached the review after the first stretch")
+
+        XCTAssertTrue(app.buttons["live-replay"].exists, "no way to watch it again")
+        XCTAssertTrue(app.buttons["live-replay-toggle"].exists, "no play/pause")
+        XCTAssertTrue(app.sliders["live-scrubber"].exists, "the stretch is not scrubbable")
+        XCTAssertTrue(app.buttons["live-extend"].exists, "no way to extend")
+        XCTAssertTrue(app.buttons["live-rewrite"].exists, "no way to try again")
+
+        // A section with nobody in it is not a scene, but the stage is a canvas
+        // with no accessible children — so this is kept as a screenshot for a
+        // person to look at rather than asserted on.
+        let shot = XCTAttachment(screenshot: app.screenshot())
+        shot.name = "live-section"
+        shot.lifetime = .keepAlways
+        add(shot)
+
+        // It should already be replaying from the top rather than sitting at the end.
+        let scrubber = app.sliders["live-scrubber"]
+        let position = (scrubber.value as? String).flatMap {
+            Double($0.replacingOccurrences(of: "%", with: ""))
+        } ?? 100
+        XCTAssertLessThan(position, 90,
+                          "the playhead stayed at the end instead of rewinding to watch")
+    }
+
+
+    /// Typing a name must not cost you the field after every letter. Identifying
+    /// a cast row by its (editable) name did exactly that.
+    @MainActor
+    func testCastNameAcceptsContinuousTyping() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["-ApplePersistenceIgnoreState", "YES"]
+        app.launch()
+        if !app.windows.firstMatch.waitForExistence(timeout: 3) {
+            app.typeKey("n", modifierFlags: .command)
+        }
+        let window = app.windows.firstMatch
+        XCTAssertTrue(window.waitForExistence(timeout: 10), "no window appeared")
+        window.buttons["studio-mode-live"].click()
+        XCTAssertTrue(app.staticTexts["live-setup-title"].waitForExistence(timeout: 8),
+                      "Live setup sheet did not open")
+
+        // The first cast row's name field, whatever it is currently called.
+        let row = app.descendants(matching: .any)["live-cast-row-0"]
+        XCTAssertTrue(row.waitForExistence(timeout: 5), "no cast row")
+        let name = row.textFields.firstMatch
+        XCTAssertTrue(name.waitForExistence(timeout: 5), "no name field")
+
+        name.click()
+        app.typeKey("a", modifierFlags: .command)      // select all
+        // One letter at a time, as a person types. A single typeText() is
+        // delivered too atomically to notice a row being rebuilt between keys.
+        for letter in "Dara" {
+            app.typeText(String(letter))
+            usleep(120_000)
+        }
+
+        // One click, one word. Anything less means focus was lost mid-typing.
+        XCTAssertEqual(name.value as? String, "Dara",
+                       "typing dropped characters — the field lost focus")
+    }
+
 }
 #endif

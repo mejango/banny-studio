@@ -4,6 +4,13 @@ import ImageIO
 /// The GIF backdrops bundled with the app (Resources/Backdrops). Clicking one
 /// copies it into the document's asset bank so projects stay self-contained.
 enum BuiltInBackdrops {
+    /// The set a new scene opens on, so Live mode shows a room rather than an
+    /// empty box. A still, not a GIF, so it never joins the gallery below.
+    static var sunsetBar: URL? {
+        Bundle.main.url(forResource: "Backdrops", withExtension: nil)?
+            .appendingPathComponent("sunset-bar.png")
+    }
+
     static let urls: [URL] = {
         guard let root = Bundle.main.url(forResource: "Backdrops", withExtension: nil),
               let files = try? FileManager.default.contentsOfDirectory(at: root, includingPropertiesForKeys: nil)
