@@ -1,3 +1,7 @@
+// Live mode is macOS only. It reaches a model through a bridge script run by
+// NSUserUnixTask, which does not exist on iOS, and its set editor is built on
+// AppKit — there is no version of this that works on a phone.
+#if os(macOS)
 import SwiftUI
 import BannyCore
 import BannyRender
@@ -507,3 +511,5 @@ private struct LiveWardrobeButton: View {
         }
     }
 }
+
+#endif

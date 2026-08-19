@@ -13,11 +13,15 @@ struct EditorView: View {
     /// Produce is the editor. Live hands the same document to a model, which
     /// writes the scene while it plays. Both modes edit one document — a live
     /// scene is an ordinary project that happens to be getting longer.
+    /// macOS only: a live scene needs a model on this machine to write it.
+    #if os(macOS)
     @State private var live: LiveSession?
+    #endif
 
     var body: some View {
         let model = file.model
         Group {
+            #if os(macOS)
             if let live {
                 LiveStageView(model: model, file: file, brief: live.brief,
                               beats: live.endpoint.beats(for:),
@@ -26,18 +30,16 @@ struct EditorView: View {
                     self.live = nil
                 }
             } else {
-            #if os(macOS)
-            WideEditor(model: model, file: file, showDeck: false, live: $live)
-                .frame(minWidth: 1000, minHeight: 700)
+                WideEditor(model: model, file: file, showDeck: false, live: $live)
+                    .frame(minWidth: 1000, minHeight: 700)
+            }
             #else
             if sizeClass == .regular {
-                WideEditor(model: model, file: file, showDeck: true, live: $live)
+                WideEditor(model: model, file: file, showDeck: true)
             } else {
                 CompactEditor(model: model, file: file)
-                    .toolbar { LiveModeButton(model: model, file: file, live: $live) }
             }
             #endif
-            }
         }
         .onAppear { model.undoManager = undoManager }
         .onChange(of: undoManager) { model.undoManager = $1 }
@@ -54,7 +56,11 @@ struct WideEditor: View {
     @Bindable var model: StudioModel
     let file: ShowDocumentFile
     let showDeck: Bool
+    #if os(macOS)
+    /// Owned by EditorView: switching mode swaps the whole window, not a
+    /// control inside it.
     @Binding var live: LiveSession?
+    #endif
 
     @AppStorage("timelineHeight") private var timelineHeight: Double = 230
     @AppStorage("studioLightMode") private var lightMode = false
@@ -187,8 +193,10 @@ struct WideEditor: View {
                 // Match the logo art: black in light mode, off-white in dark.
                 .foregroundStyle(lightMode ? Color.black
                                            : Color(red: 0.92, green: 0.92, blue: 0.92))
+            #if os(macOS)
             Divider().frame(height: 18)
             StudioModeSelector(model: model, file: file, live: $live)
+            #endif
             Divider().frame(height: 18)
             ProjectMenu(model: model, file: file)
             Spacer(minLength: 8)
