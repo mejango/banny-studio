@@ -360,7 +360,8 @@ final class ShowDocumentFile: ReferenceFileDocument {
     }
 
     static func defaultSceneState() -> SceneState {
-        var state = SceneState(characters: [Character(body: .original, x: 0.5)],
+        var state = SceneState(characters: [Character(body: .original, x: 0.5,
+                                                      name: "Banny")],
                                lights: [Light(x: 0.80, y: 0.18)],
                                gSize: SceneState.newSceneCharacterSize)
         // A real light track from the start (the legacy `lights` sun stays as

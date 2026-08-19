@@ -83,19 +83,25 @@ public struct LiveCastMember: Codable, Equatable, Sendable {
     public var speed: Double
 
     /// Nobody turns up undressed. Slots and item names come from the real
-    /// catalog: 12 head top, 11 suit top, 6 glasses, 13 hand.
+    /// catalog: 12 head top, 11 suit top, 9 body, 6 glasses, 13 hand.
+    ///
+    /// **Hands stay empty.** Clothes travel — a chef's hat is a person, and it
+    /// reads the same in any room. A prop does not: a beer names the place,
+    /// and these defaults were written for a bar, so every scene since has
+    /// been holding a drink in an office at four in the afternoon. What people
+    /// carry is the scene's business, chosen once the room is known.
     public static func defaultOutfit(_ n: Int) -> [String: String] {
         let looks: [[String: String]] = [
-            ["12": "chef-hat", "11": "doc-coat", "13": "beer"],
-            ["12": "natty-dred", "11": "irie-shirt", "13": "beer"],
-            ["6": "cyberpunk-glasses", "11": "punk-jacket", "13": "beer"],
-            ["12": "club-beanie", "11": "zipper-jacket", "13": "potion"],
-            ["12": "farmer-hat", "9": "overalls", "13": "baguette"],
-            ["6": "investor-shades", "11": "goat-jersey", "13": "beer"],
-            ["12": "proff-hair", "11": "zucco-tshirt", "13": "constitution"],
-            ["12": "headphones", "11": "ice-cube", "13": "dj-booth"],
-            ["12": "geisha-hair", "9": "geisha-body", "13": "catana"],
-            ["6": "nerd", "9": "sweatsuit", "13": "fishing-pole"],
+            ["12": "chef-hat", "11": "doc-coat"],
+            ["12": "natty-dred", "11": "irie-shirt"],
+            ["6": "cyberpunk-glasses", "11": "punk-jacket"],
+            ["12": "club-beanie", "11": "zipper-jacket"],
+            ["12": "farmer-hat", "9": "overalls"],
+            ["6": "investor-shades", "11": "goat-jersey"],
+            ["12": "proff-hair", "11": "zucco-tshirt"],
+            ["12": "headphones", "11": "ice-cube"],
+            ["12": "geisha-hair", "9": "geisha-body"],
+            ["6": "nerd", "9": "sweatsuit"],
         ]
         return looks[((n % looks.count) + looks.count) % looks.count]
     }

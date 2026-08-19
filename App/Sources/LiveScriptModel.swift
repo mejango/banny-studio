@@ -28,7 +28,12 @@ enum LiveScriptRunner {
     /// still runs, but silently behaves differently — ignoring the chosen model,
     /// or letting the agent roam the home folder — so the app asks for a
     /// reinstall rather than lie about what is happening.
-    static let bridgeVersion = "banny-bridge 4"
+    static let bridgeVersion = "banny-bridge 5"
+
+    /// Where the picture will be. The app writes this token into the prompt and
+    /// the bridge swaps in the real path, because only the bridge knows it: the
+    /// file is written by the script, in the script's own scratch folder.
+    static let imageToken = "@SET@"
 
     static func isCurrent(_ name: String) -> Bool {
         guard let directory,
@@ -40,8 +45,14 @@ enum LiveScriptRunner {
 
     /// Feeds `prompt` to the script on stdin and returns everything it printed.
     /// `model` is passed as the one argument; empty means the agent's default.
+    /// `image`, when given, travels on stdin ahead of the prompt and is written
+    /// out by the bridge; `imageToken` in the prompt becomes its path. The agent
+    /// therefore only ever opens a file in its own scratch folder. Pointing it
+    /// at the picture where the picture actually lives cannot work: a backdrop
+    /// is unpacked into the app's container, and reading an app's container is
+    /// precisely what macOS interrupts to ask about.
     static func run(script name: String, prompt: String, model: String,
-                    extraArguments: [String] = []) async throws -> String {
+                    extraArguments: [String] = [], image: Data? = nil) async throws -> String {
         guard let directory else {
             throw LiveModelError.scriptMissing(name: name, directory: "~/Library/Application Scripts")
         }
@@ -65,7 +76,12 @@ enum LiveScriptRunner {
         let inURL = scratch.appendingPathComponent("prompt")
         let outURL = scratch.appendingPathComponent("answer")
         let errURL = scratch.appendingPathComponent("complaints")
-        try Data(prompt.utf8).write(to: inURL)
+        var stdin = Data()
+        if let image {
+            stdin += Data("banny-image:\(image.base64EncodedString())\n".utf8)
+        }
+        stdin += Data(prompt.utf8)
+        try stdin.write(to: inURL)
         FileManager.default.createFile(atPath: outURL.path, contents: nil)
         FileManager.default.createFile(atPath: errURL.path, contents: nil)
 
@@ -111,13 +127,13 @@ enum LiveScriptRunner {
         switch shape {
         case .claudeCode:
             tool = "claude"
-            // "$@" carries any extra flags the app passes — used to hand the
+            // "\$@" carries any extra flags the app passes — used to hand the
             // set-reading pass a Read-only tool list so looking at one picture
             // cannot become anything else.
-            invocation = #"exec "$AGENT" -p --output-format text $M "$@""#
+            invocation = #""\$AGENT" -p --output-format text \$M "\$@""#
         case .codex:
             tool = "codex"
-            invocation = #"exec "$AGENT" exec $M "$@" -"#
+            invocation = #""\$AGENT" exec \$M "\$@" -"#
         case .openAIChat:
             return nil
         }
@@ -139,7 +155,15 @@ enum LiveScriptRunner {
         mkdir -p "\\$SCRATCH" && cd "\\$SCRATCH" || exit 1
         [ -n "\\$1" ] && M="\(flag) \\$1" || M=""
         shift 2>/dev/null || true
-        \(invocation)
+        # The set arrives as the first line of stdin, base64, and is written
+        # here. Nothing outside this folder is ever opened, so looking at the
+        # picture needs no permission wherever the picture really lives.
+        rm -f set.png
+        IFS= read -r L
+        case "\\$L" in
+        banny-image:*) printf %s "\\${L#banny-image:}" | base64 -d > set.png; L="" ;;
+        esac
+        { printf '%s\\n' "\\$L"; cat; } | sed "s|@SET@|\\$SCRATCH/set.png|g" | \(invocation)
         SH
         chmod +x "\(folder)/\(name)"
         """
@@ -156,7 +180,14 @@ extension LiveModelEndpoint {
     /// Writing dialogue needs none of it. Only the tools the task actually
     /// requires are allowed, and no MCP servers are loaded at all.
     static func confinement(needsWeb: Bool, needsFiles: Bool) -> [String] {
-        var flags = ["--mcp-config", #"{"mcpServers":{}}"#, "--strict-mcp-config"]
+        // A plain session loads the user's hooks, plugins and editor
+        // integrations, and hunts for IDEs in other applications' support
+        // folders — which macOS then asks about, naming Banny Studio. Writing
+        // dialogue needs none of it, so the session is given its own empty
+        // settings as well as its own empty MCP config.
+        var flags = ["--mcp-config", #"{"mcpServers":{}}"#, "--strict-mcp-config",
+                     "--settings",
+                     #"{"hooks":{},"enabledPlugins":{},"enableAllProjectMcpServers":false}"#]
         var tools: [String] = []
         if needsWeb { tools += ["WebFetch"] }
         if needsFiles { tools += ["Read"] }

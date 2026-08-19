@@ -110,8 +110,8 @@ struct LiveCompilerTests {
         let short = LiveCompiler.duration(of: "Hi.")
         let long = LiveCompiler.duration(of: String(repeating: "word ", count: 12))
         #expect(short < long)
-        #expect(short >= 1.4)          // even two words need a beat to land
-        #expect(long <= 9.0)           // never a monologue
+        #expect(short >= 1.2)          // even two words need a beat to land
+        #expect(long <= 8.0)           // never a monologue
     }
 
     /// Captions are read, not skimmed. Every one must stay up long enough for
@@ -139,7 +139,8 @@ struct LiveCompilerTests {
             let needed = Double(cue.text.count) / 10.0
             #expect(cue.dur >= needed,
                     "\"\(cue.text)\" is up for \(cue.dur)s, needs \(needed)s")
-            #expect(cue.dur >= 2.0, "\(cue.dur)s is a flash")
+            #expect(cue.dur >= LiveCompiler.minimumCaptionOnScreen,
+                    "\(cue.dur)s is a flash")
         }
         // And they do not tread on each other's heels.
         for (a, b) in zip(all, all.dropFirst()) {

@@ -38,11 +38,24 @@ public struct LiveCompiler {
 
     /// How fast a banny talks, in characters a second. This is a reading speed
     /// as much as a speaking one: the caption is on screen exactly as long as
-    /// the mouth moves, so anything quicker than this is unreadable.
-    public static let charactersPerSecond = 9.0
+    /// the mouth moves.
+    ///
+    /// It was slower, to buy reading time back from captions that slid across
+    /// the frame with their speaker. They no longer move, so the time is no
+    /// longer owed, and nine characters a second reads as a room of people
+    /// choosing their words unusually carefully.
+    public static let charactersPerSecond = 11.0
     /// A caption stays up after the mouth stops, so the last words are not
     /// snatched away the instant the line ends.
-    public static let captionHangover = 1.2
+    public static let captionHangover = 0.9
+    /// However short the line, its caption is on screen at least this long.
+    ///
+    /// Reading time is not the only cost: a caption has to be *noticed* first,
+    /// and an eye following a walk or finishing somebody else's line arrives
+    /// late. Timed purely from its own text, "Yeah, exactly." was up for two
+    /// seconds and gone. The mouth still moves for as long as the line takes —
+    /// only the words linger, over the top of whoever is talking next.
+    public static let minimumCaptionOnScreen = 2.8
     /// Two frames at the export rate. Any mouth state shorter than this
     /// flickers or is skipped between samples.
     public static let minMouthState = 2.0 / 30.0
@@ -167,7 +180,7 @@ public struct LiveCompiler {
     /// How long a line takes to say.
     public static func duration(of line: String) -> Double {
         // Even three words need a beat to land; a long one may take its time.
-        min(9.0, max(1.4, Double(line.count) / charactersPerSecond))
+        min(8.0, max(1.2, Double(line.count) / charactersPerSecond))
     }
 
     // MARK: - Compiling
@@ -346,7 +359,7 @@ public struct LiveCompiler {
                 // Room to breathe between turns. Real conversation has pauses,
                 // and without them the captions become a wall to keep up with.
                 now = at + dur + (kind == .cut || kind == .over
-                                  ? rng.next(in: 0.4...0.8) : rng.next(in: 0.9...1.7))
+                                  ? rng.next(in: 0.3...0.65) : rng.next(in: 0.7...1.3))
             }
         }
         _ = lastSpeaker
@@ -504,7 +517,8 @@ public struct LiveCompiler {
         // caption hanging over the spot they were standing in when the line was
         // written. The renderer anchors it from the live pose instead.
         document.stage.characters[p.index].subs.append(
-            Subtitle(text: text, start: round3(t), dur: round3(max(0.4, dur)),
+            Subtitle(text: text, start: round3(t),
+                     dur: round3(max(LiveCompiler.minimumCaptionOnScreen, dur)),
                      size: 0.62, width: 0.20, follow: true))
     }
 

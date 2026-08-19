@@ -41,7 +41,9 @@ public final class LiveDirector: ObservableObject {
     /// take the playhead back to zero.
     @Published public private(set) var generation = 0
 
-    private let brief: LiveBrief
+    /// Revisable between sections: what the scene is and who is in it are
+    /// answers the director may change their mind about after watching.
+    @Published public private(set) var brief: LiveBrief
     /// Everything needed to put the scene back exactly as it stood when the
     /// last stretch was approved. A rewrite returns here rather than to the
     /// opening: earlier stretches have already been accepted.
@@ -236,6 +238,14 @@ public final class LiveDirector: ObservableObject {
         chunkStart = writtenThrough
         commissioned = capped(writtenThrough + wanted)
         if commissioned > writtenThrough { state = .writing }
+    }
+
+    /// Rewrites the brief itself — the premise, the cast, their descriptions.
+    /// The section under review is discarded with it, because it was written to
+    /// a brief that no longer stands.
+    public func revise(_ brief: LiveBrief, redo: Bool = true) {
+        self.brief = brief
+        if redo { rewrite(feedback: "") }
     }
 
     /// Throws the current stretch away and writes it again, told what was wrong.

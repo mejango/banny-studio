@@ -60,6 +60,17 @@ struct LivePromptTests {
         }
     }
 
+    /// The prompt was held to this from the start; the wardrobe was not, and a
+    /// bar's props went on everyone whatever room they walked into.
+    @Test func nobodyIsHandedAPropBeforeTheRoomIsKnown() {
+        for n in 0..<24 {
+            let look = LiveCastMember.defaultOutfit(n)
+            #expect(look["13"] == nil,
+                    "look \(n) arrives holding \(look["13"] ?? "") whatever the scene is")
+            #expect(!look.isEmpty, "look \(n) turns up undressed")
+        }
+    }
+
     @Test func aClosedCastIsToldItIsClosed() {
         let open = LiveDirector.prompt(brief: brief(), transcript: [], secondsToWrite: 30,
                                        elapsed: 30, cast: ["Ozzy"], mayAddCast: true)
@@ -219,5 +230,83 @@ struct LiveStrayLinkTests {
         let found = LiveDirector.urls(in: "See https://a.example/x and http://b.example/y too.")
         #expect(found.count == 2)
         #expect(found.contains { $0.contains("a.example") })
+    }
+}
+
+@MainActor
+struct LiveReadingTests {
+    let answer = """
+    {"premise":"A neon-lit bedroom studio at 2am, three streamers between takes.",
+     "cast":[{"name":"Wren","body":"alien","prompt":"runs the stream; never stops moving"},
+             {"name":"Cass","body":"pink","prompt":"here for the snacks, says little"},
+             {"name":"Ode","body":"orange","prompt":"explains things nobody asked about"}]}
+    """
+
+    @Test func aSceneAndACastAreReadFromTheSet() throws {
+        let reading = try #require(LiveReading.parse(answer))
+        #expect(reading.premise.contains("2am"))
+        #expect(reading.cast.count == 3)
+        #expect(reading.cast.map(\.name) == ["Wren", "Cass", "Ode"])
+    }
+
+    /// A body the catalog does not have would render nothing at all.
+    @Test func inventedBodiesAreDropped() {
+        let reading = LiveReading.parse("""
+        {"premise":"x","cast":[{"name":"A","body":"banana","prompt":"p"},
+                               {"name":"B","body":"alien","prompt":"q"}]}
+        """)
+        #expect(reading?.cast.count == 1)
+        #expect(reading?.cast.first?.body == "alien")
+    }
+
+    @Test func aReadingWithNobodyInItIsNoReading() {
+        #expect(LiveReading.parse("""
+        {"premise":"an empty room","cast":[]}
+        """) == nil)
+        #expect(LiveReading.parse("I could not open that image.") == nil)
+    }
+
+    /// Whatever the director already wrote outranks the reading.
+    @Test func theDirectorsOwnWordsSurviveTheMerge() throws {
+        let reading = try #require(LiveReading.parse(answer))
+        let mine = [LiveCastMember(name: "Wren", body: .orange,
+                                   outfit: ["12": "chef-hat"],
+                                   prompt: "my own description",
+                                   outfitIsChosen: true)]
+        let merged = reading.castMembers(mergingInto: mine)
+        let wren = try #require(merged.first { $0.name == "Wren" })
+        #expect(wren.prompt == "my own description")
+        #expect(wren.outfit == ["12": "chef-hat"])
+        #expect(wren.outfitIsChosen)
+        // And the ones it invented arrive whole.
+        #expect(merged.first { $0.name == "Cass" }?.prompt.contains("snacks") == true)
+    }
+
+    @Test func aGivenPremiseIsKeptWordForWord() {
+        let asked = LiveReading.prompt(imagePath: "/tmp/set.png", wanted: 3,
+                                       premise: "A wake, badly attended.")
+        #expect(asked.contains("A wake, badly attended."))
+        #expect(asked.contains("word for word"))
+        // And with nothing given, it is asked to say what the place is.
+        let blank = LiveReading.prompt(imagePath: "/tmp/set.png")
+        #expect(blank.contains("what kind of place this is"))
+    }
+
+    @Test func revisingTheBriefRewritesTheSectionUnderReview() {
+        var brief = LiveBrief(premise: "A bar.",
+                              cast: [LiveCastMember(name: "A", body: .orange)])
+        var doc = ShowDocument(stage: SceneState(
+            characters: [Character(body: .orange, x: -0.2, name: "A", speed: 110)],
+            backgroundTracks: [BackgroundTrack(id: "scenes", name: "Scenes")]))
+        doc.stage.reactionLibrary = LiveReactionLibrary.standard
+        let d = LiveDirector(brief: brief, document: doc, beats: { _ in [] })
+        d.apply([.enters(who: "A", zone: .middle),
+                 .line(who: "A", text: "Evening.", kind: .say)])
+        #expect(!d.transcript.isEmpty)
+
+        brief.premise = "A wake, badly attended."
+        d.revise(brief)
+        #expect(d.brief.premise == "A wake, badly attended.")
+        #expect(d.transcript.isEmpty, "the section was written to a brief that no longer stands")
     }
 }

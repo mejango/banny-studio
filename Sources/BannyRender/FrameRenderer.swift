@@ -198,21 +198,26 @@ public struct FrameRenderer: Sendable {
             // A caption that names its own spot renders independently; one that
             // does not joins the shared block exactly as before.
             if let cue = pose.activeSubtitleCue, cue.isPlaced {
-                // A placed caption is anchored to its speaker, so it leaves with
-                // them — whether they walked into the wings or dissolved out.
-                // An unplaced caption still shows for an absent speaker, which
-                // is deliberate: that is how an offscreen voice is captioned.
-                guard (-0.05...1.05).contains(pose.x),
-                      scene.characters[i].presence.opacity(at: t) > 0.05
-                else { continue }
-                // A caption that tracks a walk exactly slides across the frame
-                // at walking pace and cannot be read. It trails instead.
+                // Where the caption is going to sit, worked out before deciding
+                // whether it shows: the two answers must come from the same
+                // place. Judging by the live pose hid the first line of a scene,
+                // because a performer speaks as they walk on and is still in the
+                // wings when the words start — the caption appeared only once
+                // they had crossed the frame edge, so a line with three seconds
+                // on the clock was on screen for one.
                 let settled = Self.readableSpeakerX(
-                    at: t, live: pose.x,
+                    for: cue, live: pose.x,
                     sample: { when in
                         (poseProvider.map { _ in sim.pose(characterIndex: i, at: when) }
                          ?? sim.pose(characterIndex: i, at: when)).x
                     })
+                // A placed caption is anchored to its speaker, so it leaves with
+                // them — whether they walked into the wings or dissolved out.
+                // An unplaced caption still shows for an absent speaker, which
+                // is deliberate: that is how an offscreen voice is captioned.
+                guard Self.captionShows(anchoredAt: settled,
+                                        opacity: scene.characters[i].presence.opacity(at: t))
+                else { continue }
                 let anchor = Self.captionAnchor(cue: cue, pose: pose,
                                                 character: scene.characters[i],
                                                 scene: scene, stageWidth: W,
@@ -773,36 +778,40 @@ public struct FrameRenderer: Sendable {
     /// above the speaker's head, worked out from the same placement that draws
     /// them — so it tracks every step, and cannot drift out of agreement with
     /// the artwork the way a separately-computed guess would.
-    /// How long a caption takes to catch up with a walking speaker, and how far
-    /// it is ever allowed to fall behind.
-    public static let captionLag = 0.75
-    public static let captionSlack = 0.09
-
-    /// A speaker's position with the walk smoothed out of it.
+    /// Whether a placed caption is drawn at all.
     ///
-    /// The caption belongs over whoever is talking, but a box moving at walking
-    /// pace is unreadable — the eye keeps chasing it. Averaging the last
-    /// three-quarters of a second, weighted towards now, leaves the box drifting
-    /// gently behind a walk and still over the speaker. The result is clamped
-    /// close to the live position so a performer who has just walked on from the
-    /// wings cannot drag their own caption off the frame.
-    static func readableSpeakerX(at t: Double, live: Double,
+    /// It is judged on the spot the caption occupies, never on where the
+    /// speaker happens to be standing this frame. A performer arriving mid-line
+    /// is still in the wings while their caption already belongs on stage; one
+    /// who has left takes it with them, because `readableSpeakerX` gives an
+    /// offstage anchor back as the live position and both are then out of range.
+    static func captionShows(anchoredAt x: Double, opacity: Double) -> Bool {
+        (-0.05...1.05).contains(x) && opacity > 0.05
+    }
+
+    /// Where a caption sits for the whole time it is up: over the speaker as
+    /// they stand when the line finishes.
+    ///
+    /// It does not move. Damping was tried first — a weighted trailing average,
+    /// clamped near the speaker — and it fails for a reason worth writing down:
+    /// smoothing changes *where* the box is, never *how fast it travels*, and
+    /// speed is the unreadable part. A box lagging a walk by a tenth of a frame
+    /// still crosses the screen at walking pace, and the eye spends the line
+    /// chasing it.
+    ///
+    /// Standing still is affordable because walks are staged between lines: by
+    /// the time somebody speaks they have arrived. The rare walk overlapping the
+    /// tail of a line has the speaker walking into their own caption rather than
+    /// dragging it behind them.
+    static func readableSpeakerX(for cue: Subtitle, live: Double,
                                  sample: (Double) -> Double) -> Double {
-        guard t > 0 else { return live }
-        let steps = 6
-        var total = 0.0, weight = 0.0
-        for step in 0...steps {
-            let age = captionLag * Double(step) / Double(steps)
-            let when = t - age
-            guard when >= 0 else { continue }
-            // Recent moments count for more, so the box follows rather than lags.
-            let w = Double(steps - step + 1)
-            total += sample(when) * w
-            weight += w
-        }
-        guard weight > 0 else { return live }
-        let smoothed = total / weight
-        return min(live + captionSlack, max(live - captionSlack, smoothed))
+        let ended = cue.start + cue.dur
+        guard ended > 0 else { return live }
+        let parked = sample(ended)
+        // Somebody who leaves during their own line must not leave the caption
+        // behind in the wings; an anchor nobody can see is no anchor.
+        guard (0.0...1.0).contains(parked) else { return live }
+        return parked
     }
 
     static func captionAnchor(cue: Subtitle, pose: CharacterPose, character: Character,

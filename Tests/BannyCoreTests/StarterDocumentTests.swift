@@ -19,6 +19,12 @@ final class StarterDocumentTests: XCTestCase {
         XCTAssertEqual(reread.document, doc)
     }
 
+    func testALoneBannyIsCalledBannyAndIsTheOriginal() {
+        let one = ShowDocument.starter(characterCount: 1).stage.characters
+        XCTAssertEqual(one.map(\.name), ["Banny"])
+        XCTAssertEqual(one.first?.body, .original)
+    }
+
     func testStarterClampsCount() {
         XCTAssertEqual(ShowDocument.starter(characterCount: 0).stage.characters.count, 1)
         let ten = ShowDocument.starter(characterCount: 99).stage.characters

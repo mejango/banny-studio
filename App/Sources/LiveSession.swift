@@ -40,54 +40,39 @@ struct StudioModeSelector: View {
     @State private var setup = LiveSetup()
 
     var body: some View {
-        HStack(spacing: 6) {
-            Text("Produce:")
-                .font(.system(size: 11, weight: .semibold, design: .rounded))
-                .foregroundStyle(.secondary)
-            modes
-        }
-    }
-
-    private var modes: some View {
-        HStack(spacing: 2) {
-            ForEach(StudioMode.allCases) { mode in
-                Button {
-                    switch mode {
-                    case .produce:
-                        if let live { suspended = live }
-                        live = nil
-                    case .live:
-                        // Picking a scene back up, not starting another one.
-                        if let suspended {
-                            live = suspended
-                            self.suspended = nil
-                        } else {
-                            setup.open(from: model.document, file: file)
-                        }
-                    }
-                } label: {
-                    Text(mode.title)
-                        .font(.system(size: 11, weight: .semibold, design: .rounded))
-                        .padding(.horizontal, 9)
-                        .padding(.vertical, 4)
-                        .background(isCurrent(mode) ? Color.accentColor.opacity(0.9) : .clear,
-                                    in: RoundedRectangle(cornerRadius: 5))
-                        .foregroundStyle(isCurrent(mode) ? Color.white : .secondary)
-                }
-                .buttonStyle(.plain)
-                .help(mode.blurb)
-                .accessibilityIdentifier("studio-mode-\(mode.rawValue)")
+        // One button, outlined rather than filled. There is no mode to choose
+        // between: the editor is where you already are, and this is the door
+        // to the other way of working. Leaving a live scene is offered where
+        // it belongs, on the live transport.
+        Button {
+            if let suspended {
+                live = suspended
+                self.suspended = nil
+            } else {
+                setup.open(from: model.document, file: file)
             }
+        } label: {
+            Text(suspended == nil ? "Prompt" : "Resume prompting")
+                .font(.system(size: 11, weight: .semibold, design: .rounded))
+                .foregroundStyle(Color.alienGreen)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 4)
+                .overlay(RoundedRectangle(cornerRadius: 6)
+                    .strokeBorder(Color.alienGreen.opacity(0.7), lineWidth: 1))
         }
-        .padding(2)
-        .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 7))
+        .buttonStyle(.plain)
+        .help(suspended == nil
+              ? "Describe what happens and let a model write it"
+              : "Pick the scene back up where you left it")
+        .accessibilityIdentifier("studio-mode-live")
         .liveSetup($setup, model: model, file: file, live: $live)
-        .help(suspended == nil ? "" : "Pick the scene back up where you left it")
     }
+}
 
-    private func isCurrent(_ mode: StudioMode) -> Bool {
-        (live == nil) == (mode == .produce)
-    }
+extension Color {
+    /// The alien banny's own body green, from the catalog (`b1` of body-alien).
+    /// Borrowing a colour the cast already wears beats inventing one.
+    static let alienGreen = Color(red: 0x67 / 255, green: 0xD7 / 255, blue: 0x57 / 255)
 }
 
 /// The same control as a toolbar item, for layouts with no header bar.
@@ -124,6 +109,28 @@ struct LiveSetup {
     var readingSet = false
     /// True once a band has been dragged. A reading in flight loses to it.
     var handPlaced = false
+    /// Which backdrop the picture and bands on screen belong to. Without it,
+    /// "already loaded" is indistinguishable from "loaded something else".
+    var loadedBackdrop: URL?
+
+    /// True when the stage still holds nothing but the banny every new show
+    /// opens with.
+    ///
+    /// That placeholder is not a cast, and reading it as one is how a scene
+    /// prompted from a picture came out as one banny standing still for half a
+    /// minute: a company of one leaves the model writing a two-hander, and
+    /// every line belonging to the voice that was never cast is dropped on the
+    /// way to the stage. A document is somebody's work once they have named
+    /// them, dressed them, given them a line or made them do something.
+    static func isUntouched(_ document: ShowDocument) -> Bool {
+        guard document.stage.characters.count <= 1 else { return false }
+        guard let only = document.stage.characters.first else { return true }
+        return only.baseOutfit.isEmpty && only.subs.isEmpty && only.events.isEmpty
+            && only.reactions.isEmpty && only.clips.isEmpty
+            // "Banny 1" is the name older shows and the timeline itself give a
+            // placeholder; it is no more a cast than an unnamed one.
+            && ["", "Banny", "Banny 1"].contains(only.name)
+    }
 
     /// Opens the sheet on the show that is already here.
     ///
@@ -132,7 +139,7 @@ struct LiveSetup {
     /// document already has its own people and its own set means retyping what
     /// is on screen behind the sheet.
     mutating func open(from document: ShowDocument, file: ShowDocumentFile) {
-        if !document.stage.characters.isEmpty {
+        if !LiveSetup.isUntouched(document) {
             brief.cast = document.stage.characters.map { character in
                 let outfit = Dictionary(uniqueKeysWithValues:
                     character.baseOutfit.map { (String($0.key), $0.value) })
@@ -144,9 +151,10 @@ struct LiveSetup {
                     // Costumes already on the cast are the director's choice.
                     outfitIsChosen: !outfit.isEmpty)
             }
-        } else if brief.cast.isEmpty {
-            brief = LiveBrief.starter()
         }
+        // Nothing is invented for the sheet. An unwritten cast is a request to
+        // read one off the set, and prefilling would answer it before it was
+        // asked; the fallback happens at Play, when the reading has had its go.
         // The set the show is already playing on, ahead of any default.
         if let existing = LiveSetup.backdrop(of: document, in: file) {
             backgroundURL = existing
@@ -235,10 +243,12 @@ private struct LiveSetupModifier: ViewModifier {
     /// last gave it, and — only if it has none — a reading of the room.
     private func prepareBackdrop() {
         guard let url = setup.backgroundURL else { return }
-        if setup.backdropImage == nil || setup.set == nil {
+        // Only skip the work when it is the same picture as the one on screen.
+        if setup.loadedBackdrop != url || setup.backdropImage == nil {
+            setup.loadedBackdrop = url
             setup.backdropImage = LiveSceneBuilder.thumbnail(url)
-            setup.set = LiveSetStore.load(for: url)
             // A different set starts a fresh argument about where people stand.
+            setup.set = LiveSetStore.load(for: url)
             setup.handPlaced = setup.set != nil
         }
         if setup.set == nil { readSet(force: false) }
@@ -264,7 +274,12 @@ private struct LiveSetupModifier: ViewModifier {
             // staging — never a worse answer than the one it replaced. And a
             // reading that lands after the bands have been moved is thrown
             // away: it was racing an answer the user already gave.
-            guard let read, !setup.handPlaced else { return }
+            // Three ways this answer can be stale by the time it lands: the
+            // bands were dragged, another reading was asked for, or — since a
+            // reading takes the better part of a minute — the backdrop it was
+            // about is no longer the one on screen.
+            guard let read, !setup.handPlaced, setup.backgroundURL == url
+            else { return }
             setup.set = read
         }
     }
@@ -284,10 +299,32 @@ private struct LiveSetupModifier: ViewModifier {
         let endpoint = setup.endpoint
         let track = setup.backingTrackURL
         let staging = setup.set
-        setup.preparing = "Preparing the set"
+        let needsReading = brief.cast.isEmpty || brief.premise.isEmpty
+        setup.preparing = needsReading
+            ? "Reading the set — who is here, and what kind of place this is"
+            : "Preparing the set"
 
         Task { @MainActor in
             let room = staging
+            // An empty brief is filled from the picture, then shown back: the
+            // reading becomes an ordinary brief the director can rewrite, not a
+            // decision taken quietly on their behalf.
+            var brief = brief
+            if needsReading, endpoint.shape.scriptName != nil,
+               let reading = await LiveSceneBuilder.readCast(backgroundURL, brief: brief,
+                                                             endpoint: endpoint) {
+                if brief.premise.isEmpty { brief.premise = reading.premise }
+                if brief.cast.isEmpty {
+                    brief.cast = reading.castMembers(mergingInto: brief.cast)
+                }
+                setup.brief = brief
+            }
+            // Only now, with the picture asked and answered: somebody has to be
+            // on stage, so an unread cast falls back to three placeless people.
+            if brief.cast.isEmpty {
+                brief.cast = LiveBrief.starter().cast
+                setup.brief = brief
+            }
             let art = brief.shimmerBackdrop
                 ? LiveSceneBuilder.shimmered(backgroundURL) : backgroundURL
             defer { setup.preparing = nil }
@@ -328,12 +365,53 @@ enum LiveSceneBuilder {
         return NSImage(data: data)
     }
 
+    /// The set, small enough to hand over and still be looked at. A 4K backdrop
+    /// is megabytes of base64 for a question about where the floor is, and the
+    /// answer is the same at 1200 across. Nil for a moving backdrop, and for
+    /// anything that will not open — an unread set is no worse than none.
+    static func picture(of url: URL, across: Int = 1200) -> Data? {
+        let scoped = url.startAccessingSecurityScopedResource()
+        defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+        guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),
+              let frame = CGImageSourceCreateThumbnailAtIndex(source, 0, [
+                  kCGImageSourceCreateThumbnailFromImageAlways: true,
+                  kCGImageSourceThumbnailMaxPixelSize: across,
+                  kCGImageSourceCreateThumbnailWithTransform: true,
+              ] as CFDictionary)
+        else { return nil }
+        return NSBitmapImageRep(cgImage: frame)
+            .representation(using: .jpeg, properties: [.compressionFactor: 0.8])
+    }
+
+    /// Asks the agent who is in this place, when the director has not said.
+    /// Returns nil on any trouble; an empty brief is still playable, it just
+    /// leaves the writing with less to go on.
+    static func readCast(_ url: URL, brief: LiveBrief,
+                         endpoint: LiveModelEndpoint) async -> LiveReading? {
+        guard let picture = picture(of: url) else { return nil }
+        let prompt = LiveReading.prompt(imagePath: LiveScriptRunner.imageToken,
+                                        wanted: max(2, min(4, brief.cast.count == 0
+                                                           ? 3 : brief.cast.count)),
+                                        premise: brief.premise)
+        let flags = endpoint.shape == .claudeCode
+            ? LiveModelEndpoint.confinement(needsWeb: false, needsFiles: true) : []
+        guard let script = endpoint.shape.scriptName,
+              let answer = try? await LiveScriptRunner.run(script: script, prompt: prompt,
+                                                           model: endpoint.model,
+                                                           extraArguments: flags,
+                                                           image: picture)
+        else { return nil }
+        return LiveReading.parse(answer)
+    }
+
     /// Asks the agent to look at the backdrop and say where people can stand.
     /// A failed or nonsensical read simply returns nil, and the scene is staged
     /// exactly as it was before rooms existed.
     static func readRoom(_ url: URL, brief: LiveBrief,
                          endpoint: LiveModelEndpoint) async -> LiveSet? {
-        let prompt = LiveSet.prompt(imagePath: url.path, premise: brief.premise,
+        guard let picture = picture(of: url) else { return nil }
+        let prompt = LiveSet.prompt(imagePath: LiveScriptRunner.imageToken,
+                                     premise: brief.premise,
                                      cast: max(2, brief.cast.count))
         // Looking at one picture needs to read one file and nothing else.
         let readOnly = endpoint.shape == .claudeCode
@@ -342,7 +420,8 @@ enum LiveSceneBuilder {
               let answer = try? await LiveScriptRunner.run(script: script,
                                                           prompt: prompt,
                                                           model: endpoint.model,
-                                                          extraArguments: readOnly)
+                                                          extraArguments: readOnly,
+                                                          image: picture)
         else { return nil }
         return LiveSet.parse(answer)
     }
@@ -435,24 +514,26 @@ enum LiveSceneBuilder {
 }
 
 extension LiveBrief {
-    /// A cast worth pressing play on, so the sheet is never empty.
+    /// The cast of last resort: nobody was named, and nobody could be read off
+    /// the picture either — no agent installed, or it had nothing to say.
+    ///
+    /// Deliberately placeless. This used to be a bar, and a prefilled bar is
+    /// worse than an empty sheet: it is never empty, so the set is never read,
+    /// and three people stand in someone's kitchen holding pints. Wardrobe is
+    /// left blank so the scene dresses them once it knows where it is.
     static func starter() -> LiveBrief {
         LiveBrief(
-            background: "", duration: 900, model: "local",
-            premise: "A quiet bar at the end of the day. People arrive, talk, and go.",
+            background: "", duration: 900, model: "local", premise: "",
             cast: [
-                LiveCastMember(name: "Ozzy", body: .orange,
-                               outfit: ["12": "chef-hat", "13": "beer"],
-                               prompt: "the host; genial, keeps things moving, "
-                                     + "quietly anxious everyone is enjoying themselves",
+                LiveCastMember(name: "Ozzy", body: .orange, outfit: [:],
+                               prompt: "genial, keeps things moving, quietly "
+                                     + "anxious everyone is enjoying themselves",
                                speed: 120),
-                LiveCastMember(name: "Rue", body: .original,
-                               outfit: ["12": "natty-dred", "13": "beer"],
-                               prompt: "a regular of many years; dry, clipped, "
-                                     + "says less than he means",
+                LiveCastMember(name: "Rue", body: .original, outfit: [:],
+                               prompt: "here often; dry, clipped, says less "
+                                     + "than he means",
                                speed: 115),
-                LiveCastMember(name: "Vic", body: .alien,
-                               outfit: ["6": "cyberpunk-glasses", "13": "beer"],
+                LiveCastMember(name: "Vic", body: .alien, outfit: [:],
                                prompt: "deadpan; punctures anything that sounds "
                                      + "like a story getting bigger",
                                speed: 115),

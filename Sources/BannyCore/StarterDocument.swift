@@ -3,7 +3,7 @@ public extension ShowDocument {
     /// stage facing center, everything else default. Agents edit show.json
     /// from here instead of authoring from a blank page.
     static func starter(characterCount: Int = 2) -> ShowDocument {
-        let bodies: [Body] = [.orange, .pink, .alien, .original]
+        let bodies: [Body] = [.original, .orange, .pink, .alien]
         let n = max(1, min(10, characterCount))
         let characters = (0..<n).map { i -> Character in
             let x = n == 1 ? 0.5 : 0.12 + 0.76 * Double(i) / Double(n - 1)
@@ -11,7 +11,9 @@ public extension ShowDocument {
                              x: x,
                              size: n > 4 ? max(0.55, 4 / Double(n)) : 1,
                              face: x <= 0.5 ? 1 : -1,
-                             name: "Banny \(i + 1)")
+                             // One banny is Banny. A number on a cast of one is
+                             // a list waiting for members that never arrive.
+                             name: n == 1 ? "Banny" : "Banny \(i + 1)")
         }
         return ShowDocument(stage: SceneState(
             characters: characters,

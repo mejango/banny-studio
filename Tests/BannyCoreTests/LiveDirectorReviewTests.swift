@@ -107,11 +107,11 @@ struct LiveDirectorReviewTests {
         d.apply(longBatch())
         let one = d.writtenThrough
         d.extend()
-        #expect(d.commissioned - one == LiveDirector.stretch)
+        #expect(abs(d.commissioned - one - LiveDirector.stretch) < 1e-9)
         d.apply(batch(lines: 8, enter: false))
         let two = d.writtenThrough
         d.extend()
-        #expect(d.commissioned - two == LiveDirector.stretch)
+        #expect(abs(d.commissioned - two - LiveDirector.stretch) < 1e-9)
     }
 
     @Test func sectionsAreContinuousWithNoGapOrOverlap() {

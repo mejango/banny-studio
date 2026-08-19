@@ -31,6 +31,9 @@ struct LiveStageView: View {
     @State private var now = Date()
     @State private var writingSince: Date?
     @State private var feedback = ""
+    /// The scene and cast, open for rewriting between sections.
+    @State private var revising = false
+    @State private var draft = LiveBrief()
     /// Replay of the written stretch while it is being judged.
     /// How long the next section should be. Thirty seconds unless told otherwise.
     @State private var nextSeconds: Double = LiveDirector.stretch
@@ -103,6 +106,16 @@ struct LiveStageView: View {
         .padding(.vertical, 8)
         .background(.quaternary.opacity(0.3))
         .accessibilityIdentifier("live-review")
+        .sheet(isPresented: $revising) {
+            LiveBriefEditor(brief: $draft, catalog: SharedAssets.catalog) {
+                // A new brief makes the section under review obsolete: it was
+                // written to answer a different question.
+                director.revise(draft)
+                revising = false
+            } onCancel: {
+                revising = false
+            }
+        }
     }
 
     /// You cannot judge a stretch you cannot watch. This replays it as many
@@ -166,6 +179,13 @@ struct LiveStageView: View {
             Button("Try again", action: rewrite)
                 .accessibilityIdentifier("live-rewrite")
                 .help("Throw this stretch away and write it again, with that note")
+
+            Button("Scene & cast…") {
+                draft = director.brief
+                revising = true
+            }
+            .help("Change what this scene is, or who is in it")
+            .accessibilityIdentifier("live-revise")
 
             Divider().frame(height: 18)
 

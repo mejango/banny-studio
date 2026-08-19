@@ -13,19 +13,6 @@ import UniformTypeIdentifiers
 /// Live is a scene you describe once and then watch — a model writes the script
 /// as it plays, the studio stages it, and the result is written to a .bs as it
 /// goes, so a live scene always ends up as an ordinary editable project.
-/// Two ways of producing the same show, meant to alternate rather than to be
-/// chosen once: prompt a section, fine-tune it on the timeline, prompt the next.
-enum StudioMode: String, CaseIterable, Identifiable {
-    case produce, live
-    var id: String { rawValue }
-    var title: String { self == .produce ? "By hand" : "Prompt" }
-    var blurb: String {
-        self == .produce
-            ? "Place every beat yourself on the timeline."
-            : "Describe what happens next and let a model write it."
-    }
-}
-
 // MARK: - Setup
 
 /// The Live setup sheet: everything needed before pressing play.
@@ -49,6 +36,10 @@ struct LiveSetupView: View {
 
     @State private var showingBackgroundPicker = false
     @State private var showingTrackPicker = false
+    /// Both refinements are folded away until asked for, and unfold on their
+    /// own when there is already something in them worth seeing.
+    @State private var tuningScene = false
+    @State private var tuningCast = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -56,9 +47,12 @@ struct LiveSetupView: View {
             Divider()
             ScrollView {
                 VStack(alignment: .leading, spacing: 22) {
+                    // The set first: it is the one thing a scene cannot do
+                    // without, and everything below is a refinement of it.
+                    stageSection
                     sceneSection
-                    modelSection
                     castSection
+                    modelSection
                 }
                 .padding(20)
             }
@@ -66,6 +60,12 @@ struct LiveSetupView: View {
             footer
         }
         .frame(minWidth: 620, minHeight: 560)
+        .onAppear {
+            if !brief.premise.isEmpty { tuningScene = true }
+            // The cast stays folded whatever is in it. A show already has one,
+            // so opening on it would mean the sheet is nearly always open on a
+            // list nobody asked to edit.
+        }
         .overlay {
             if let preparing {
                 ZStack {
@@ -97,24 +97,8 @@ struct LiveSetupView: View {
         .padding(20)
     }
 
-    private var sceneSection: some View {
+    private var stageSection: some View {
         VStack(alignment: .leading, spacing: 10) {
-            SectionLabel("The scene")
-            TextEditor(text: $brief.premise)
-                .font(.body)
-                .frame(minHeight: 70)
-                .overlay(RoundedRectangle(cornerRadius: 6)
-                    .strokeBorder(.quaternary))
-                .overlay(alignment: .topLeading) {
-                    if brief.premise.isEmpty {
-                        Text("A beach bar at sunset, the last evening of the "
-                             + "season. Paste a link and they will have read it.")
-                            .foregroundStyle(.tertiary)
-                            .padding(.horizontal, 5).padding(.vertical, 8)
-                            .allowsHitTesting(false)
-                    }
-                }
-
             // Each importer hangs off the button that triggers it, so the two
             // presentations never share a view.
             HStack(spacing: 12) {
@@ -150,10 +134,6 @@ struct LiveSetupView: View {
                     .coordinateSpace(name: "set")
             }
 
-            Text("The scene runs as long as you keep extending it, half a minute "
-                 + "at a time.")
-                .font(.caption).foregroundStyle(.secondary)
-
             HStack(spacing: 8) {
                 Toggle("Make the lights twinkle", isOn: $brief.shimmerBackdrop)
                     .toggleStyle(.checkbox)
@@ -161,6 +141,35 @@ struct LiveSetupView: View {
                 Text("Finds the point lights in a still backdrop and animates "
                      + "them. Leaves video and GIFs alone.")
                     .font(.caption).foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    /// Both the premise and the cast are optional. Left alone, the scene is
+    /// read off the backdrop and shown back for editing — describing a room you
+    /// have already chosen a picture of is work the picture can do.
+    private var sceneSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 8) {
+                Toggle("Tune the scene", isOn: $tuningScene)
+                    .toggleStyle(.checkbox)
+                    .accessibilityIdentifier("live-tune-scene")
+                Text(tuningScene ? "" : "Left alone, it is read from the set.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            if tuningScene {
+                TextField("A beach bar at sunset, the last evening of the season. "
+                          + "Paste a link and they will have read it.",
+                          text: $brief.premise, axis: .vertical)
+                    .textFieldStyle(.plain)
+                    .font(.body)
+                    .lineLimit(3...6)
+                    .padding(8)
+                    .background(.quaternary.opacity(0.25),
+                                in: RoundedRectangle(cornerRadius: 6))
+                    .overlay(RoundedRectangle(cornerRadius: 6)
+                        .strokeBorder(.quaternary))
+                    .accessibilityIdentifier("live-premise")
             }
         }
     }
@@ -202,19 +211,26 @@ struct LiveSetupView: View {
 
     private var castSection: some View {
         VStack(alignment: .leading, spacing: 10) {
-            HStack {
-                SectionLabel("Cast")
+            HStack(spacing: 8) {
+                Toggle("Tune the cast", isOn: $tuningCast)
+                    .toggleStyle(.checkbox)
+                    .accessibilityIdentifier("live-tune-cast")
+                Text(tuningCast ? "" : "Left alone, they are cast from the set.")
+                    .font(.caption).foregroundStyle(.secondary)
                 Spacer()
-                Button {
+                if tuningCast {
+                    Button {
                     let n = brief.cast.count
                     brief.cast.append(LiveCastMember(
                         name: "Banny \(n + 1)",
                         body: BannyCore.Body.allCases[n % BannyCore.Body.allCases.count],
                         outfit: LiveCastMember.defaultOutfit(n)))
-                } label: { Label("Add", systemImage: "plus") }
+                    } label: { Label("Add", systemImage: "plus") }
+                }
             }
+            if tuningCast {
             if brief.cast.isEmpty {
-                Text("Add the people at this party, and say who they are.")
+                Text("Nobody cast yet — the set will suggest a few.")
                     .font(.callout).foregroundStyle(.secondary)
             }
             HStack(spacing: 8) {
@@ -244,6 +260,7 @@ struct LiveSetupView: View {
                 }
                 .accessibilityIdentifier("live-cast-row-\(i)")
             }
+            }
         }
     }
 
@@ -261,14 +278,11 @@ struct LiveSetupView: View {
         .padding(20)
     }
 
-    private var isReady: Bool {
-        !brief.cast.isEmpty && backgroundURL != nil && !brief.premise.isEmpty
-    }
+    private var isReady: Bool { backgroundURL != nil }
 
     private var readiness: String {
-        if brief.cast.isEmpty { return "Add at least one character." }
         if backgroundURL == nil { return "Choose a backdrop." }
-        if brief.premise.isEmpty { return "Describe the scene." }
+        if brief.cast.isEmpty { return "The set will suggest a scene and a cast." }
         return "\(brief.cast.count) in the cast"
     }
 }
@@ -403,7 +417,7 @@ struct SectionLabel: View {
 
 /// One character: who they are, what they are wearing, and whether the story is
 /// allowed to change it.
-private struct LiveCastRow: View {
+struct LiveCastRow: View {
     @Binding var member: LiveCastMember
     var sceneDresses: Bool
     var catalog: AssetCatalog?
