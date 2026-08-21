@@ -20,6 +20,184 @@ struct LiveCompilerTests {
         return d
     }
 
+    /// As `LiveSceneBuilder.opening` builds it: everyone parked in a wing with
+    /// a recorded start pose. That pose is the whole point — a character with
+    /// one is simulated from *its* depth, so `character.depth` is ignored and
+    /// every depth the compiler wrote went nowhere.
+    func staged(_ names: [String]) -> ShowDocument {
+        var d = stage(names)
+        for i in d.stage.characters.indices {
+            let wing = i.isMultiple(of: 2) ? -0.2 : 1.2
+            d.stage.characters[i].x = wing
+            d.stage.characters[i].depth = 0.06
+            d.stage.characters[i].recStart = StartPose(x: wing, depth: 0.06, face: 1)
+        }
+        return d
+    }
+
+    /// The zones are placed on a picture, by eye, at the depth the floor
+    /// actually is. If the scene does not put people there, the set editor is
+    /// decoration — and it did not: everybody stood at the depth they walked
+    /// on at, whatever zone they were in.
+    @Test func everybodyEndsUpAtTheDepthTheirZoneWasDrawnAt() {
+        let room = LiveSet(zones: [
+            "front": .init(from: 0.05, to: 0.25, depth: 0.0),
+            "middle": .init(from: 0.40, to: 0.60, depth: 0.30),
+            "far": .init(from: 0.75, to: 0.95, depth: 0.62),
+        ])
+        var doc = staged(["A", "B", "C"])
+        var c = LiveCompiler(document: doc, startingAt: 0)
+        c.room = room
+        var rng = LiveRandom(seed: 5)
+        c.apply([.enters(who: "A", zone: .front),
+                 .enters(who: "B", zone: .middle),
+                 .enters(who: "C", zone: .far),
+                 .line(who: "A", text: "We are all standing somewhere.", kind: .say)],
+                to: &doc, rng: &rng)
+
+        // Ask the simulator, not the compiler: the two disagreeing is the whole
+        // family of bugs this system keeps producing.
+        // Well after every walk: crossing the stage takes ~8.6s at this speed,
+        // and a pose read mid-walk says nothing about where they were headed.
+        let sim = SceneSimulator(state: doc.stage)
+        let settled = 40.0
+        for (i, want) in [0.0, 0.30, 0.62].enumerated() {
+            let got = sim.pose(characterIndex: i, at: settled).depth
+            #expect(abs(got - want) < 0.2,
+                    "\(doc.stage.characters[i].name) is at depth \(got), zone drawn at \(want)")
+        }
+        // And they are not all at the depth they walked on at.
+        let depths = (0..<3).map { sim.pose(characterIndex: $0, at: settled).depth }
+        #expect(depths.max()! - depths.min()! > 0.3,
+                "the room is flat: \(depths)")
+    }
+
+    /// Depth is travelled, not teleported: a step back is a walk upstage.
+    @Test func aChangeOfDepthIsWalked() {
+        var doc = staged(["A"])
+        var c = LiveCompiler(document: doc, startingAt: 0)
+        c.room = LiveSet(zones: ["far": .init(from: 0.75, to: 0.95, depth: 0.6)])
+        var rng = LiveRandom(seed: 7)
+        c.apply([.enters(who: "A", zone: .far)], to: &doc, rng: &rng)
+        let sim = SceneSimulator(state: doc.stage)
+        let arrived = sim.pose(characterIndex: 0, at: 40).depth
+        let halfway = sim.pose(characterIndex: 0, at: 0.4).depth
+        #expect(arrived > 0.4, "never got there: \(arrived)")
+        #expect(halfway < arrived - 0.05,
+                "depth jumped instead of being walked: \(halfway) then \(arrived)")
+    }
+
+    /// The simulator walks the event array by index and stops at the first
+    /// event later than now, so one out-of-order press is not late — it is
+    /// swallowed along with its release. Sorting used to be a side effect of
+    /// facing resolution, which skips anyone with no turn to make.
+    @Test func everyPerformersEventsAreInTimeOrder() {
+        var doc = staged(["A", "B"])
+        var c = LiveCompiler(document: doc, startingAt: 0)
+        c.room = LiveSet(zones: ["far": .init(from: 0.75, to: 0.95, depth: 0.7)])
+        var rng = LiveRandom(seed: 11)
+        // B enters and never speaks or looks at anyone: the case the old sort
+        // skipped entirely.
+        c.apply([.enters(who: "A", zone: .far), .enters(who: "B", zone: .front),
+                 .line(who: "A", text: "Mind the step.", kind: .say),
+                 .line(who: "B", text: "Which step?", kind: .cut)],
+                to: &doc, rng: &rng)
+        for character in doc.stage.characters {
+            let times = character.events.map(\.t)
+            #expect(times == times.sorted(),
+                    "\(character.name)'s events are out of order: \(times)")
+        }
+    }
+
+    /// "A bouncer standing in front, a queue in middle trying to talk their way
+    /// in." Two places, one conversation — and the studio used to drag the queue
+    /// onto the doorstep, because a reply within four seconds joins the
+    /// speaker's group. A place the director chose is not the studio's to undo.
+    @Test func aDirectedPlacementSurvivesTheConversation() {
+        let room = LiveSet(zones: [
+            "front": .init(from: 0.05, to: 0.20, depth: 0.0),
+            "middle": .init(from: 0.45, to: 0.62, depth: 0.25),
+            "far": .init(from: 0.80, to: 0.96, depth: 0.5),
+        ])
+        var doc = staged(["Doorman", "Queue", "Phone"])
+        var c = LiveCompiler(document: doc, startingAt: 0)
+        c.room = room
+        c.directedZones = LiveCompiler.arrangesTheRoom(
+            "A bouncer standing in \"front\", a bunch of people waiting in line "
+            + "in \"middle\". A few people on their phones in \"far\".")
+        var rng = LiveRandom(seed: 3)
+        c.apply([.enters(who: "Doorman", zone: .front),
+                 .enters(who: "Queue", zone: .middle),
+                 .enters(who: "Phone", zone: .far),
+                 .line(who: "Queue", text: "We have been out here an hour.", kind: .say),
+                 .line(who: "Doorman", text: "You have been out here twenty minutes.",
+                       kind: .say),
+                 .line(who: "Queue", text: "It feels like an hour.", kind: .say)],
+                to: &doc, rng: &rng)
+
+        let sim = SceneSimulator(state: doc.stage)
+        let want = [room.span(for: .front), room.span(for: .middle), room.span(for: .far)]
+        for (i, span) in want.enumerated() {
+            let x = sim.pose(characterIndex: i, at: 60).x
+            // A zone shares out around its span; a body's width either side of
+            // it is still that zone, anything further is somebody else's.
+            #expect(x > span.lowerBound - LiveCompiler.minimumGap
+                    && x < span.upperBound + LiveCompiler.minimumGap,
+                    "\(doc.stage.characters[i].name) ended at \(x), directed to \(span)")
+        }
+    }
+
+    /// Only a premise that names a zone as a word arranges the room. A scene
+    /// about a farm, or a middleman, is an ordinary scene.
+    @Test func onlyAPremiseThatNamesAZoneArrangesTheRoom() {
+        #expect(LiveCompiler.arrangesTheRoom("A doorman in front, a queue in middle."))
+        #expect(LiveCompiler.arrangesTheRoom("Two people on their phones in \"far\"."))
+        #expect(!LiveCompiler.arrangesTheRoom("A farm at dawn; the middleman is late."))
+        #expect(!LiveCompiler.arrangesTheRoom("A quiet room at the end of the day."))
+    }
+
+    /// The gathering rule still does its job for anyone the studio placed
+    /// itself — a line with no entrance behind it.
+    @Test func somebodyNobodyPlacedIsStillGatheredIn() {
+        var doc = staged(["A", "B"])
+        var c = LiveCompiler(document: doc, startingAt: 0)
+        var rng = LiveRandom(seed: 4)
+        c.apply([.enters(who: "A", zone: .far),
+                 .line(who: "A", text: "Anyone there?", kind: .say),
+                 // B never entered: the studio walks them on to say this.
+                 .line(who: "B", text: "Right behind you.", kind: .say)],
+                to: &doc, rng: &rng)
+        let sim = SceneSimulator(state: doc.stage)
+        let a = sim.pose(characterIndex: 0, at: 60).x
+        let b = sim.pose(characterIndex: 1, at: 60).x
+        #expect(abs(a - b) < 0.4, "A at \(a), B at \(b) — not one conversation")
+    }
+
+    /// Bands drawn a hair apart are still drawn in an order, and the order is
+    /// the whole reason for placing them by eye. The per-person stagger used to
+    /// be a fixed ±0.18 — wider than the gaps here — so the second person in
+    /// `front` stood deeper than all of `middle`.
+    @Test func bandsDrawnCloseTogetherKeepTheirOrder() {
+        let room = LiveSet(zones: [
+            "front": .init(from: 0.05, to: 0.25, depth: 0.30),
+            "middle": .init(from: 0.35, to: 0.65, depth: 0.36),
+            "far": .init(from: 0.75, to: 0.95, depth: 0.42),
+        ])
+        func depths(_ zone: LiveZone, _ n: Int) -> [Double] {
+            (0..<n).map { LiveCompiler.depth(in: zone, index: $0, room: room) }
+        }
+        for n in 1...4 {
+            let front = depths(.front, n), middle = depths(.middle, n)
+            let far = depths(.far, n)
+            #expect(front.max()! < middle.min()!,
+                    "\(n) each: front \(front) reaches past middle \(middle)")
+            #expect(middle.max()! < far.min()!,
+                    "\(n) each: middle \(middle) reaches past far \(far)")
+        }
+        // And the drawn depth is still what a lone occupant stands at.
+        #expect(depths(.middle, 1) == [0.36])
+    }
+
     /// Two people in one zone must never share a silhouette — the complaint
     /// that started this: a pair standing almost exactly on top of each other.
     @Test func nobodyEverStandsInsideSomeoneElse() {

@@ -82,6 +82,27 @@ public struct LiveCastMember: Codable, Equatable, Sendable {
     /// Walking pace; the loud one arrives faster than the reluctant one.
     public var speed: Double
 
+    /// True when this is the banny every new show opens with, rather than
+    /// somebody the director asked for.
+    ///
+    /// The placeholder gets into the brief by more than one route — a new
+    /// document, an older show, a scene already written over the top of one —
+    /// so it is caught here, where the cast is used, rather than at each door
+    /// it might come through. A cast of nothing but placeholders is no cast:
+    /// left alone it becomes a company of one, the model writes a two-hander
+    /// anyway, and every line belonging to the voice that was never cast is
+    /// dropped on the way to the stage.
+    public var isPlaceholder: Bool {
+        guard prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              outfit.isEmpty
+        else { return false }
+        let bare = name.trimmingCharacters(in: .whitespaces)
+        guard bare.isEmpty || bare.lowercased().hasPrefix("banny") else { return false }
+        // "Banny", "Banny 1", "Banny 10" — the name and a number, nothing else.
+        let tail = bare.dropFirst("banny".count).trimmingCharacters(in: .whitespaces)
+        return tail.isEmpty || tail.allSatisfy(\.isNumber)
+    }
+
     /// Nobody turns up undressed. Slots and item names come from the real
     /// catalog: 12 head top, 11 suit top, 9 body, 6 glasses, 13 hand.
     ///

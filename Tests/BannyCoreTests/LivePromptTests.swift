@@ -249,14 +249,33 @@ struct LiveReadingTests {
         #expect(reading.cast.map(\.name) == ["Wren", "Cass", "Ode"])
     }
 
-    /// A body the catalog does not have would render nothing at all.
-    @Test func inventedBodiesAreDropped() {
-        let reading = LiveReading.parse("""
+    /// A body the catalog does not have used to cost us the whole person, which
+    /// is how a cast of three quietly became a cast of one.
+    @Test func anInventedBodyDoesNotCostUsThePerson() throws {
+        let reading = try #require(LiveReading.parse("""
         {"premise":"x","cast":[{"name":"A","body":"banana","prompt":"p"},
                                {"name":"B","body":"alien","prompt":"q"}]}
-        """)
-        #expect(reading?.cast.count == 1)
-        #expect(reading?.cast.first?.body == "alien")
+        """))
+        #expect(reading.cast.count == 2)
+        #expect(reading.cast.map(\.name) == ["A", "B"])
+        // The studio dresses the unknown one; the known one keeps what it said.
+        let cast = reading.castMembers(mergingInto: [])
+        #expect(cast.count == 2)
+        #expect(cast[1].body == .alien)
+    }
+
+    /// However it arrived, the banny a new show opens with is not a company.
+    @Test func thePlaceholderBannyIsNotACast() {
+        for name in ["", "Banny", "Banny 1", "Banny 10", "banny 2"] {
+            #expect(LiveCastMember(name: name, body: .orange).isPlaceholder,
+                    "\"\(name)\" should not count as somebody the director cast")
+        }
+        // Anyone named, described or dressed is somebody's decision.
+        #expect(!LiveCastMember(name: "Wren", body: .orange).isPlaceholder)
+        #expect(!LiveCastMember(name: "Banny 1", body: .orange,
+                                prompt: "the quiet one").isPlaceholder)
+        #expect(!LiveCastMember(name: "Banny", body: .orange,
+                                outfit: ["12": "chef-hat"]).isPlaceholder)
     }
 
     @Test func aReadingWithNobodyInItIsNoReading() {

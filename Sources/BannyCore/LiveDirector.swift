@@ -94,6 +94,7 @@ public final class LiveDirector: ObservableObject {
         self.fetch = beats
         var compiler = LiveCompiler(document: document)
         compiler.room = room
+        compiler.directedZones = LiveCompiler.arrangesTheRoom(brief.premise)
         self.compiler = compiler
         self.seed = seed
         self.rng = LiveRandom(seed: seed)
@@ -518,12 +519,18 @@ public final class LiveDirector: ObservableObject {
         {"beat":"hold","seconds":2}   (2s maximum — longer reads as a stall)
         {"beat":"wardrobe","who":"NAME","slot":6,"item":"banny-vision-pro"}
 
-        A zone is a conversation, and the bodies show it: people in one zone \
-        stand together and face each other. So everyone taking part in the same \
-        exchange must be in the SAME zone — if someone answers from elsewhere, \
-        the room reads as two separate conversations no matter what is said. \
-        Use a different zone only for a genuinely separate conversation \
-        happening at the same time, and keep at most two of those going.
+        The three zones are places in the room, not slots: front is nearest the \
+        camera, far is deepest into the picture. People in one zone stand \
+        together and face each other, so by default everyone in an exchange \
+        shares a zone — a conversation split across the room reads as two \
+        conversations no matter what is said.
+
+        THE SCENE outranks that. When it says where people are — a doorman in \
+        front, a queue in middle, someone on their own in far — put them there \
+        and LEAVE them there. They talk across the gap, turn to face whoever is \
+        speaking, and the distance is the point of the scene. Only move someone \
+        with a `move` beat, when they have a reason to cross the room, and \
+        expect them to walk it in full view.
 
         ANSWER
         {"beats":[ ... ]}

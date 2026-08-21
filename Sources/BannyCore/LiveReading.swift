@@ -64,13 +64,18 @@ public struct LiveReading: Codable, Equatable, Sendable {
         for object in LiveJSON.objects(in: answer) {
             guard var reading = try? JSONDecoder()
                 .decode(LiveReading.self, from: Data(object.utf8)) else { continue }
-            // Only bodies that exist, and only people with a name.
+            // A name is all that is required. An invented body is not a reason
+            // to lose the person — the studio picks one by position — and
+            // dropping them quietly shrinks the company, which is the whole
+            // family of bugs this scene has already been through: a cast of one
+            // leaves the model writing a two-hander and half of it on the floor.
             reading.cast = reading.cast.compactMap { person in
                 let name = person.name.trimmingCharacters(in: .whitespaces)
-                guard !name.isEmpty, Body(rawValue: person.body.lowercased()) != nil
-                else { return nil }
-                return LiveReading.Person(name: name, body: person.body.lowercased(),
-                                          prompt: person.prompt)
+                guard !name.isEmpty else { return nil }
+                return LiveReading.Person(
+                    name: name,
+                    body: Body(rawValue: person.body.lowercased())?.rawValue ?? "",
+                    prompt: person.prompt)
             }
             if !reading.cast.isEmpty { return reading }
         }

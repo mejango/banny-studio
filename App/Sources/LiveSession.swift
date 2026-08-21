@@ -299,7 +299,11 @@ private struct LiveSetupModifier: ViewModifier {
         let endpoint = setup.endpoint
         let track = setup.backingTrackURL
         let staging = setup.set
-        let needsReading = brief.cast.isEmpty || brief.premise.isEmpty
+        // A cast of placeholders is no cast: the premise was read off the set
+        // while the reading's people were thrown away, because "not empty" was
+        // taken to mean "somebody chose these".
+        let uncast = brief.cast.allSatisfy(\.isPlaceholder)
+        let needsReading = uncast || brief.premise.isEmpty
         setup.preparing = needsReading
             ? "Reading the set — who is here, and what kind of place this is"
             : "Preparing the set"
@@ -314,14 +318,14 @@ private struct LiveSetupModifier: ViewModifier {
                let reading = await LiveSceneBuilder.readCast(backgroundURL, brief: brief,
                                                              endpoint: endpoint) {
                 if brief.premise.isEmpty { brief.premise = reading.premise }
-                if brief.cast.isEmpty {
-                    brief.cast = reading.castMembers(mergingInto: brief.cast)
+                if uncast {
+                    brief.cast = reading.castMembers(mergingInto: [])
                 }
                 setup.brief = brief
             }
             // Only now, with the picture asked and answered: somebody has to be
             // on stage, so an unread cast falls back to three placeless people.
-            if brief.cast.isEmpty {
+            if brief.cast.isEmpty || brief.cast.allSatisfy(\.isPlaceholder) {
                 brief.cast = LiveBrief.starter().cast
                 setup.brief = brief
             }

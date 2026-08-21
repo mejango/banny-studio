@@ -28,7 +28,7 @@ enum LiveScriptRunner {
     /// still runs, but silently behaves differently — ignoring the chosen model,
     /// or letting the agent roam the home folder — so the app asks for a
     /// reinstall rather than lie about what is happening.
-    static let bridgeVersion = "banny-bridge 5"
+    static let bridgeVersion = "banny-bridge 6"
 
     /// Where the picture will be. The app writes this token into the prompt and
     /// the bridge swaps in the real path, because only the bridge knows it: the
@@ -151,14 +151,17 @@ enum LiveScriptRunner {
         PATH="$BIN:/usr/bin:/bin:/usr/sbin:/sbin"
         export PATH
         AGENT="$AGENT"
-        SCRATCH="\\${TMPDIR:-/tmp}/banny-live-agent"
+        # One folder per run. Sharing one meant two calls raced: the set read
+        # and the cast read overlap, and whichever started second deleted the
+        # picture the first was still looking at.
+        SCRATCH="\\${TMPDIR:-/tmp}/banny-live-agent.\\$\\$"
         mkdir -p "\\$SCRATCH" && cd "\\$SCRATCH" || exit 1
+        trap 'rm -f "\\$SCRATCH"/set.png; rmdir "\\$SCRATCH" 2>/dev/null' EXIT
         [ -n "\\$1" ] && M="\(flag) \\$1" || M=""
         shift 2>/dev/null || true
         # The set arrives as the first line of stdin, base64, and is written
         # here. Nothing outside this folder is ever opened, so looking at the
         # picture needs no permission wherever the picture really lives.
-        rm -f set.png
         IFS= read -r L
         case "\\$L" in
         banny-image:*) printf %s "\\${L#banny-image:}" | base64 -d > set.png; L="" ;;

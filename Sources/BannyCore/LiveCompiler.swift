@@ -11,6 +11,11 @@ public struct LiveCompiler {
     private struct Performer {
         var index: Int
         var x: Double
+        /// How far back they are standing *now*. Kept here because the document
+        /// cannot answer it: `character.depth` is overruled by the recorded
+        /// start pose, so the only depth the simulator honours is the one the
+        /// arrow keys walked them to.
+        var depth: Double
         var zone: LiveZone
         var speed: Double
         var onstage: Bool
@@ -19,6 +24,10 @@ public struct LiveCompiler {
         var looks: [(Double, Double)] = []
         /// (start, end, fromX, toX) so position at any instant is known.
         var walks: [(Double, Double, Double, Double)] = []
+        /// True when the script named this zone — an entrance or a move — as
+        /// opposed to the studio parking them somewhere so a line had a body.
+        /// A place the director chose is not the studio's to undo.
+        var placed = false
         /// Behind the Banny Vision Pro: present, but not in the room.
         var wearingVisor = false
         /// Whatever was in the glasses slot before it went on, so taking it off
@@ -30,6 +39,14 @@ public struct LiveCompiler {
     /// The stage as read from the backdrop, when one was read. Nil means the
     /// built-in staging, which is what every scene used before rooms existed.
     public var room: LiveSet?
+    /// True when the scene itself arranges the room — "a doorman in front, a
+    /// queue in middle". Then a zone the script names is a decision, and the
+    /// studio stops gathering people into one huddle to make a conversation
+    /// read as one. Off, the zones are incidental and the gathering rule holds:
+    /// two people trading lines from opposite ends read as two conversations
+    /// whatever the dialogue says, and that was a real complaint before it
+    /// existed. The premise decides which of those a scene is.
+    public var directedZones = false
     /// Set just before an entrance to offer it a fuzz-in, if the room allows.
     private var dissolveNext = false
     private var cast: [String: Performer] = [:]
@@ -63,7 +80,9 @@ public struct LiveCompiler {
     public init(document: ShowDocument, startingAt t: Double = 0) {
         self.now = t
         for (i, c) in document.stage.characters.enumerated() {
-            var performer = Performer(index: i, x: c.x, zone: .offstage,
+            var performer = Performer(index: i, x: c.x,
+                                      depth: c.recStart?.depth ?? c.depth,
+                                      zone: .offstage,
                                       speed: c.speed, onstage: false,
                                       walkEnd: -1)
             performer.glasses = c.baseOutfit[LiveCompiler.glassesSlot]
@@ -108,10 +127,12 @@ public struct LiveCompiler {
             let pose = sim.pose(characterIndex: i, at: t)
             let visible = character.presence.opacity(at: t) > 0.5
             var performer = cast[character.name]
-                ?? Performer(index: i, x: pose.x, zone: .offstage,
+                ?? Performer(index: i, x: pose.x, depth: pose.depth, zone: .offstage,
                              speed: character.speed, onstage: false, walkEnd: -1)
             performer.index = i
             performer.x = pose.x
+            // Where the simulation actually left them, not where we last aimed.
+            performer.depth = pose.depth
             performer.speed = character.speed
             performer.onstage = visible
             if !visible { performer.zone = .offstage }
@@ -131,9 +152,10 @@ public struct LiveCompiler {
 
     /// Brings someone into the company mid-scene. They start offstage, exactly
     /// as the opening cast does, and walk on when the script says so.
-    public mutating func register(name: String, index: Int, x: Double, speed: Double) {
+    public mutating func register(name: String, index: Int, x: Double, speed: Double,
+                                  depth: Double = 0.06) {
         guard cast[name] == nil else { return }
-        cast[name] = Performer(index: index, x: x, zone: .offstage,
+        cast[name] = Performer(index: index, x: x, depth: depth, zone: .offstage,
                                speed: speed, onstage: false, walkEnd: -1)
         order.append(name)
     }
@@ -167,14 +189,40 @@ public struct LiveCompiler {
     /// than this reads as one shape rather than two people.
     static let minimumGap = 0.17
 
+    /// Whether a premise arranges the room by name. Written as a word, so "a
+    /// farm" and "the middleman" are not directions; "people waiting in
+    /// \"middle\"" is.
+    public static func arrangesTheRoom(_ premise: String) -> Bool {
+        let words = premise.lowercased().split(whereSeparator: { !$0.isLetter })
+        return words.contains { ["front", "middle", "far"].contains(String($0)) }
+    }
+
     /// Depth for the nth person in a zone. Alternating in front of and behind
-    /// the zone line keeps a pair from sharing an outline even when the room
-    /// is too crowded to separate them across.
+    /// the zone line keeps a pair from sharing an outline.
+    ///
+    /// The offsets are a share of the room to the nearest other band, never a
+    /// fixed amount. A fixed one used to be ±0.18 — wider than the gap between
+    /// three bands drawn close together, so the second person in `front` stood
+    /// deeper than the whole of `middle` and the arrangement drawn on the
+    /// picture came out shuffled. Bands placed a hair apart are a hair apart in
+    /// the scene; that they are close is not permission to ignore the order.
+    ///
+    /// This is decoration, not collision avoidance: `positions` already spaces
+    /// a zone's occupants a body-width apart in x, whatever the crowd.
     static func depth(in zone: LiveZone, index: Int,
                       room: LiveSet? = nil) -> Double {
-        let stagger: [Double] = [0, 0.09, -0.05, 0.14, 0.04, 0.18]
+        // In units of the allowance, so nobody sits on the zone's own line but
+        // the first person to stand on it.
+        let pattern: [Double] = [0, 0.5, -0.28, 0.78, 0.22, 1.0]
         let base = room?.depth(for: zone) ?? zone.depth
-        return max(-0.1, min(0.85, base + stagger[index % stagger.count]))
+        let neighbours = LiveZone.allCases
+            .filter { $0 != zone && $0 != .offstage }
+            .map { abs((room?.depth(for: $0) ?? $0.depth) - base) }
+        // Half the way to the nearest neighbour is the furthest anyone can
+        // stray without trespassing on a band that belongs to somebody else.
+        let allowance = min(0.1, max(0.015, (neighbours.min() ?? 0.2) / 2))
+        return max(-0.1, min(0.85,
+                             base + pattern[index % pattern.count] * allowance))
     }
 
     /// How long a line takes to say.
@@ -207,6 +255,7 @@ public struct LiveCompiler {
                 // the random draw is available.
                 dissolveNext = rng.next(in: 0...1) < 0.4
                 walkOn(who, zone: zone, at: now, document: &document)
+                cast[who]?.placed = directedZones
 
             case let .exits(who):
                 guard var p = cast[who], p.onstage else { break }
@@ -236,7 +285,9 @@ public struct LiveCompiler {
             case let .move(who, zone):
                 guard cast[who] != nil else { break }
                 let previous = cast[who]!.zone
+                // A move is always deliberate, directed scene or not.
                 cast[who]!.zone = zone
+                cast[who]!.placed = true
                 reshare(zone, at: now, document: &document)
                 if previous != zone { reshare(previous, at: now, document: &document) }
 
@@ -294,7 +345,12 @@ public struct LiveCompiler {
                 if let previous = lastSpeaker, previous != who,
                    let them = cast[previous], them.onstage,
                    at - lastLineEnded < 4.0 {
-                    if them.zone != cast[who]!.zone,
+                    // Only gather people the studio placed itself. A bouncer at
+                    // the door and a queue further back are two places in one
+                    // conversation, and dragging the queue onto the doorstep is
+                    // the studio overruling the direction. They turn to each
+                    // other instead, and talk across the gap.
+                    if them.zone != cast[who]!.zone, !cast[who]!.placed,
                        occupancy(of: them.zone) < 4 {
                         cast[who]!.zone = them.zone
                         let leaving = speaker.zone
@@ -365,6 +421,7 @@ public struct LiveCompiler {
         _ = lastSpeaker
         fillIdleTime(from: batchStart, to: now, document: &document, rng: &rng)
         resolveFacing(document: &document)
+        sortEvents(&document)
         return now
     }
 
@@ -444,13 +501,11 @@ public struct LiveCompiler {
         guard !members.isEmpty else { return }
         let xs = LiveCompiler.positions(in: zone, count: members.count, room: room)
         for (i, name) in members.enumerated() {
-            // Depth is the character's own, not an event, so it is set once when
-            // they take their place. Two people at the same depth and a similar
-            // x share one silhouette; a step apart in depth never does.
-            let index = cast[name]!.index
-            document.stage.characters[index].depth =
-                LiveCompiler.depth(in: zone, index: i, room: room)
-            walk(name, to: xs[i], at: t + Double(i) * 0.3, document: &document)
+            // Two people at the same depth and a similar x share one silhouette;
+            // a step apart in depth never does.
+            walk(name, to: xs[i],
+                 depth: LiveCompiler.depth(in: zone, index: i, room: room),
+                 at: t + Double(i) * 0.3, document: &document)
             // A sideways shuffle leaves them facing the way they walked, which
             // for half the group is out of the conversation.
             let others = xs.enumerated().filter { $0.offset != i }.map(\.element)
@@ -461,26 +516,55 @@ public struct LiveCompiler {
         }
     }
 
-    /// Walks someone to x. Never starts while their previous walk is running:
-    /// two holds share an arrow key, and the second key-up releases both.
-    private mutating func walk(_ who: String, to x: Double, at t: Double,
-                               document: inout ShowDocument) {
+    /// Walks someone across the stage and, when asked, into or out of the room.
+    ///
+    /// Depth used to be written straight onto the character. It never took: a
+    /// performer with a recorded start pose is simulated from *that* depth and
+    /// the field is ignored, so a scene staged to a picture stood its whole
+    /// cast at the depth they walked on at, however carefully the zones were
+    /// placed. Depth is held keys like everything else, and holding both axes
+    /// at once is a diagonal — somebody crossing to the back of the room walks
+    /// there rather than arriving in a smaller size.
+    ///
+    /// Never starts while their previous walk is running: two holds share an
+    /// arrow key, and the second key-up releases both.
+    private mutating func walk(_ who: String, to x: Double, depth z: Double? = nil,
+                               at t: Double, document: inout ShowDocument) {
         guard var p = cast[who] else { return }
         let start = max(t, p.walkEnd + 0.05)
-        guard abs(x - p.x) > 1e-4 else {
+        let target = z ?? p.depth
+        let across = abs(x - p.x), back = abs(target - p.depth)
+        guard across > 1e-4 || back > 1e-4 else {
             p.walkEnd = max(p.walkEnd, start)
             cast[who] = p
             return
         }
-        let rate = p.speed / 900
-        let hold = abs(x - p.x) / rate
-        let code: EventCode = x > p.x ? .arrowRight : .arrowLeft
-        document.stage.characters[p.index].events.append(
-            .key(t: round3(start), code: code, down: true))
-        document.stage.characters[p.index].events.append(
-            .key(t: round3(start + hold), code: code, down: false))
-        p.walks.append((start, start + hold, p.x, x))
-        p.x = x
+        var hold = 0.0
+        if across > 1e-4 {
+            let seconds = across / (p.speed / 900)
+            let code: EventCode = x > p.x ? .arrowRight : .arrowLeft
+            document.stage.characters[p.index].events.append(
+                .key(t: round3(start), code: code, down: true))
+            document.stage.characters[p.index].events.append(
+                .key(t: round3(start + seconds), code: code, down: false))
+            p.walks.append((start, start + seconds, p.x, x))
+            p.x = x
+            hold = max(hold, seconds)
+        }
+        if back > 1e-4 {
+            // The engine's own rate, so the keys are released exactly where the
+            // simulation arrives. Deriving it here again would drift.
+            let rate = simDepthRate(speed: p.speed, gScale: document.stage.gScale)
+            let seconds = back / rate
+            // ArrowUp goes away from the camera.
+            let code: EventCode = target > p.depth ? .arrowUp : .arrowDown
+            document.stage.characters[p.index].events.append(
+                .key(t: round3(start), code: code, down: true))
+            document.stage.characters[p.index].events.append(
+                .key(t: round3(start + seconds), code: code, down: false))
+            p.depth = target
+            hold = max(hold, seconds)
+        }
         p.walkEnd = start + hold
         cast[who] = p
     }
@@ -634,6 +718,22 @@ public struct LiveCompiler {
             }
             p.looks.removeAll()
             cast[name] = p
+        }
+    }
+
+    /// Puts every performer's events back in time order.
+    ///
+    /// The simulator walks the array by index and stops at the first event
+    /// later than now, so an out-of-order press is not merely late — it is
+    /// swallowed whole, together with its release. This used to happen inside
+    /// facing resolution, which skips anyone with no turn to make, so it was
+    /// really "sorted if they happened to look at somebody": a performer who
+    /// walked on and said nothing kept a scrambled timeline. It cost the depth
+    /// walk entirely — the hold was appended after a longer sideways hold, and
+    /// the whole press-and-release fell into a single step that netted zero.
+    private func sortEvents(_ document: inout ShowDocument) {
+        for name in order {
+            guard let p = cast[name] else { continue }
             document.stage.characters[p.index].events.sort {
                 $0.t == $1.t ? (eventRank($0) < eventRank($1)) : ($0.t < $1.t)
             }
