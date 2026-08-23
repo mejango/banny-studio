@@ -1,6 +1,11 @@
 import Foundation
 import BannyCore
+// The room server is a separate workstream and is not part of this repository's
+// build. Guarding the import is what lets a clean checkout compile: the module
+// is only importable when a Package.swift that declares it is in play.
+#if canImport(BannyLive)
 import BannyLive
+#endif
 
 // Public machine contract for GUI-free and agent-driven production.
 
@@ -104,7 +109,7 @@ private let concurrencyOptions = [
     jsonOption,
 ]
 
-let commandCapabilities: [CommandCapability] = [
+private let coreCommandCapabilities: [CommandCapability] = [
     .init(name: "capabilities", summary: "Describe the complete machine contract.",
           usage: "banny capabilities [--json]", mutatesProject: false,
           acceptsArchive: true, jsonOutput: "ProductionCapabilities", progress: nil,
@@ -255,6 +260,21 @@ let commandCapabilities: [CommandCapability] = [
                     .init("--scale", value: "N", "Point-light detection scale.",
                           minimum: 1, maximum: 8, defaultValue: "2"),
                     jsonOption]),
+    .init(name: "skill", summary: "Print or install the current AI production skill.",
+          usage: "banny skill [print|install] [--target codex|claude|all] [--json]",
+          mutatesProject: true, acceptsArchive: true, jsonOutput: "SkillInstallReport", progress: nil,
+          options: [.init("--target", value: "TARGET", "Install target.", allowed: ["codex", "claude", "all"]), jsonOption]),
+]
+
+/// The `room` commands, which only exist when the room server is in the build.
+///
+/// These were committed by accident: their `LiveRoomHostLimits` default came in
+/// with an unrelated feature while the Package.swift that declares BannyLive
+/// stayed deliberately uncommitted, so a clean clone of this repository could
+/// not build the CLI at all. Guarding them keeps the room workstream working
+/// wherever it is checked out, without its absence breaking everyone else.
+#if canImport(BannyLive)
+private let roomCommandCapabilities: [CommandCapability] = [
     .init(name: "room contract", summary: "Describe the deprecated participant-local AI protocol.",
           usage: "banny room contract [--json]", mutatesProject: false,
           acceptsArchive: false, jsonOutput: "RoomAgentContractReport", progress: nil,
@@ -316,11 +336,13 @@ let commandCapabilities: [CommandCapability] = [
                   "Explicitly allow plaintext HTTP to a non-loopback room host."),
             jsonOption,
           ]),
-    .init(name: "skill", summary: "Print or install the current AI production skill.",
-          usage: "banny skill [print|install] [--target codex|claude|all] [--json]",
-          mutatesProject: true, acceptsArchive: true, jsonOutput: "SkillInstallReport", progress: nil,
-          options: [.init("--target", value: "TARGET", "Install target.", allowed: ["codex", "claude", "all"]), jsonOption]),
 ]
+#else
+private let roomCommandCapabilities: [CommandCapability] = []
+#endif
+
+let commandCapabilities: [CommandCapability] =
+    coreCommandCapabilities + roomCommandCapabilities
 
 func helpCommand(_ args: [String]) throws {
     var options = CLIOptions(args)
