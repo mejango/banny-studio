@@ -10,8 +10,18 @@ import BannyLive
 // Public machine contract for GUI-free and agent-driven production.
 
 enum BannyCLIContract {
+    /// The version says what this binary actually offers, and a build carrying
+    /// the room commands offers strictly more. The bump arrived with them, so
+    /// it belongs with them: advertising 2.1.0 from a build that has no `room`
+    /// command would be a promise the CLI cannot keep — and it is what left the
+    /// committed test expecting 2.0.0 while the committed source said 2.1.0.
+    #if canImport(BannyLive)
     static let version = "2.1.0"
     static let contractVersion = 3
+    #else
+    static let version = "2.0.0"
+    static let contractVersion = 2
+    #endif
     static let schemaVersion = 4
     static let patchStandard = "RFC 6902"
 }
