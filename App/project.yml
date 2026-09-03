@@ -15,11 +15,11 @@ settings:
     SWIFT_VERSION: "5.10"
     GENERATE_INFOPLIST_FILE: NO
     ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
-    CURRENT_PROJECT_VERSION: 36
+    CURRENT_PROJECT_VERSION: 37
     # One release line for both platforms. iOS 1.0.0 was approved and its
     # pre-release train is closed, so the old iphoneos overrides that pinned
     # it there could no longer accept builds.
-    MARKETING_VERSION: 1.13.0
+    MARKETING_VERSION: 1.14.0
     DEVELOPMENT_TEAM: SY2W527QJA
     CODE_SIGN_STYLE: Automatic
     # Public installed-app identifier, injected by the release configuration.
