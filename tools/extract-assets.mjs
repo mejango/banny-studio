@@ -74,7 +74,9 @@ function emitMaybePerBody(name, art, opts = {}) {
 const catalog = {
   generated: 'tools/extract-assets.mjs',
   canvas: { viewBox: [0, 0, 400, 400], bakeScale: 4 },
-  renderOrder: [2, 'BODY', 3, 4, 'EYES', 6, 'MOUTH', 8, 9, 10, 11, 12, 13],
+  // Mirrors Banny721TokenUriResolver._outfitContentsFor: the built-in
+  // necklace is against the body, but a custom slot-3 necklace tops suits.
+  renderOrder: [2, 'BODY', 'DEFAULT_NECKLACE', 4, 'EYES', 6, 'MOUTH', 8, 9, 10, 11, 3, 12, 13],
   catNames: C.CATNAMES,
   // Slot exclusivity (web applyOutfit): wearing key hides values.
   exclusivity: { 4: [6, 12], 9: [10, 11] },

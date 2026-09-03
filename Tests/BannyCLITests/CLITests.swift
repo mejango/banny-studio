@@ -24,6 +24,33 @@ final class CLITests: XCTestCase {
         XCTAssertEqual(status, 0, file: file, line: line)
     }
 
+    func testStandaloneExecutableFindsAdjacentAssetsAfterResolvingSymlink() throws {
+        let root = try temporaryDirectory("banny-cli-standalone-assets")
+        let release = root.appendingPathComponent("releases/2.1.0", isDirectory: true)
+        let bin = root.appendingPathComponent("bin", isDirectory: true)
+        try FileManager.default.createDirectory(at: release, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: bin, withIntermediateDirectories: true)
+
+        let executable = release.appendingPathComponent("banny", isDirectory: false)
+        XCTAssertTrue(FileManager.default.createFile(atPath: executable.path, contents: Data()))
+        let assets = release.appendingPathComponent("BannyAssets", isDirectory: true)
+        try FileManager.default.createDirectory(
+            at: assets.appendingPathComponent("png", isDirectory: true),
+            withIntermediateDirectories: true)
+        try Data("{}".utf8).write(
+            to: assets.appendingPathComponent("catalog.json", isDirectory: false))
+
+        let linkedExecutable = bin.appendingPathComponent("banny", isDirectory: false)
+        try FileManager.default.createSymbolicLink(
+            at: linkedExecutable,
+            withDestinationURL: executable)
+
+        let found = try locateAssetsRoot(
+            environment: [:],
+            executableURL: linkedExecutable)
+        XCTAssertEqual(found, assets.standardizedFileURL.resolvingSymlinksInPath())
+    }
+
     func testStrictLifecyclePatchHashAndArchives() async throws {
         let root = try temporaryDirectory("banny-cli-lifecycle")
         let project = root.appendingPathComponent("show.bs")
@@ -199,13 +226,17 @@ final class CLITests: XCTestCase {
                 as? [String: Int])?["const"],
             4)
         try await assertSuccess(["banny", "capabilities", "--json"])
-        XCTAssertEqual(BannyCLIContract.version, "2.0.0")
-        XCTAssertEqual(BannyCLIContract.contractVersion, 2)
+        XCTAssertEqual(BannyCLIContract.version, "2.1.0")
+        XCTAssertEqual(BannyCLIContract.contractVersion, 3)
         XCTAssertTrue(commandCapabilities.contains { capability in
             capability.name == "character set-start"
                 && capability.usage.contains("--character")
                 && capability.jsonOutput != nil
         })
+        for name in ["room contract", "room serve", "room join"] {
+            XCTAssertTrue(commandCapabilities.contains { $0.name == name })
+            try await assertSuccess(["banny", "help", name, "--json"])
+        }
         try await assertSuccess(["banny", "help", "ship", "--json"])
         try await assertSuccess(["banny", "schema", "--compact"])
         try await assertSuccess(["banny", "catalog", "--json"])

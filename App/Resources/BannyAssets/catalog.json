@@ -12,7 +12,7 @@
  "renderOrder": [
   2,
   "BODY",
-  3,
+  "DEFAULT_NECKLACE",
   4,
   "EYES",
   6,
@@ -21,6 +21,7 @@
   9,
   10,
   11,
+  3,
   12,
   13
  ],

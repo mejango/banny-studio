@@ -287,15 +287,36 @@ struct LiveSetupView: View {
     }
 }
 
-/// Which model the agent runs. Claude's aliases are offered by name; Codex
-/// names live in the user's own config, so "Default" follows it and anything
-/// else is typed in.
+/// Which model the selected command-line agent runs. "Default" always follows
+/// that agent's own configuration; named suggestions remain editable.
 private struct LiveAgentModelPicker: View {
     @Binding var endpoint: LiveModelEndpoint
     @State private var custom = false
 
     private var suggestions: [(label: String, value: String)] {
         endpoint.shape.suggestedModels
+    }
+
+    private var customPlaceholder: String {
+        switch endpoint.shape {
+        case .claudeCode: return "claude-opus-5"
+        case .codex: return "gpt-5.6-sol"
+        case .grok: return "grok-4.6"
+        case .openAIChat: return "model"
+        }
+    }
+
+    private var defaultDescription: String {
+        switch endpoint.shape {
+        case .claudeCode:
+            return "Default follows whatever `claude` is set to use."
+        case .codex:
+            return "Default follows the model in your ~/.codex/config.toml."
+        case .grok:
+            return "Default follows the model selected by your authenticated `grok` CLI."
+        case .openAIChat:
+            return ""
+        }
     }
 
     var body: some View {
@@ -317,8 +338,7 @@ private struct LiveAgentModelPicker: View {
             .accessibilityIdentifier("live-model-picker")
 
             if custom || !suggestions.contains(where: { $0.value == endpoint.model }) {
-                TextField(endpoint.shape == .codex ? "gpt-5-codex" : "claude-opus-5",
-                          text: $endpoint.model)
+                TextField(customPlaceholder, text: $endpoint.model)
                     .textFieldStyle(.roundedBorder)
             }
         }
@@ -328,15 +348,13 @@ private struct LiveAgentModelPicker: View {
             endpoint.model = ""
         }
         if endpoint.model.isEmpty {
-            Text(endpoint.shape == .codex
-                 ? "Default follows the model in your ~/.codex/config.toml."
-                 : "Default follows whatever `claude` is set to use.")
+            Text(defaultDescription)
                 .font(.caption).foregroundStyle(.secondary)
         }
     }
 }
 
-/// Claude Code and Codex are command-line agents, and a sandboxed app may only
+/// CLI agents run through a bridge because a sandboxed app may only
 /// run scripts the user installed itself. This says so plainly and hands over
 /// the one command that does it.
 private struct LiveAgentBridgeNote: View {
@@ -360,6 +378,15 @@ private struct LiveAgentBridgeNote: View {
         #endif
     }
 
+    private var subscriptionName: String {
+        switch shape {
+        case .claudeCode: return "Claude"
+        case .codex: return "ChatGPT"
+        case .grok: return "Grok"
+        case .openAIChat: return "local model"
+        }
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             if outdated {
@@ -370,7 +397,7 @@ private struct LiveAgentBridgeNote: View {
                     .font(.caption).foregroundStyle(.orange)
                 installCommand
             } else if installed {
-                Label("Bridge installed — this will use your \(shape == .claudeCode ? "Claude" : "ChatGPT") "
+                Label("Bridge installed — this will use your \(subscriptionName) "
                       + "subscription, no API key.", systemImage: "checkmark.circle.fill")
                     .font(.caption).foregroundStyle(.green)
             } else {

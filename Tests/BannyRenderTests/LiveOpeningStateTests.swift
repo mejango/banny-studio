@@ -139,8 +139,8 @@ struct LiveOpeningStateTests {
             let arrived = character.presence.filter(\.visible).map(\.t).min() ?? 0
             var cursor = arrived
             var worst = 0.0
-            for span in spans where span.0 > cursor {
-                worst = max(worst, span.0 - cursor)
+            for span in spans {
+                if span.0 > cursor { worst = max(worst, span.0 - cursor) }
                 cursor = max(cursor, span.1)
             }
             worst = max(worst, c.now - cursor)
@@ -219,6 +219,108 @@ struct LiveOpeningStateTests {
         let cues = doc.stage.characters.flatMap(\.subs)
         #expect(cues.count == 3)
         #expect(cues.allSatisfy { $0.follow == true })
+    }
+
+    /// Generated dialogue is blocked like a film scene: move, settle, speak.
+    /// Captions must never be dragged through a walk, including their readable
+    /// hangover after the mouth closes.
+    @Test func generatedCaptionsNeverOverlapTheirSpeakersMovement() {
+        var doc = opening(["A"])
+        var compiler = LiveCompiler(document: doc)
+        var rng = LiveRandom(seed: 18)
+        compiler.apply([
+            .enters(who: "A", zone: .front),
+            .line(who: "A", text: "I brought the only key.", kind: .say),
+            .move(who: "A", zone: .far),
+            .line(who: "A", text: "It belongs over here.", kind: .cut),
+        ], to: &doc, rng: &rng)
+
+        let character = doc.stage.characters[0]
+        let movement: Set<EventCode> = [.arrowLeft, .arrowRight, .arrowUp, .arrowDown]
+        var pressed: [EventCode: Double] = [:]
+        var walks: [(Double, Double)] = []
+        for event in character.events.sorted(by: { $0.t < $1.t }) {
+            guard case let .key(t, code, down) = event, movement.contains(code) else { continue }
+            if down {
+                pressed[code] = t
+            } else if let start = pressed.removeValue(forKey: code) {
+                walks.append((start, t))
+            }
+        }
+
+        #expect(character.subs.count == 2)
+        #expect(!walks.isEmpty)
+        for subtitle in character.subs {
+            let caption = subtitle.start...(subtitle.start + subtitle.dur)
+            for walk in walks {
+                let overlaps = caption.lowerBound < walk.1 && walk.0 < caption.upperBound
+                #expect(!overlaps,
+                        "caption \(caption) overlaps movement \(walk.0)...\(walk.1)")
+            }
+            let priorWalkEnd = walks.filter { $0.1 <= subtitle.start }.map(\.1).max()
+            if let priorWalkEnd {
+                #expect(subtitle.start >= priorWalkEnd + LiveCompiler.speechSettle - 0.002,
+                        "the line began before the Banny visibly settled")
+            }
+        }
+    }
+
+    @Test func anOffstageHandPropSurvivesOntoTheStage() throws {
+        var doc = opening(["A"])
+        var compiler = LiveCompiler(document: doc)
+        var rng = LiveRandom(seed: 19)
+        compiler.apply([
+            .wardrobe(who: "A", slot: 13, item: "beer"),
+            .enters(who: "A", zone: .middle),
+            .line(who: "A", text: "This is evidence now.", kind: .say),
+        ], to: &doc, rng: &rng)
+
+        let line = try #require(doc.stage.characters[0].subs.first)
+        let pose = SceneSimulator(state: doc.stage).pose(characterIndex: 0, at: line.start)
+        #expect(pose.outfit[13] == "beer")
+        let propEvent = doc.stage.characters[0].events.contains {
+            if case let .outfit(t, slot, item) = $0 {
+                return t == 0 && slot == 13 && item == "beer"
+            }
+            return false
+        }
+        #expect(propEvent, "the prop chosen in the wings never reached the performer")
+    }
+
+    @Test func anOnstageCostumeChangeWaitsForMovementAndSpeech() throws {
+        var doc = opening(["A"])
+        var compiler = LiveCompiler(document: doc)
+        var rng = LiveRandom(seed: 20)
+        compiler.apply([
+            .enters(who: "A", zone: .front),
+            .line(who: "A", text: "They know the coat.", kind: .say),
+            .move(who: "A", zone: .far),
+            .wardrobe(who: "A", slot: 11, item: "punk-jacket"),
+            .line(who: "A", text: "They do not know this one.", kind: .say),
+        ], to: &doc, rng: &rng)
+
+        let character = doc.stage.characters[0]
+        let change = try #require(character.events.compactMap { event -> Double? in
+            if case let .outfit(t, slot, item) = event,
+               slot == 11, item == "punk-jacket" { return t }
+            return nil
+        }.first)
+        let movementEnd = character.events.compactMap { event -> Double? in
+            if case let .key(t, code, down) = event,
+               !down, [.arrowLeft, .arrowRight, .arrowUp, .arrowDown].contains(code) {
+                return t
+            }
+            return nil
+        }.max() ?? 0
+        let firstCaptionEnd = try #require(character.subs.first.map { $0.start + $0.dur })
+        let secondLine = try #require(character.subs.last)
+
+        #expect(change >= movementEnd + LiveCompiler.speechSettle - 0.002)
+        #expect(change >= firstCaptionEnd + 0.05 - 0.002)
+        #expect(secondLine.start >= change + 0.6 - 0.002)
+        let changedPose = SceneSimulator(state: doc.stage)
+            .pose(characterIndex: 0, at: secondLine.start)
+        #expect(changedPose.outfit[11] == "punk-jacket")
     }
 }
 

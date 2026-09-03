@@ -41,7 +41,7 @@ public enum OutfitCategory: Int, Codable, CaseIterable, Identifiable, Sendable {
         case .backside:
             "Draws behind the Banny body."
         case .necklace:
-            "Draws above the body and replaces the default necklace."
+            "Replaces the default necklace and draws above Suit, Suit Bottom, and Suit Top layers."
         case .head:
             "Replaces the whole head and hides the face, glasses, and head-top items."
         case .eyes:

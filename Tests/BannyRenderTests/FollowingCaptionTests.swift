@@ -88,9 +88,8 @@ struct FollowingCaptionTests {
     }
 }
 
-/// A caption that tracks a walk slides at walking pace and cannot be read.
-/// It stays put for the length of its line instead, waiting where the speaker
-/// will be standing when they finish.
+/// A caption tracks a walk with a small, damped lag: near enough to belong to
+/// the speaker, but steadier than the body underneath it.
 struct ReadableCaptionTests {
     /// Someone walking left to right at the compiler's own pace.
     func walking(from x0: Double, rate: Double) -> (Double) -> Double {
@@ -101,55 +100,58 @@ struct ReadableCaptionTests {
         Subtitle(text: "Over here.", start: start, dur: dur, follow: true)
     }
 
-    /// The whole point: damping the position was not enough, because a damped
-    /// box still travels at walking pace.
-    @Test func aCaptionDoesNotMoveWhileItIsUp() {
+    @Test func aCaptionFollowsWhileItIsUp() {
         let walk = walking(from: 0.2, rate: 110.0 / 900)
         let line = cue(start: 2, dur: 3)
-        let early = FrameRenderer.readableSpeakerX(for: line, live: walk(2.1), sample: walk)
-        let late = FrameRenderer.readableSpeakerX(for: line, live: walk(4.9), sample: walk)
-        #expect(early == late, "the caption travelled during its own line")
+        let early = FrameRenderer.readableSpeakerX(for: line, at: 2.1,
+                                                   live: walk(2.1), sample: walk)
+        let late = FrameRenderer.readableSpeakerX(for: line, at: 4.9,
+                                                  live: walk(4.9), sample: walk)
+        #expect(late > early, "the caption stayed behind at a fixed point")
     }
 
-    @Test func aCaptionWaitsWhereTheWalkEnds() {
+    @Test func aCaptionMovesLessThanItsSpeakerAndTrailsThem() {
         let walk = walking(from: 0.2, rate: 110.0 / 900)
         let line = cue(start: 2, dur: 3)
-        let settled = FrameRenderer.readableSpeakerX(for: line, live: walk(2.0), sample: walk)
-        #expect(abs(settled - walk(5.0)) < 1e-9, "the speaker will not arrive at their caption")
+        let early = FrameRenderer.readableSpeakerX(for: line, at: 2.1,
+                                                   live: walk(2.1), sample: walk)
+        let late = FrameRenderer.readableSpeakerX(for: line, at: 4.9,
+                                                  live: walk(4.9), sample: walk)
+        #expect(late - early < walk(4.9) - walk(2.1),
+                "the caption is moving as much as its speaker")
+        #expect(late < walk(4.9), "the caption is leading instead of lagging")
     }
 
     @Test func standingStillMovesNothing() {
         let still: (Double) -> Double = { _ in 0.42 }
-        let settled = FrameRenderer.readableSpeakerX(for: cue(), live: 0.42, sample: still)
+        let settled = FrameRenderer.readableSpeakerX(for: cue(), at: 3, live: 0.42,
+                                                     sample: still)
         #expect(abs(settled - 0.42) < 1e-9, "a caption drifted off a standing speaker")
     }
 
-    /// Somebody who walks out during their own line must not leave the caption
-    /// behind in the wings, labelling an empty stage.
-    @Test func aCaptionIsNeverLeftOffstage() {
+    /// Somebody who walks out during their own line must not strand the caption
+    /// at the last readable point, labelling an empty stage.
+    @Test func aCaptionDoesNotStayBehindWhenTheSpeakerLeaves() {
         let leaving: (Double) -> Double = { t in t < 4 ? 0.5 : -0.2 }
-        let settled = FrameRenderer.readableSpeakerX(for: cue(start: 2, dur: 3),
-                                                     live: 0.5, sample: leaving)
-        #expect(settled == 0.5, "the caption followed them into the wings")
+        let settled = FrameRenderer.readableSpeakerX(for: cue(start: 2, dur: 3), at: 4.5,
+                                                     live: -0.2, sample: leaving)
+        #expect(settled == -0.2, "the caption stayed behind on stage")
+        #expect(!FrameRenderer.captionShows(anchoredAt: settled, opacity: 1))
     }
 
-    /// The bug this pair exists to stop: a performer speaks as they walk on, so
-    /// the words start while they are still in the wings. Judged on the live
-    /// pose, the caption appeared only once they had crossed the frame edge and
-    /// a line with three seconds on the clock was on screen for one.
-    @Test func aCaptionShowsWhileItsSpeakerIsStillWalkingOn() {
+    @Test func aCaptionArrivesWithItsSpeaker() {
         let arriving: (Double) -> Double = { t in t < 4 ? -0.2 : 0.5 }
         let line = cue(start: 2, dur: 3)
-        let settled = FrameRenderer.readableSpeakerX(for: line, live: arriving(2.2),
+        let settled = FrameRenderer.readableSpeakerX(for: line, at: 4.4, live: arriving(4.4),
                                                      sample: arriving)
-        #expect(!FrameRenderer.captionShows(anchoredAt: arriving(2.2), opacity: 1),
-                "the speaker really is offstage — the test would prove nothing otherwise")
+        #expect(FrameRenderer.captionShows(anchoredAt: arriving(4.4), opacity: 1),
+                "the speaker has not arrived — the test would prove nothing otherwise")
         #expect(FrameRenderer.captionShows(anchoredAt: settled, opacity: 1))
     }
 
     @Test func aCaptionLeavesWithASpeakerWhoWalksOff() {
         let leaving: (Double) -> Double = { t in t < 2.5 ? 0.5 : 1.3 }
-        let settled = FrameRenderer.readableSpeakerX(for: cue(start: 2, dur: 3),
+        let settled = FrameRenderer.readableSpeakerX(for: cue(start: 2, dur: 3), at: 3,
                                                      live: 1.3, sample: leaving)
         #expect(!FrameRenderer.captionShows(anchoredAt: settled, opacity: 1))
     }
@@ -163,8 +165,10 @@ struct ReadableCaptionTests {
     /// it is rendered, because export does not run in order.
     @Test func theSameFrameAlwaysResolvesTheSame() {
         let walk = walking(from: 0.1, rate: 0.12)
-        let a = FrameRenderer.readableSpeakerX(for: cue(), live: walk(3.7), sample: walk)
-        let b = FrameRenderer.readableSpeakerX(for: cue(), live: walk(3.7), sample: walk)
+        let a = FrameRenderer.readableSpeakerX(for: cue(), at: 3.7,
+                                               live: walk(3.7), sample: walk)
+        let b = FrameRenderer.readableSpeakerX(for: cue(), at: 3.7,
+                                               live: walk(3.7), sample: walk)
         #expect(a == b)
     }
 }

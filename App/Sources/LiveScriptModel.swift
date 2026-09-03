@@ -3,7 +3,7 @@ import BannyCore
 
 /// Running a command-line agent from a sandboxed app.
 ///
-/// Banny Studio is sandboxed, so it cannot spawn `claude` or `codex` directly —
+/// Banny Studio is sandboxed, so it cannot spawn `claude`, `codex`, or `grok` directly —
 /// `Process` is denied outright. The one sanctioned route is `NSUserUnixTask`,
 /// which runs scripts the *user* has installed in the app's Application Scripts
 /// directory. That directory is outside the sandbox's writable area on purpose:
@@ -123,21 +123,41 @@ enum LiveScriptRunner {
         // the agent wander into Desktop and Documents, and macOS raises those
         // permission prompts against Banny Studio, which spawned it. Writing a
         // scene needs no files at all, so it runs in an empty scratch folder.
-        let tool: String, invocation: String
+        let tool: String, invocation: String, isolation: String
         switch shape {
         case .claudeCode:
             tool = "claude"
+            isolation = ""
             // "\$@" carries any extra flags the app passes — used to hand the
             // set-reading pass a Read-only tool list so looking at one picture
             // cannot become anything else.
             invocation = #""\$AGENT" -p --output-format text \$M "\$@""#
         case .codex:
             tool = "codex"
+            isolation = ""
             invocation = #""\$AGENT" exec \$M "\$@" -"#
+        case .grok:
+            tool = "grok"
+            // Grok otherwise imports the user's Claude/Cursor hooks, plugins,
+            // skills and MCP servers. Give it a clean temporary home and link
+            // in only the files needed to reuse the user's login.
+            isolation = """
+            LOGIN_HOME="$GROK_LOGIN_HOME"
+            RUN_HOME="\\$SCRATCH/home"
+            mkdir -p "\\$RUN_HOME/.grok" || exit 1
+            [ -f "\\$LOGIN_HOME/auth.json" ] && ln -s "\\$LOGIN_HOME/auth.json" "\\$RUN_HOME/.grok/auth.json"
+            [ -f "\\$LOGIN_HOME/agent_id" ] && ln -s "\\$LOGIN_HOME/agent_id" "\\$RUN_HOME/.grok/agent_id"
+            HOME="\\$RUN_HOME"
+            GROK_HOME="\\$RUN_HOME/.grok"
+            export HOME GROK_HOME
+            """
+            invocation = #""\$AGENT" "\$@" \$M --prompt-file /dev/stdin"#
         case .openAIChat:
             return nil
         }
         let flag = shape == .claudeCode ? "--model" : "-m"
+        let grokLoginSetup = shape == .grok
+            ? #"GROK_LOGIN_HOME="${GROK_HOME:-$HOME/.grok}""# : ""
         // The heredoc is unquoted on purpose: AGENT and BIN are resolved now,
         // in the user's shell, and baked into the script.
         return """
@@ -145,6 +165,7 @@ enum LiveScriptRunner {
         AGENT="$(command -v \(tool))" || { echo "\(tool) is not on your PATH"; exit 1; }
         BIN="$(dirname "$AGENT")"
         NODE="$(command -v node 2>/dev/null)" && BIN="$BIN:$(dirname "$NODE")"
+        \(grokLoginSetup)
         cat > "\(folder)/\(name)" <<SH
         #!/bin/sh
         # \(bridgeVersion)
@@ -156,7 +177,8 @@ enum LiveScriptRunner {
         # picture the first was still looking at.
         SCRATCH="\\${TMPDIR:-/tmp}/banny-live-agent.\\$\\$"
         mkdir -p "\\$SCRATCH" && cd "\\$SCRATCH" || exit 1
-        trap 'rm -f "\\$SCRATCH"/set.png; rmdir "\\$SCRATCH" 2>/dev/null' EXIT
+        trap 'rm -rf "\\$SCRATCH"' EXIT
+        \(isolation)
         [ -n "\\$1" ] && M="\(flag) \\$1" || M=""
         shift 2>/dev/null || true
         # The set arrives as the first line of stdin, base64, and is written
@@ -200,15 +222,41 @@ extension LiveModelEndpoint {
         return flags
     }
 
+    /// Grok is a coding agent by default. Live writing gets a single-purpose
+    /// session with no inherited memory, subagents or tools. Reading a backdrop
+    /// and fetching a pasted link are the only capabilities selectively added.
+    static func grokConfinement(needsWeb: Bool, needsFiles: Bool) -> [String] {
+        var flags = ["--no-auto-update", "--no-plan", "--no-subagents", "--no-memory",
+                     "--permission-mode", "dontAsk", "--max-turns", "4",
+                     // The director already supplies six independent reasoning
+                     // passes. Grok's default high effort repeats that depth
+                     // inside every pass and turns one opening into minutes.
+                     "--reasoning-effort", "low", "--verbatim",
+                     "--output-format", "plain"]
+        if !needsWeb { flags.append("--disable-web-search") }
+        var tools: [String] = []
+        if needsWeb { tools.append("WebFetch") }
+        if needsFiles { tools.append("Read") }
+        flags += ["--tools", tools.joined(separator: ",")]
+        for tool in tools { flags += ["--allow", tool] }
+        return flags
+    }
+
     /// One way in for the director, whichever kind of model this is.
     func beats(for prompt: String) async throws -> [LiveBeat] {
         #if os(macOS)
         if let script = shape.scriptName {
             // Only a scene carrying links has any business on the network.
             let hasLinks = prompt.contains("WHAT THEY HAVE BEEN LOOKING AT")
-            let flags = shape == .claudeCode
-                ? LiveModelEndpoint.confinement(needsWeb: hasLinks, needsFiles: false)
-                : []
+            let flags: [String]
+            switch shape {
+            case .claudeCode:
+                flags = LiveModelEndpoint.confinement(needsWeb: hasLinks, needsFiles: false)
+            case .grok:
+                flags = LiveModelEndpoint.grokConfinement(needsWeb: hasLinks, needsFiles: false)
+            default:
+                flags = []
+            }
             return try LiveBeatBatch.parse(
                 await LiveScriptRunner.run(script: script, prompt: prompt,
                                            model: model, extraArguments: flags))

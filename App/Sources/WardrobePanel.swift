@@ -323,15 +323,19 @@ struct OutfitCard: View {
             // FrameRenderer slot order, flat (no pose).
             draw(o[2].flatMap { cat.outfitImage($0, body: character.body) })
             draw(cat.bodyImage(character.body))
-            if let n = o[3] { draw(cat.outfitImage(n, body: character.body)) }
-            else { draw(cat.necklaceImage(body: character.body)) }
+            if o[3] == nil { draw(cat.necklaceImage(body: character.body)) }
             draw(o[4].flatMap { cat.outfitImage($0, body: character.body) })
             if !headWorn {
                 draw(cat.eyesImage(option: o[5] ?? "default", expression: .open, body: character.body))
                 if !hidden.contains(6) { draw(o[6].flatMap { cat.outfitImage($0, body: character.body) }) }
                 draw(cat.mouthImage(option: o[7] ?? "default", state: .closed, body: character.body))
             }
-            for slot in [8, 9, 10, 11, 12, 13] where !hidden.contains(slot) {
+            for slot in [8, 9, 10, 11] where !hidden.contains(slot) {
+                draw(o[slot].flatMap { cat.outfitImage($0, body: character.body) })
+            }
+            // The resolver layers custom necklaces over all suit categories.
+            draw(o[3].flatMap { cat.outfitImage($0, body: character.body) })
+            for slot in [12, 13] where !hidden.contains(slot) {
                 draw(o[slot].flatMap { cat.outfitImage($0, body: character.body) })
             }
         }

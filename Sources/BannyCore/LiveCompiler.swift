@@ -20,6 +20,9 @@ public struct LiveCompiler {
         var speed: Double
         var onstage: Bool
         var walkEnd: Double
+        /// End of the last visible caption. A performer never starts walking
+        /// while their words are still on screen.
+        var captionEnd: Double
         /// (t, target x) facing intents, resolved once at the end of a batch.
         var looks: [(Double, Double)] = []
         /// (start, end, fromX, toX) so position at any instant is known.
@@ -84,7 +87,7 @@ public struct LiveCompiler {
                                       depth: c.recStart?.depth ?? c.depth,
                                       zone: .offstage,
                                       speed: c.speed, onstage: false,
-                                      walkEnd: -1)
+                                      walkEnd: -1, captionEnd: t)
             performer.glasses = c.baseOutfit[LiveCompiler.glassesSlot]
             cast[c.name] = performer
             order.append(c.name)
@@ -128,7 +131,8 @@ public struct LiveCompiler {
             let visible = character.presence.opacity(at: t) > 0.5
             var performer = cast[character.name]
                 ?? Performer(index: i, x: pose.x, depth: pose.depth, zone: .offstage,
-                             speed: character.speed, onstage: false, walkEnd: -1)
+                             speed: character.speed, onstage: false, walkEnd: -1,
+                             captionEnd: t)
             performer.index = i
             performer.x = pose.x
             // Where the simulation actually left them, not where we last aimed.
@@ -138,6 +142,9 @@ public struct LiveCompiler {
             if !visible { performer.zone = .offstage }
             // No walk is in flight at a moment the user chose to stop at.
             performer.walkEnd = t
+            performer.captionEnd = max(t, character.subs
+                .filter { $0.start <= t + 0.001 }
+                .map { $0.start + $0.dur }.max() ?? t)
             performer.walks = []
             performer.looks = []
             // Whatever is on their face now is what taking the headset off
@@ -156,7 +163,8 @@ public struct LiveCompiler {
                                   depth: Double = 0.06) {
         guard cast[name] == nil else { return }
         cast[name] = Performer(index: index, x: x, depth: depth, zone: .offstage,
-                               speed: speed, onstage: false, walkEnd: -1)
+                               speed: speed, onstage: false, walkEnd: -1,
+                               captionEnd: now)
         order.append(name)
     }
 
@@ -296,7 +304,19 @@ public struct LiveCompiler {
                 addReaction(name, to: p.index, at: now, document: &document, rng: &rng)
 
             case let .wardrobe(who, slot, item):
-                guard let p = cast[who], p.onstage else { break }
+                guard let p = cast[who] else { break }
+                // An onstage transformation is a readable performance beat.
+                // Never dissolve an outfit while its wearer is walking or while
+                // their caption is still asking the audience to watch their face.
+                let changeAt: Double
+                if p.onstage {
+                    changeAt = max(now,
+                                   p.walkEnd + LiveCompiler.speechSettle,
+                                   p.captionEnd + 0.05)
+                    now = changeAt
+                } else {
+                    changeAt = now
+                }
                 if slot == LiveCompiler.glassesSlot {
                     var updated = p
                     if item == LiveCompiler.visor {
@@ -310,8 +330,10 @@ public struct LiveCompiler {
                     cast[who] = updated
                 }
                 document.stage.characters[p.index].events.append(
-                    .outfit(t: round3(now), slot: slot, name: item))
-                now += 0.6
+                    .outfit(t: round3(changeAt), slot: slot, name: item))
+                // Opening costumes and props are put on in the wings at the
+                // same instant. An onstage change remains a visible beat.
+                if p.onstage { now = changeAt + 0.6 }
 
             case let .line(who, rawText, kind):
                 guard cast[who] != nil else { break }
@@ -337,6 +359,7 @@ public struct LiveCompiler {
                 default:
                     break
                 }
+                at = settledSpeechStart(for: who, proposed: at)
                 // Answering somebody is what makes it one conversation, and the
                 // bodies have to say so. Standing in separate huddles while
                 // trading lines reads as two conversations however good the
@@ -357,6 +380,9 @@ public struct LiveCompiler {
                         reshare(them.zone, at: at - 1.2, document: &document)
                         reshare(leaving, at: at - 1.2, document: &document)
                     }
+                    // Gathering the reply into the conversation may itself
+                    // have scheduled a walk. The line waits for that too.
+                    at = settledSpeechStart(for: who, proposed: at)
                     cast[who]!.looks.append((at - 0.2, cast[previous]!.x))
                     cast[previous]!.looks.append((at - rng.next(in: 0...0.3),
                                                   cast[who]!.x))
@@ -531,7 +557,9 @@ public struct LiveCompiler {
     private mutating func walk(_ who: String, to x: Double, depth z: Double? = nil,
                                at t: Double, document: inout ShowDocument) {
         guard var p = cast[who] else { return }
-        let start = max(t, p.walkEnd + 0.05)
+        // Words and walking are mutually exclusive in generated scenes. Wait
+        // for both the prior walk and the prior caption to clear.
+        let start = max(t, p.walkEnd + 0.05, p.captionEnd + 0.05)
         let target = z ?? p.depth
         let across = abs(x - p.x), back = abs(target - p.depth)
         guard across > 1e-4 || back > 1e-4 else {
@@ -591,19 +619,30 @@ public struct LiveCompiler {
         }
     }
 
+    /// Dialogue begins only after the speaker has visibly come to rest.
+    static let speechSettle = 0.25
+
+    private func settledSpeechStart(for who: String, proposed t: Double) -> Double {
+        guard let p = cast[who] else { return t }
+        return max(t, p.walkEnd + LiveCompiler.speechSettle)
+    }
+
     /// A caption sits over its speaker, in its own box, so two conversations can
     /// be captioned at once and each line is attributable.
     private mutating func caption(_ who: String, text: String, from t: Double,
                                   for dur: Double, document: inout ShowDocument) {
-        guard let p = cast[who] else { return }
+        guard var p = cast[who] else { return }
         // No position is recorded. A speaker who walks mid-line — or gets
         // reseated when someone joins the group — would otherwise leave the
         // caption hanging over the spot they were standing in when the line was
         // written. The renderer anchors it from the live pose instead.
+        let shownFor = round3(max(LiveCompiler.minimumCaptionOnScreen, dur))
+        let start = round3(t)
         document.stage.characters[p.index].subs.append(
-            Subtitle(text: text, start: round3(t),
-                     dur: round3(max(LiveCompiler.minimumCaptionOnScreen, dur)),
+            Subtitle(text: text, start: start, dur: shownFor,
                      size: 0.62, width: 0.20, follow: true))
+        p.captionEnd = max(p.captionEnd, start + shownFor)
+        cast[who] = p
     }
 
     private mutating func addReaction(_ name: String, to index: Int, at t: Double,

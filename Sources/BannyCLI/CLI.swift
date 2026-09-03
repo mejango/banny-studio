@@ -38,6 +38,9 @@ usage: banny <command>              (read-only commands accept .bs or .bs.zip)
   import <v1.json> <out.bs>                        — web v1 → native
   stylize <in.png> <out.png> [gridWidth] [dither]  — pixel-art stylizer
   shimmer <in.png> <out.gif> [options]             — sparse point-light loop
+  room contract [--json]                           — deprecated local-AI bridge protocol
+  room serve [options]                             — host rooms, browser players, and the director
+  room join <room-url> [options]                   — deprecated legacy local-AI bridge
   skill [install|print] [--target TARGET]          — AI production skill
 
 Use `banny capabilities --json` for exact command contracts and vocabulary.
@@ -164,6 +167,9 @@ public func runCLI(arguments args: [String]) async throws -> Int32 {
 
     case "shimmer":
         try shimmerCommand(tail)
+
+    case "room":
+        try await roomCommand(tail)
 
     case "catalog":
         var options = CLIOptions(tail)

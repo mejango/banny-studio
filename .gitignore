@@ -5,3 +5,5 @@ DerivedData/
 *.xcodeproj/
 *.bannyshow/
 *.mp4
+/dist/
+__pycache__/

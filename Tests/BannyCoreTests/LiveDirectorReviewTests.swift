@@ -2,6 +2,14 @@ import Foundation
 import Testing
 @testable import BannyCore
 
+private actor FailedFetchCounter {
+    private(set) var calls = 0
+    func fail() throws -> [LiveBeat] {
+        calls += 1
+        throw CocoaError(.fileReadUnknown)
+    }
+}
+
 /// A live scene is commissioned in stretches so the first half-minute can be
 /// judged and thrown away cheaply. These cover that loop.
 @MainActor
@@ -52,6 +60,24 @@ struct LiveDirectorReviewTests {
         #expect(LiveDirector.stretch == 30)
     }
 
+    @Test func threeProviderFailuresStopInsteadOfRetryingForever() async throws {
+        let b = brief()
+        let counter = FailedFetchCounter()
+        let d = LiveDirector(brief: b, document: opening(b), beats: { _ in
+            try await counter.fail()
+        }, retryDelayNanoseconds: 1_000_000)
+
+        d.start { 0 }
+        try await Task.sleep(nanoseconds: 100_000_000)
+
+        #expect(await counter.calls == 3)
+        guard case .failed = d.state else {
+            Issue.record("director did not stop in its failed state")
+            return
+        }
+        #expect(d.currentPass.isEmpty)
+    }
+
     @Test func reachingTheCommissionStopsForReview() {
         let d = director(brief())
         d.apply(shortBatch())
@@ -59,6 +85,35 @@ struct LiveDirectorReviewTests {
         d.apply(longBatch())
         #expect(d.writtenThrough >= 30)
         #expect(d.state == .awaitingReview, "past 30s it must stop and ask")
+    }
+
+    @Test func onlyPermittedCatalogCostumeChangesReachTheTimeline() {
+        let b = LiveBrief(
+            premise: "A costume department.",
+            cast: [LiveCastMember(name: "A", body: .orange,
+                                  mayChangeWardrobe: true),
+                   LiveCastMember(name: "B", body: .alien)],
+            wardrobe: ["11": ["doc-coat", "punk-jacket"]])
+        let d = director(b)
+        d.apply([.enters(who: "A", zone: .middle),
+                 .line(who: "A", text: "The coat gives me away.", kind: .say)])
+        d.apply([
+            .wardrobe(who: "A", slot: 11, item: "punk-jacket"),
+            .wardrobe(who: "A", slot: 11, item: "invented-jacket"),
+            .wardrobe(who: "B", slot: 11, item: "doc-coat"),
+        ])
+
+        let changes = d.document.stage.characters.flatMap { character in
+            character.events.compactMap { event -> (String, String?)? in
+                if case let .outfit(_, slot, item) = event, slot == 11 {
+                    return (character.name, item)
+                }
+                return nil
+            }
+        }
+        #expect(changes.count == 1)
+        #expect(changes.first?.0 == "A")
+        #expect(changes.first?.1 == "punk-jacket")
     }
 
     @Test func extendingCommissionsMoreAndKeepsWhatWasWritten() {

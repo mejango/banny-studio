@@ -84,12 +84,27 @@ public func cliExitCode(for error: Error) -> Int32 {
     }
 }
 
-/// $BANNY_ASSETS → installed app bundle → repo checkout (dev).
-func locateAssetsRoot() throws -> URL {
+/// $BANNY_ASSETS → packaged sibling → installed app bundle → repo checkout (dev).
+///
+/// A standalone CLI distribution places `BannyAssets` beside the real
+/// executable. Resolve symlinks before deriving that path so an installation
+/// exposed through `/usr/local/bin/banny` still finds the immutable assets in
+/// its versioned release directory.
+func locateAssetsRoot(
+    environment: [String: String] = ProcessInfo.processInfo.environment,
+    executableURL: URL? = Bundle.main.executableURL
+) throws -> URL {
     let fm = FileManager.default
     var candidates: [URL] = []
-    if let env = ProcessInfo.processInfo.environment["BANNY_ASSETS"] {
+    if let env = environment["BANNY_ASSETS"], !env.isEmpty {
         candidates.append(URL(fileURLWithPath: env))
+    }
+    if let executableURL {
+        candidates.append(executableURL
+            .standardizedFileURL
+            .resolvingSymlinksInPath()
+            .deletingLastPathComponent()
+            .appendingPathComponent("BannyAssets", isDirectory: true))
     }
     for app in ["/Applications/Banny Studio.app", "/Applications/BannyStudio.app"] {
         candidates.append(URL(fileURLWithPath: app).appendingPathComponent("Contents/Resources/BannyAssets"))
@@ -97,8 +112,18 @@ func locateAssetsRoot() throws -> URL {
     candidates.append(URL(fileURLWithPath: #filePath)
         .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
         .appendingPathComponent("App/Resources/BannyAssets"))
-    for url in candidates where fm.fileExists(atPath: url.appendingPathComponent("catalog.json").path) {
-        return url
+    for url in candidates {
+        let resolved = url.standardizedFileURL.resolvingSymlinksInPath()
+        let catalog = resolved.appendingPathComponent("catalog.json", isDirectory: false)
+        let png = resolved.appendingPathComponent("png", isDirectory: true)
+        var catalogIsDirectory: ObjCBool = false
+        var pngIsDirectory: ObjCBool = false
+        guard fm.fileExists(atPath: catalog.path, isDirectory: &catalogIsDirectory),
+              !catalogIsDirectory.boolValue,
+              fm.fileExists(atPath: png.path, isDirectory: &pngIsDirectory),
+              pngIsDirectory.boolValue
+        else { continue }
+        return resolved
     }
     throw CLIError.assetsNotFound
 }

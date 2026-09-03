@@ -2177,8 +2177,7 @@ private func drawOutfitMannequin(
 
     draw(parts[.backside])
     draw(catalog.bodyImage(bodyStyle))
-    if isPresent(.necklace) { draw(parts[.necklace]) }
-    else { draw(catalog.necklaceImage(body: bodyStyle)) }
+    if !isPresent(.necklace) { draw(catalog.necklaceImage(body: bodyStyle)) }
 
     let headWorn = isPresent(.head)
     draw(parts[.head])
@@ -2209,6 +2208,9 @@ private func drawOutfitMannequin(
         draw(parts[.suitBottom])
         draw(parts[.suitTop])
     }
+    // Banny721TokenUriResolver defers a custom necklace until all suit layers
+    // have been emitted, unlike the default necklace drawn against the body.
+    draw(parts[.necklace])
     if !headWorn { draw(parts[.headTop]) }
     draw(parts[.hand])
 }

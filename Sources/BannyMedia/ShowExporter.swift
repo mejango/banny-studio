@@ -367,17 +367,28 @@ public enum ShowExporter {
     /// Per-frame AVAssetImageGenerator seeks rebuilt a decoder every frame and
     /// made exports run at ~hours per show.
     final class AssetSampler {
+        enum VideoSamplingMode: Sendable {
+            case sequential
+            case randomAccess
+        }
+
         private let byID: [String: Asset]
         private let assetURL: (String) -> URL?
+        private let videoSamplingMode: VideoSamplingMode
         private var stills: [String: CGImage] = [:]
         private var gifs: [String: GifSequence] = [:]
         private var notAnimated: Set<String> = []
         private var videos: [String: SequentialVideoReader] = [:]
         private var randomVideos: [String: RandomVideoReader] = [:]
 
-        init(assets: [Asset], assetURL: @escaping (String) -> URL?) {
+        init(
+            assets: [Asset],
+            assetURL: @escaping (String) -> URL?,
+            videoSamplingMode: VideoSamplingMode = .sequential
+        ) {
             self.byID = Dictionary(uniqueKeysWithValues: assets.map { ($0.id, $0) })
             self.assetURL = assetURL
+            self.videoSamplingMode = videoSamplingMode
         }
 
         func frame(cue: BackgroundCue, at t: Double) -> (image: CGImage, crop: Crop)? {
@@ -419,6 +430,27 @@ public enum ShowExporter {
                 }
                 return stills[asset.id]
             case .video:
+                // Live previews and one-off thumbnails may begin at any room
+                // time. A persistent AVAssetImageGenerator seeks directly to
+                // that time instead of decoding every frame from t=0. Offline
+                // export keeps the sequential default for monotone 30 fps work.
+                let requiresRandomAccess = videoSamplingMode == .randomAccess
+                    || cue?.playback.reverse == true
+                    || cue?.playback.freezeAt != nil
+                if requiresRandomAccess {
+                    if randomVideos[playbackID] == nil {
+                        randomVideos[playbackID] = RandomVideoReader(url: url)
+                    }
+                    guard let reader = randomVideos[playbackID], reader.duration > 0 else {
+                        return nil
+                    }
+                    let vt = cue.map {
+                        $0.sourceTime(
+                            at: $0.start + max(0, elapsed),
+                            sourceDuration: reader.duration)
+                    } ?? max(0, elapsed.truncatingRemainder(dividingBy: reader.duration))
+                    return reader.frame(at: vt)
+                }
                 if videos[playbackID] == nil {
                     videos[playbackID] = SequentialVideoReader(url: url)
                 }
@@ -426,12 +458,6 @@ public enum ShowExporter {
                 let vt = cue.map {
                     $0.sourceTime(at: $0.start + max(0, elapsed), sourceDuration: reader.duration)
                 } ?? max(0, elapsed.truncatingRemainder(dividingBy: reader.duration))
-                if let cue, cue.playback.reverse || cue.playback.freezeAt != nil {
-                    if randomVideos[playbackID] == nil {
-                        randomVideos[playbackID] = RandomVideoReader(url: url)
-                    }
-                    return randomVideos[playbackID]?.frame(at: vt)
-                }
                 return reader.frame(at: vt)
             }
         }

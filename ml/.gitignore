@@ -3,3 +3,7 @@ lora-run/
 train_text_to_image_lora.py
 .fal-key
 fal-*/
+.last-fal-request
+fal-scenes.zip
+fal-train-result.json
+fal-train.log

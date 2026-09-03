@@ -1,0 +1,52 @@
+#!/bin/bash
+set -euo pipefail
+
+usage() {
+  echo "usage: banny-live-logrotate --logs DIR [--maximum-bytes BYTES] [--retain N]" >&2
+  exit 2
+}
+
+LOGS=""
+MAXIMUM_BYTES=20971520
+RETAIN=7
+while (($#)); do
+  case "$1" in
+    --logs) (($# >= 2)) || usage; LOGS="$2"; shift 2 ;;
+    --maximum-bytes) (($# >= 2)) || usage; MAXIMUM_BYTES="$2"; shift 2 ;;
+    --retain) (($# >= 2)) || usage; RETAIN="$2"; shift 2 ;;
+    *) usage ;;
+  esac
+done
+[[ -n "$LOGS" && "$MAXIMUM_BYTES" =~ ^[0-9]+$ && "$RETAIN" =~ ^[0-9]+$ ]] || usage
+((MAXIMUM_BYTES >= 1048576 && RETAIN >= 1 && RETAIN <= 20)) || usage
+[[ -d "$LOGS" && ! -L "$LOGS" ]] || { echo "refusing unsafe log directory" >&2; exit 1; }
+
+rotate_one() {
+  local name="$1" path="$LOGS/$1" size links index prior
+  [[ -e "$path" ]] || return 0
+  [[ -f "$path" && ! -L "$path" ]] || { echo "refusing unsafe log file: $name" >&2; return 1; }
+  links="$(/usr/bin/stat -f '%l' "$path")"
+  [[ "$links" == "1" ]] || { echo "refusing hard-linked log file: $name" >&2; return 1; }
+  size="$(/usr/bin/stat -f '%z' "$path")"
+  ((size >= MAXIMUM_BYTES)) || return 0
+
+  /bin/rm -f "$path.$RETAIN"
+  index=$((RETAIN - 1))
+  while ((index >= 1)); do
+    prior="$path.$index"
+    if [[ -f "$prior" && ! -L "$prior" ]]; then
+      /bin/mv -f "$prior" "$path.$((index + 1))"
+    elif [[ -e "$prior" || -L "$prior" ]]; then
+      echo "refusing unsafe rotated log: $prior" >&2
+      return 1
+    fi
+    index=$((index - 1))
+  done
+  /bin/cp -p "$path" "$path.1.tmp"
+  /bin/mv -f "$path.1.tmp" "$path.1"
+  : > "$path"
+}
+
+rotate_one stdout.log
+rotate_one stderr.log
+rotate_one health.log

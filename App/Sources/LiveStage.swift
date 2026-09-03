@@ -31,6 +31,7 @@ struct LiveStageView: View {
     @State private var now = Date()
     @State private var writingSince: Date?
     @State private var feedback = ""
+    @State private var showingBackoffice = false
     /// The scene and cast, open for rewriting between sections.
     @State private var revising = false
     @State private var draft = LiveBrief()
@@ -92,6 +93,10 @@ struct LiveStageView: View {
                 // shows the room as it stood rather than a half-written moment.
                 if state == .writing { model.time = director.chunkStart }
             }
+        }
+        .sheet(isPresented: $showingBackoffice) {
+            LiveBackofficeView(director: director)
+                .frame(minWidth: 920, minHeight: 680)
         }
     }
 
@@ -228,6 +233,13 @@ struct LiveStageView: View {
                 .accessibilityIdentifier("live-status")
             Spacer()
             Text(clock).font(.callout.monospacedDigit()).foregroundStyle(.secondary)
+            Button {
+                showingBackoffice = true
+            } label: {
+                Label("Backoffice", systemImage: "doc.text.magnifyingglass")
+            }
+            .help("See the draft, edits, continuity check, and why this script shipped")
+            .accessibilityIdentifier("live-backoffice")
             Button("Fine-tune by hand", action: onExit)
                 .help("Edit this on the timeline, then come back and prompt the next section")
                 .accessibilityIdentifier("live-hand-off")
@@ -241,7 +253,11 @@ struct LiveStageView: View {
     private var openingCurtain: some View {
         VStack(spacing: 12) {
             ProgressView().controlSize(.large)
-            Text("Writing the opening\u{2026}")
+            Text(director.currentPass.isEmpty
+                 ? (director.state == .mastering
+                    ? "Editing and mastering the opening\u{2026}"
+                    : "Writing the opening\u{2026}")
+                 : "\(director.currentPass)\u{2026}")
                 .font(.callout).foregroundStyle(.secondary)
             Text(waited > 0 ? "\(waited)s" : " ")
                 .font(.caption.monospacedDigit()).foregroundStyle(.tertiary)
@@ -252,8 +268,10 @@ struct LiveStageView: View {
     }
 
     private var isWriting: Bool {
-        if case .writing = director.state { return true }
-        return false
+        switch director.state {
+        case .writing, .mastering: return true
+        default: return false
+        }
     }
 
     /// How long the current wait has been going, in whole seconds.
@@ -265,7 +283,7 @@ struct LiveStageView: View {
     private var statusColour: Color {
         switch director.state {
         case .performing: return .green
-        case .writing: return .yellow
+        case .writing, .mastering: return .yellow
         case .awaitingReview: return .blue
         case .failed: return .red
         case .finished, .idle: return .secondary
@@ -276,10 +294,19 @@ struct LiveStageView: View {
         switch director.state {
         case .idle: return "Ready"
         case .writing:
-            let what = director.writtenThrough <= 0
-                ? "Writing the opening"
-                : "Writing \(Int(director.chunkStart))–\(Int(director.commissioned))s"
+            let what = director.currentPass.isEmpty
+                ? (director.writtenThrough <= 0
+                   ? "Writing the opening"
+                   : "Writing \(Int(director.chunkStart))–\(Int(director.commissioned))s")
+                : director.currentPass
             // The count is what tells you it is still going, not stuck.
+            return waited > 0 ? "\(what)… \(waited)s" : "\(what)…"
+        case .mastering:
+            let what = director.currentPass.isEmpty
+                ? (director.writtenThrough <= 0
+                   ? "Editing and mastering the opening"
+                   : "Editing and mastering \(Int(director.chunkStart))–\(Int(director.commissioned))s")
+                : director.currentPass
             return waited > 0 ? "\(what)… \(waited)s" : "\(what)…"
         case .performing:
             return "Performing · \(Int(max(0, director.writtenThrough - model.time)))s in hand"
@@ -357,6 +384,211 @@ struct LiveStageView: View {
         // nobody had chosen to look at. The finished section plays on its own
         // the moment it is done.
         model.time = min(model.time, max(0, director.writtenThrough))
+    }
+}
+
+/// The receipts from the writing room. The model is never asked to reveal
+/// private reasoning, so this view does not manufacture it: it exposes the
+/// actual brief, prompts and successive scripts that justify—or indict—the
+/// candidate on screen.
+private struct LiveBackofficeView: View {
+    @ObservedObject var director: LiveDirector
+    @Environment(\.dismiss) private var dismiss
+    @State private var selection: UUID?
+
+    private var selected: LiveProductionAudit? {
+        director.productionAudits.first { $0.id == selection }
+            ?? director.productionAudits.last
+    }
+
+    var body: some View {
+        NavigationSplitView {
+            List(selection: $selection) {
+                ForEach(director.productionAudits.reversed()) { audit in
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("\(Int(audit.from))–\(Int(audit.to))s")
+                            .font(.headline.monospacedDigit())
+                        Text(audit.status.rawValue.capitalized)
+                            .font(.caption)
+                            .foregroundStyle(statusColour(audit.status))
+                    }
+                    .tag(audit.id)
+                }
+            }
+            .navigationTitle("Writing room")
+            .frame(minWidth: 190)
+        } detail: {
+            if let selected {
+                auditDetail(selected)
+            } else {
+                ContentUnavailableView(
+                    "Nothing written yet",
+                    systemImage: "doc.text.magnifyingglass",
+                    description: Text("Draft and edit receipts appear here after the first section."))
+            }
+        }
+        .onAppear { selection = selection ?? director.productionAudits.last?.id }
+        .toolbar {
+            ToolbarItem(placement: .confirmationAction) {
+                Button("Done") { dismiss() }
+            }
+        }
+        .accessibilityIdentifier("live-backoffice-view")
+    }
+
+    private func auditDetail(_ audit: LiveProductionAudit) -> some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 18) {
+                VStack(alignment: .leading, spacing: 5) {
+                    Text("Why this reached the stage")
+                        .font(.title2.bold())
+                    Text("Evidence, not a fabricated explanation. The creator returns scripts, not private reasoning; these are the actual inputs, revisions, and checks.")
+                        .foregroundStyle(.secondary)
+                }
+
+                GroupBox("Scene spine supplied to every pass") {
+                    Text(audit.premise.isEmpty ? "No premise was supplied." : audit.premise)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .textSelection(.enabled)
+                        .padding(.vertical, 4)
+                }
+
+                GroupBox("Storytelling approach") {
+                    Text(audit.approach)
+                        .font(.callout.monospaced())
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .textSelection(.enabled)
+                        .padding(.vertical, 4)
+                }
+
+                GroupBox("Loose dramatic compass — route left open") {
+                    Text(audit.selectedArc)
+                        .font(.callout.monospaced())
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .textSelection(.enabled)
+                        .padding(.vertical, 4)
+                }
+
+                HStack(spacing: 12) {
+                    passCard("Forward-written",
+                             detail: "\(audit.writerTurns.count) committed spoken turns",
+                             ok: true)
+                    passCard("No backward rewrite",
+                             detail: "Committed lines reached review unchanged",
+                             ok: true)
+                    passCard("Causal judge",
+                             detail: "All segues passed; failed attempts are discarded",
+                             ok: true)
+                }
+
+                GroupBox("Forward writing order") {
+                    VStack(alignment: .leading, spacing: 12) {
+                        ForEach(audit.writerTurns, id: \.number) { turn in
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text("Turn \(turn.number) · \(turn.relation?.rawValue ?? "OPENING")")
+                                    .font(.headline.monospaced())
+                                Text(turn.spokenLine).textSelection(.enabled)
+                            }
+                            .padding(9)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .background(.quaternary.opacity(0.35),
+                                        in: RoundedRectangle(cornerRadius: 7))
+                        }
+                    }
+                }
+
+                GroupBox("Causal dialogue receipts") {
+                    if audit.causalLinks.isEmpty {
+                        Text("Fewer than two spoken lines; there is no adjacency to audit.")
+                            .foregroundStyle(.secondary)
+                    } else {
+                        VStack(alignment: .leading, spacing: 12) {
+                            ForEach(Array(audit.causalLinks.enumerated()), id: \.offset) { entry in
+                                let link = entry.element
+                                VStack(alignment: .leading, spacing: 3) {
+                                    Text(link.before).textSelection(.enabled)
+                                    Text("↓  \(link.relation.rawValue)  ↓")
+                                        .font(.caption.bold().monospaced())
+                                        .foregroundStyle(link.relation == .therefore ? .blue : .orange)
+                                    Text(link.explanation)
+                                        .font(.caption)
+                                        .foregroundStyle(.primary)
+                                    Text(link.relation.meaning)
+                                        .font(.caption2)
+                                        .foregroundStyle(.secondary)
+                                    Text(link.after).textSelection(.enabled)
+                                }
+                                .padding(9)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .background(.quaternary.opacity(0.35),
+                                            in: RoundedRectangle(cornerRadius: 7))
+                            }
+                        }
+                    }
+                }
+
+                scriptDisclosure("Forward-written script sent to stage", beats: audit.final)
+
+                DisclosureGroup("Full creator assignment") {
+                    Text(audit.assignment)
+                        .font(.caption.monospaced())
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.top, 8)
+                }
+            }
+            .padding(22)
+        }
+        .navigationTitle("Section \(Int(audit.from))–\(Int(audit.to))s")
+    }
+
+    private func passCard(_ title: String, detail: String, ok: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Label(title, systemImage: ok ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
+                .font(.headline)
+                .foregroundStyle(ok ? .green : .orange)
+            Text(detail).font(.caption).foregroundStyle(.secondary)
+        }
+        .padding(11)
+        .frame(maxWidth: .infinity, minHeight: 76, alignment: .topLeading)
+        .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 8))
+    }
+
+    private func scriptDisclosure(_ title: String, beats: [LiveBeat]) -> some View {
+        DisclosureGroup(title) {
+            Text(beats.enumerated().map { "\($0.offset + 1). \(beatText($0.element))" }
+                .joined(separator: "\n"))
+                .font(.callout.monospaced())
+                .textSelection(.enabled)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.top, 8)
+        }
+    }
+
+    private func changeSummary(_ before: [LiveBeat], _ after: [LiveBeat]) -> String {
+        before == after ? "Returned unchanged · \(after.count) beats"
+            : "Revised \(before.count) → \(after.count) beats"
+    }
+
+    private func beatText(_ beat: LiveBeat) -> String {
+        switch beat {
+        case let .line(who, text, kind): return "\(who) [\(kind.rawValue)]: \(text)"
+        case let .move(who, zone): return "\(who) moves to \(zone.rawValue)"
+        case let .enters(who, zone): return "\(who) enters \(zone.rawValue)"
+        case let .exits(who): return "\(who) exits"
+        case let .gesture(who, name): return "\(who) · \(name)"
+        case let .wardrobe(who, slot, item):
+            return "\(who) wardrobe \(slot): \(item ?? "remove")"
+        case let .hold(seconds): return "hold \(seconds)s"
+        }
+    }
+
+    private func statusColour(_ status: LiveProductionAudit.Status) -> Color {
+        switch status {
+        case .candidate: return .blue
+        case .approved: return .green
+        case .superseded: return .secondary
+        }
     }
 }
 

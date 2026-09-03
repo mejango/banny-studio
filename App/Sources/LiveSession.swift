@@ -319,7 +319,8 @@ private struct LiveSetupModifier: ViewModifier {
                                                              endpoint: endpoint) {
                 if brief.premise.isEmpty { brief.premise = reading.premise }
                 if uncast {
-                    brief.cast = reading.castMembers(mergingInto: [])
+                    brief.cast = reading.castMembers(mergingInto: [],
+                                                     wardrobe: brief.wardrobe)
                 }
                 setup.brief = brief
             }
@@ -343,7 +344,8 @@ private struct LiveSetupModifier: ViewModifier {
                                    backingTrack: track, room: room,
                                    director: LiveDirector(
                                        brief: brief, document: document,
-                                       beats: endpoint.beats(for:), room: room))
+                                       beats: endpoint.beats(for:), room: room,
+                                       seed: UInt64.random(in: 0...UInt64.max)))
             } catch {
                 setup.problem = error.localizedDescription
             }
@@ -396,9 +398,17 @@ enum LiveSceneBuilder {
         let prompt = LiveReading.prompt(imagePath: LiveScriptRunner.imageToken,
                                         wanted: max(2, min(4, brief.cast.count == 0
                                                            ? 3 : brief.cast.count)),
-                                        premise: brief.premise)
-        let flags = endpoint.shape == .claudeCode
-            ? LiveModelEndpoint.confinement(needsWeb: false, needsFiles: true) : []
+                                        premise: brief.premise,
+                                        wardrobe: brief.wardrobe)
+        let flags: [String]
+        switch endpoint.shape {
+        case .claudeCode:
+            flags = LiveModelEndpoint.confinement(needsWeb: false, needsFiles: true)
+        case .grok:
+            flags = LiveModelEndpoint.grokConfinement(needsWeb: false, needsFiles: true)
+        default:
+            flags = []
+        }
         guard let script = endpoint.shape.scriptName,
               let answer = try? await LiveScriptRunner.run(script: script, prompt: prompt,
                                                            model: endpoint.model,
@@ -418,8 +428,15 @@ enum LiveSceneBuilder {
                                      premise: brief.premise,
                                      cast: max(2, brief.cast.count))
         // Looking at one picture needs to read one file and nothing else.
-        let readOnly = endpoint.shape == .claudeCode
-            ? LiveModelEndpoint.confinement(needsWeb: false, needsFiles: true) : []
+        let readOnly: [String]
+        switch endpoint.shape {
+        case .claudeCode:
+            readOnly = LiveModelEndpoint.confinement(needsWeb: false, needsFiles: true)
+        case .grok:
+            readOnly = LiveModelEndpoint.grokConfinement(needsWeb: false, needsFiles: true)
+        default:
+            readOnly = []
+        }
         guard let script = endpoint.shape.scriptName,
               let answer = try? await LiveScriptRunner.run(script: script,
                                                           prompt: prompt,

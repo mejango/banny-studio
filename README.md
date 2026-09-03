@@ -13,6 +13,7 @@ Spec: `docs/superpowers/specs/2026-07-07-banny-studio-native-design.md`
 | `Sources/BannyCore` | Strict document model (schema v4), event semantics, deterministic simulator, legacy v1 importer, and portable show package I/O. Platform-free. |
 | `Sources/BannyRender` | Baked-asset catalog + pure `draw(t)` CoreGraphics frame compositor. Same code path for editor and export. |
 | `Sources/BannyMedia` | Audio graph, TTS/lip-sync production, media probing, preview, offline H.264/AAC export, and resumable YouTube publishing. |
+| `Sources/BannyLive` | Browser-playable rooms, host-wide autonomous direction, strict typed intents, native frame rendering, and the dependency-free room site. |
 | `Sources/BannyCLI` | Testable production API for strict JSON Patch, speech, media, validation, previews, packaging, and shipping. |
 | `Sources/banny-tool` | Thin `banny` executable entry point around `BannyCLI`. |
 | `App/` | The universal SwiftUI app (XcodeGen project). Editor, timeline, wardrobe, performance deck, Ship. |
@@ -60,6 +61,8 @@ swift run banny preview show.bs frames.png \
 swift run banny ship show.bs --plan --720 --json        # cost/readiness plan
 swift run banny ship show.bs out.mp4 --720             # headless mp4 export
 swift run banny pack show.bs show.bs.zip               # standard ZIP handoff
+swift run banny room contract --json                   # deprecated bridge protocol
+swift run banny room serve --storage ./live-rooms      # room site + native host
 banny skill install --target all                       # Codex + Claude skill
 ```
 
@@ -73,7 +76,9 @@ unpacked package and reject unknown options and JSON fields. Use
 `banny capabilities --json` as the exact AI/automation contract.
 
 Build locally with `swift build -c release --product banny`. Signed,
-checkout-independent `banny-*-macos.zip` archives will appear on
+checkout-independent `banny-*-macos.zip` archives include the CLI, Banny Live
+website, deprecated compatibility bridge, Banny art, and a rollback-safe Mac
+host installer. They will appear on
 [GitHub Releases](https://github.com/mejango/banny-studio/releases) when a
 `cli-v<version>` tag runs the notarized release workflow; the binary reports
 its own CLI/schema versions.
@@ -83,6 +88,57 @@ accepts `--json`, argument and operation failures become structured JSON on
 stderr when that flag is present, and `help <command> --json` gives exact
 options and bounds. Mutation commands support dry runs and optimistic SHA-256
 concurrency; long exports can stream JSONL progress with `--progress-json`.
+
+## Banny Live rooms (M1)
+
+Banny Live turns browser-joined characters into a shared, autonomous Banny
+scene. One macOS host owns admission, the host-wide director, rendering, and an
+editable `.bs` recording. Creators, players, and viewers need only a browser
+and an Internet connection. Start with the deterministic built-in director:
+
+```sh
+swift run banny room serve \
+  --storage ./live-rooms --bind 127.0.0.1 --port 7330
+```
+
+Or run the whole cast through a loopback Ollama model. On an Apple-silicon Mac,
+install and launch [Ollama](https://docs.ollama.com/macos), pull the default
+model once, then start Banny with the Ollama director:
+
+```sh
+ollama pull llama3.2:3b
+ollama serve
+
+swift run banny room serve \
+  --storage ./live-rooms \
+  --director ollama \
+  --director-url http://127.0.0.1:11434 \
+  --director-model llama3.2:3b
+```
+
+Open `http://127.0.0.1:7330/create` to upload a background image/video and MP3,
+choose occupancy and an optional allowlist, and enable subtle motion for a
+still. A player opens `/rooms/<room-id>/join`, dresses a Banny, supplies a
+private character prompt, and clicks Join. The prompt is fixed for that
+performance and stays out of public snapshots, transcripts, and `recording.bs`.
+Its effects are public: a model can embody or paraphrase the prompt in captions
+and actions, so participants must never put passwords or other secrets in it.
+No participant CLI, local AI server, or inbound port is required.
+
+Character dialogue is captions and mouth motion only; the creator's background
+MP3 is the sole audible source. Every room records to
+`live-rooms/<room-id>/recording.bs`. Use the clean live route with
+`?embed=1&audio=1` as an OBS Browser Source.
+
+`banny room join` and the Python participant bridge remain as deprecated,
+opt-in compatibility tools for the old participant-local AI protocol. They are
+not part of the default browser-player flow.
+
+See [Banny Live rooms](docs/BANNY_LIVE_ROOMS.md) for allowlisted admission, the
+director boundary, recording semantics, security, OBS streaming, and current
+limits. See
+[Deploying Banny Live](docs/BANNY_LIVE_DEPLOYMENT.md) for the recommended
+public Mac-plus-HTTPS-tunnel setup and the Railway/WebRTC tradeoffs.
 
 `ep1-native-ship.mp4` in this folder is ep1 shipped natively (160.9 s,
 1280×720@30, H.264+AAC) from `show/ep1/beat1/staging/1.json`.

@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#0a0a11">
+  <meta name="color-scheme" content="dark">
+  <title>Banny Live</title>
+  <link rel="stylesheet" href="/app.css">
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#app">Skip to content</a>
+
+  <div class="site-shell">
+    <header class="topbar" data-site-chrome>
+      <a class="brand" href="/" data-link aria-label="Banny Live home">
+        <span class="brand-mark" aria-hidden="true">
+          <span class="brand-eye"></span>
+          <span class="brand-eye"></span>
+        </span>
+        <span>BANNY <em>LIVE</em></span>
+      </a>
+
+      <nav class="primary-nav" aria-label="Primary navigation">
+        <a href="/" data-link>Rooms</a>
+        <a href="/create" data-link>Create</a>
+        <a href="/join" data-link>Join</a>
+      </nav>
+
+      <div class="server-state" id="server-state" role="status" aria-live="polite">
+        <span class="status-dot" aria-hidden="true"></span>
+        <span>Checking server</span>
+      </div>
+    </header>
+
+    <main id="app" tabindex="-1"></main>
+
+    <footer class="site-footer" data-site-chrome>
+      <span>Banny Studio live role play</span>
+      <span>One prompt starts the character. The stage stays shared.</span>
+    </footer>
+  </div>
+
+  <noscript>
+    <div class="noscript">Banny Live needs JavaScript to list rooms and poll the live stage.</div>
+  </noscript>
+</body>
+</html>

@@ -76,8 +76,8 @@ public struct LiveCastMember: Codable, Equatable, Sendable {
     /// Wardrobe changes should be rare and mean something, so they are off
     /// unless the scene explicitly allows this performer to change.
     public var mayChangeWardrobe: Bool
-    /// True when the director picked this outfit by hand. The scene dresses
-    /// everyone else, but never overrules a deliberate choice.
+    /// True when this outfit was deliberately chosen, either by the director
+    /// or by reading the backdrop. Later sections never overrule that choice.
     public var outfitIsChosen: Bool
     /// Walking pace; the loud one arrives faster than the reluctant one.
     public var speed: Double

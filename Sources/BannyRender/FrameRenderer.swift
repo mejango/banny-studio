@@ -23,14 +23,16 @@ public struct FrameRenderer: Sendable {
     /// Optional derived performance snapshot. Interactive and offline callers
     /// can build this once instead of rescanning every event for every frame.
     let preparedPerformance: PreparedScenePerformance?
-    /// Slot render order between BODY layers, per web RENDER constant.
-    private static let renderOrder: [Slot] = [
-        .outfit(2), .body, .outfit(3), .outfit(4), .eyes, .outfit(6), .mouth,
-        .outfit(8), .outfit(9), .outfit(10), .outfit(11), .outfit(12), .outfit(13),
+    /// Slot render order from Banny721TokenUriResolver._outfitContentsFor.
+    /// The default necklace hugs the body, while a custom necklace is deferred
+    /// until after every suit layer so chains and pendants sit over clothing.
+    static let renderOrder: [Slot] = [
+        .outfit(2), .body, .defaultNecklace, .outfit(4), .eyes, .outfit(6), .mouth,
+        .outfit(8), .outfit(9), .outfit(10), .outfit(11), .outfit(3), .outfit(12), .outfit(13),
     ]
 
-    private enum Slot {
-        case body, eyes, mouth
+    enum Slot: Equatable {
+        case body, defaultNecklace, eyes, mouth
         case outfit(Int)
     }
 
@@ -188,8 +190,8 @@ public struct FrameRenderer: Sendable {
         // still speaks (its audio plays), so its line still shows.
         var captionLines: [(speaker: Character, text: String)] = []
         // Each placed caption with the anchor it should be drawn at. A caption
-        // that follows its speaker takes that anchor from the live pose, so it
-        // travels with them instead of labelling the spot they left.
+        // that follows its speaker takes a damped anchor from the live pose, so
+        // it trails them gently instead of labelling the spot they left.
         var placedCaptions: [(cue: Subtitle, anchorX: Double, anchorY: Double)] = []
         for i in scene.characters.indices where !scene.characters[i].hidden {
             let pose = entries.first(where: { $0.index == i })?.pose
@@ -198,15 +200,10 @@ public struct FrameRenderer: Sendable {
             // A caption that names its own spot renders independently; one that
             // does not joins the shared block exactly as before.
             if let cue = pose.activeSubtitleCue, cue.isPlaced {
-                // Where the caption is going to sit, worked out before deciding
-                // whether it shows: the two answers must come from the same
-                // place. Judging by the live pose hid the first line of a scene,
-                // because a performer speaks as they walk on and is still in the
-                // wings when the words start — the caption appeared only once
-                // they had crossed the frame edge, so a line with three seconds
-                // on the clock was on screen for one.
+                // Resolve the caption's gently trailing position before deciding
+                // whether it is visible, so layout and visibility agree.
                 let settled = Self.readableSpeakerX(
-                    for: cue, live: pose.x,
+                    for: cue, at: t, live: pose.x,
                     sample: { when in
                         (poseProvider.map { _ in sim.pose(characterIndex: i, at: when) }
                          ?? sim.pose(characterIndex: i, at: when)).x
@@ -562,6 +559,13 @@ public struct FrameRenderer: Sendable {
                 if let img = assets.bodyImage(character.body, maxPixelSize: assetMaxPixelSize) {
                     drawImage(img, in: box, ctx: ctx)
                 }
+            case .defaultNecklace:
+                if outfit[3] == nil,
+                   let img = assets.necklaceImage(
+                    body: character.body, maxPixelSize: assetMaxPixelSize
+                   ) {
+                    drawImage(img, in: box, ctx: ctx)
+                }
             case .eyes:
                 guard !headWorn else { continue }
                 let option = outfit[5] ?? "default"
@@ -619,15 +623,6 @@ public struct FrameRenderer: Sendable {
                         withFuzzClip(box: box, seed: id * 131 + step, density: density, ctx: ctx) {
                             drawImage(pimg, in: box, ctx: ctx)
                         }
-                    } else if id == 3, let img = assets.necklaceImage(
-                        body: character.body, maxPixelSize: assetMaxPixelSize) {
-                        drawImage(img, in: box, ctx: ctx)
-                    }
-                } else if id == 3, currentName == nil {
-                    // Necklace slot falls back to the default block chain.
-                    if let img = assets.necklaceImage(
-                        body: character.body, maxPixelSize: assetMaxPixelSize) {
-                        drawImage(img, in: box, ctx: ctx)
                     }
                 } else if let name = currentName,
                           let img = assets.outfitImage(name, body: character.body, at: time,
@@ -780,38 +775,32 @@ public struct FrameRenderer: Sendable {
     /// the artwork the way a separately-computed guess would.
     /// Whether a placed caption is drawn at all.
     ///
-    /// It is judged on the spot the caption occupies, never on where the
-    /// speaker happens to be standing this frame. A performer arriving mid-line
-    /// is still in the wings while their caption already belongs on stage; one
-    /// who has left takes it with them, because `readableSpeakerX` gives an
-    /// offstage anchor back as the live position and both are then out of range.
+    /// It is judged on the spot the caption occupies. A performer arriving
+    /// mid-line brings their caption on behind them; one who leaves takes it
+    /// along, because `readableSpeakerX` returns their live offstage position.
     static func captionShows(anchoredAt x: Double, opacity: Double) -> Bool {
         (-0.05...1.05).contains(x) && opacity > 0.05
     }
 
-    /// Where a caption sits for the whole time it is up: over the speaker as
-    /// they stand when the line finishes.
+    /// A readable, deterministic follow for a caption over a moving speaker.
     ///
-    /// It does not move. Damping was tried first — a weighted trailing average,
-    /// clamped near the speaker — and it fails for a reason worth writing down:
-    /// smoothing changes *where* the box is, never *how fast it travels*, and
-    /// speed is the unreadable part. A box lagging a walk by a tenth of a frame
-    /// still crosses the screen at walking pace, and the eye spends the line
-    /// chasing it.
-    ///
-    /// Standing still is affordable because walks are staged between lines: by
-    /// the time somebody speaks they have arrived. The rare walk overlapping the
-    /// tail of a line has the speaker walking into their own caption rather than
-    /// dragging it behind them.
-    static func readableSpeakerX(for cue: Subtitle, live: Double,
+    /// The box follows most of the speaker's displacement, sampled a fraction
+    /// of a second behind them. Keeping a little of its starting position makes
+    /// it travel more slowly than the body, while the short temporal lag softens
+    /// changes of direction. That preserves the visual connection without
+    /// making the reader chase every step.
+    static func readableSpeakerX(for cue: Subtitle, at time: Double, live: Double,
                                  sample: (Double) -> Double) -> Double {
-        let ended = cue.start + cue.dur
-        guard ended > 0 else { return live }
-        let parked = sample(ended)
-        // Somebody who leaves during their own line must not leave the caption
-        // behind in the wings; an anchor nobody can see is no anchor.
-        guard (0.0...1.0).contains(parked) else { return live }
-        return parked
+        guard time > cue.start else { return live }
+        let started = sample(cue.start)
+        let lag = min(0.35, max(0, cue.dur * 0.12))
+        let trailed = sample(max(cue.start, time - lag))
+        let anchor = started + (trailed - started) * 0.82
+
+        // Once the performer leaves, their words leave too. Do not strand a
+        // caption at the last readable point merely because its follow lags.
+        guard (-0.05...1.05).contains(live) else { return live }
+        return anchor
     }
 
     static func captionAnchor(cue: Subtitle, pose: CharacterPose, character: Character,

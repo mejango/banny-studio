@@ -2,11 +2,10 @@ import Foundation
 
 /// How Live mode reaches a model.
 ///
-/// Banny Studio runs sandboxed, so it cannot launch `claude`, `codex` or any
+/// Banny Studio runs sandboxed, so it cannot launch `claude`, `codex`, `grok` or any
 /// other command-line agent as a subprocess — the sandbox forbids executing
-/// binaries outside the app bundle. It can open network connections, so every
-/// model is reached over HTTP — in practice a model server on the same machine,
-/// such as LM Studio.
+/// binaries outside the app bundle. Script providers run through user-installed
+/// Application Scripts bridges; local model servers are reached over HTTP.
 public struct LiveModelEndpoint: Codable, Equatable, Sendable, Identifiable {
     public enum Shape: String, Codable, Sendable {
         /// The OpenAI chat shape, which LM Studio and vLLM both speak.
@@ -15,6 +14,8 @@ public struct LiveModelEndpoint: Codable, Equatable, Sendable, Identifiable {
         case claudeCode
         /// The `codex` CLI, likewise.
         case codex
+        /// The local `grok` CLI, using the user's authenticated Grok account.
+        case grok
 
         /// Script shapes run a command-line agent instead of opening a socket.
         /// A sandboxed app may only execute scripts the user has installed in
@@ -23,6 +24,7 @@ public struct LiveModelEndpoint: Codable, Equatable, Sendable, Identifiable {
             switch self {
             case .claudeCode: return "banny-claude.sh"
             case .codex: return "banny-codex.sh"
+            case .grok: return "banny-grok.sh"
             case .openAIChat: return nil
             }
         }
@@ -45,6 +47,11 @@ public struct LiveModelEndpoint: Codable, Equatable, Sendable, Identifiable {
                 return [("Default", ""), ("GPT-5.6 Sol", "gpt-5.6-sol"),
                         ("GPT-5.5", "gpt-5.5"), ("GPT-5.4", "gpt-5.4"),
                         ("GPT-5.4 mini", "gpt-5.4-mini")]
+            case .grok:
+                // These are the models reported by the authenticated Grok CLI.
+                // Default follows the CLI as its stable model advances.
+                return [("Default", ""), ("Grok 4.6", "grok-4.6"),
+                        ("Grok 4.5", "grok-4.5")]
             case .openAIChat:
                 return []
             }
@@ -68,8 +75,8 @@ public struct LiveModelEndpoint: Codable, Equatable, Sendable, Identifiable {
         self.apiKey = apiKey
     }
 
-    /// The models worth offering by default. All local: two command-line
-    /// agents the user very likely already has, and three model servers.
+    /// The models worth offering by default. All use local entry points: three
+    /// command-line agents plus a local model server.
     public static func presets() -> [LiveModelEndpoint] {
         [
             // An empty model means the agent's own configured default.
@@ -79,6 +86,9 @@ public struct LiveModelEndpoint: Codable, Equatable, Sendable, Identifiable {
             LiveModelEndpoint(name: "Codex",
                               baseURL: URL(string: "script://codex")!,
                               model: "", shape: .codex),
+            LiveModelEndpoint(name: "Grok",
+                              baseURL: URL(string: "script://grok")!,
+                              model: "", shape: .grok),
             LiveModelEndpoint(name: "LM Studio",
                               baseURL: URL(string: "http://127.0.0.1:1234")!,
                               model: "local-model", shape: .openAIChat),

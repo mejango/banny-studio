@@ -37,6 +37,22 @@ struct CLIOptions {
         return value
     }
 
+    /// Consumes every occurrence of a deliberately repeatable value option in
+    /// command-line order. Most options should continue using `value(_:)`,
+    /// whose duplicate rejection protects automation from accidental repeats.
+    mutating func values(_ name: String) throws -> [String] {
+        var result: [String] = []
+        while let index = tokens.firstIndex(of: name) {
+            guard tokens.indices.contains(index + 1) else {
+                throw CLIError.invalid("option \(name) requires a value")
+            }
+            let value = tokens[index + 1]
+            tokens.removeSubrange(index...index + 1)
+            result.append(value)
+        }
+        return result
+    }
+
     mutating func pair(_ name: String) throws -> (String, String)? {
         let matches = tokens.indices.filter { tokens[$0] == name }
         guard matches.count <= 1 else {

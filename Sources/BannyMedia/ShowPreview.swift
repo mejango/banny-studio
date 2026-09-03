@@ -128,8 +128,10 @@ public enum ShowPreview {
                                   bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else {
             throw PreviewError.contextFailed
         }
-        let media = ShowExporter.AssetSampler(assets: document.assets,
-                                              assetURL: assetURL)
+        let media = ShowExporter.AssetSampler(
+            assets: document.assets,
+            assetURL: assetURL,
+            videoSamplingMode: .randomAccess)
         FrameRenderer(assets: assets, preparedPerformance: preparedPerformance).draw(
             scene: document.stage, at: t, size: options.size,
             background: document.stage.activeBackgroundCue(at: t)

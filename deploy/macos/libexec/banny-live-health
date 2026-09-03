@@ -1,0 +1,64 @@
+#!/bin/bash
+set -euo pipefail
+
+usage() {
+  echo "usage: banny-live-health --port PORT --host HOST --release DIR --storage DIR --logs DIR [--minimum-free-bytes BYTES]" >&2
+  exit 2
+}
+
+PORT=""
+HOST=""
+RELEASE=""
+STORAGE=""
+LOGS=""
+MINIMUM_FREE_BYTES=1073741824
+while (($#)); do
+  case "$1" in
+    --port) (($# >= 2)) || usage; PORT="$2"; shift 2 ;;
+    --host) (($# >= 2)) || usage; HOST="$2"; shift 2 ;;
+    --release) (($# >= 2)) || usage; RELEASE="$2"; shift 2 ;;
+    --storage) (($# >= 2)) || usage; STORAGE="$2"; shift 2 ;;
+    --logs) (($# >= 2)) || usage; LOGS="$2"; shift 2 ;;
+    --minimum-free-bytes) (($# >= 2)) || usage; MINIMUM_FREE_BYTES="$2"; shift 2 ;;
+    *) usage ;;
+  esac
+done
+
+[[ "$PORT" =~ ^[0-9]+$ ]] && ((PORT >= 1 && PORT <= 65535)) || usage
+[[ "$MINIMUM_FREE_BYTES" =~ ^[0-9]+$ ]] || usage
+[[ -n "$HOST" && -n "$RELEASE" && -n "$STORAGE" && -n "$LOGS" ]] || usage
+
+for path in "$RELEASE/banny" "$RELEASE/BannyAssets/catalog.json"; do
+  [[ -f "$path" && ! -L "$path" ]] || { echo "unhealthy: missing release file" >&2; exit 1; }
+done
+[[ -d "$RELEASE/BannyStudio_BannyLive.bundle" && ! -L "$RELEASE/BannyStudio_BannyLive.bundle" ]] || {
+  echo "unhealthy: missing web bundle" >&2
+  exit 1
+}
+[[ -d "$STORAGE" && -w "$STORAGE" && ! -L "$STORAGE" ]] || {
+  echo "unhealthy: storage is not writable" >&2
+  exit 1
+}
+[[ -d "$LOGS" && ! -L "$LOGS" ]] || { echo "unhealthy: log directory unavailable" >&2; exit 1; }
+for log in stdout.log stderr.log health.log; do
+  [[ -f "$LOGS/$log" && ! -L "$LOGS/$log" && -w "$LOGS/$log" ]] || {
+    echo "unhealthy: log file is not safely writable" >&2
+    exit 1
+  }
+done
+
+TMP="$(/usr/bin/mktemp -t banny-live-health.XXXXXX)"
+trap '/bin/rm -f "$TMP"' EXIT
+/usr/bin/curl --fail --silent --show-error --max-time 5 \
+  --header "Host: $HOST" "http://127.0.0.1:$PORT/v1/rooms" > "$TMP"
+/usr/bin/plutil -extract rooms raw -o - "$TMP" >/dev/null
+
+FREE_KB="$(/bin/df -Pk "$STORAGE" | /usr/bin/awk 'NR == 2 { print $4 }')"
+[[ "$FREE_KB" =~ ^[0-9]+$ ]] || { echo "unhealthy: could not read disk capacity" >&2; exit 1; }
+FREE_BYTES=$((FREE_KB * 1024))
+((FREE_BYTES >= MINIMUM_FREE_BYTES)) || {
+  echo "unhealthy: storage has less than $MINIMUM_FREE_BYTES bytes free" >&2
+  exit 1
+}
+
+echo "healthy"

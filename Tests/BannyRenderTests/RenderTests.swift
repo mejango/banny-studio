@@ -23,6 +23,22 @@ private func writePNG(_ image: CGImage, to url: URL) throws {
     #expect(CGImageDestinationFinalize(dest))
 }
 
+@Test func customNecklaceRendersAboveEverySuitLayer() throws {
+    let order = FrameRenderer.renderOrder
+    let necklace = try #require(order.firstIndex(of: .outfit(3)))
+    for suitSlot in [9, 10, 11] {
+        let suit = try #require(order.firstIndex(of: .outfit(suitSlot)))
+        #expect(necklace > suit)
+    }
+    let headTop = try #require(order.firstIndex(of: .outfit(12)))
+    #expect(necklace < headTop)
+
+    let defaultNecklace = try #require(order.firstIndex(of: .defaultNecklace))
+    let body = try #require(order.firstIndex(of: .body))
+    #expect(defaultNecklace > body)
+    #expect(defaultNecklace < necklace)
+}
+
 @Test func interactiveSpriteCachePreservesCharacterComposition() throws {
     let catalog = try AssetCatalog(assetsRoot: assetsRoot)
     let scene = SceneState(characters: [

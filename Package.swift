@@ -8,6 +8,7 @@ let package = Package(
         .library(name: "BannyCore", targets: ["BannyCore"]),
         .library(name: "BannyRender", targets: ["BannyRender"]),
         .library(name: "BannyMedia", targets: ["BannyMedia"]),
+        .library(name: "BannyLive", targets: ["BannyLive"]),
         .library(name: "BannyCLI", targets: ["BannyCLI"]),
         .executable(name: "banny", targets: ["banny-tool"]),
     ],
@@ -15,7 +16,15 @@ let package = Package(
         .target(name: "BannyCore"),
         .target(name: "BannyRender", dependencies: ["BannyCore"]),
         .target(name: "BannyMedia", dependencies: ["BannyCore", "BannyRender"]),
-        .target(name: "BannyCLI", dependencies: ["BannyCore", "BannyRender", "BannyMedia"]),
+        .target(
+            name: "BannyLive",
+            dependencies: ["BannyCore", "BannyRender", "BannyMedia"],
+            resources: [.process("Resources")]
+        ),
+        .target(
+            name: "BannyCLI",
+            dependencies: ["BannyCore", "BannyRender", "BannyMedia", "BannyLive"]
+        ),
         .executableTarget(name: "banny-tool", dependencies: ["BannyCLI"]),
         .testTarget(
             name: "BannyCoreTests",
@@ -24,6 +33,10 @@ let package = Package(
         ),
         .testTarget(name: "BannyRenderTests", dependencies: ["BannyRender"]),
         .testTarget(name: "BannyMediaTests", dependencies: ["BannyMedia"]),
+        .testTarget(
+            name: "BannyLiveTests",
+            dependencies: ["BannyLive", "BannyCore", "BannyRender", "BannyMedia"]
+        ),
         .testTarget(
             name: "BannyCLITests",
             dependencies: ["BannyCLI", "BannyCore", "BannyRender", "BannyMedia"]
